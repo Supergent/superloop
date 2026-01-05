@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.0 - 2026-01-05
+- Rename the main wrapper script to `superloop.sh` (breaking change).
+
 ## 0.2.0 - 2026-01-05
 - Replace codex-specific config with a generic runner abstraction (breaking config change).
 - Add placeholder expansion for runner arguments and prompt mode selection.

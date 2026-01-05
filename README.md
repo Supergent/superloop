@@ -4,35 +4,35 @@ This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implem
 
 ## Quick start
 
-1) Initialize `.ralph` in your repo:
+1) Initialize `.superloop` in your repo:
 
 ```bash
-/Users/multiplicity/Work/ralph-codex/ralph-codex.sh init --repo /path/to/repo
+/Users/multiplicity/Work/ralph-codex/superloop.sh init --repo /path/to/repo
 ```
 
 2) Edit the spec:
 
 ```
-/path/to/repo/.ralph/spec.md
+/path/to/repo/.superloop/spec.md
 ```
 
 3) Configure loops, tests, and checklists:
 
 ```
-/path/to/repo/.ralph/config.json
+/path/to/repo/.superloop/config.json
 ```
 
 4) Run the loop:
 
 ```bash
-/Users/multiplicity/Work/ralph-codex/ralph-codex.sh run --repo /path/to/repo
+/Users/multiplicity/Work/ralph-codex/superloop.sh run --repo /path/to/repo
 ```
 
 For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
 
 ## Config overview
 
-`.ralph/config.json` controls the loop and runner (examples use `codex exec`). Example:
+`.superloop/config.json` controls the loop and runner (examples use `codex exec`). Example:
 
 ```json
 {
@@ -45,7 +45,7 @@ For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
   "loops": [
     {
       "id": "initiation",
-      "spec_file": ".ralph/spec.md",
+      "spec_file": ".superloop/spec.md",
       "max_iterations": 20,
       "completion_promise": "INITIATION_READY",
       "checklists": ["feat/my-feature/initiation/tasks/PHASE_1.MD"],
@@ -78,7 +78,7 @@ For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": [
-          ".ralph/**",
+          ".superloop/**",
           ".git/**",
           "node_modules/**",
           "dist/**",
@@ -101,7 +101,7 @@ For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
 Each loop writes to:
 
 ```
-.ralph/loops/<loop-id>/
+.superloop/loops/<loop-id>/
   plan.md
   iteration_notes.md
   implementer.md
@@ -126,11 +126,11 @@ Each loop writes to:
 
 ## Commands
 
-- `init`: Create `.ralph/` scaffolding.
+- `init`: Create `.superloop/` scaffolding.
 - `run`: Start or resume the loop.
-- `status`: Print `.ralph/state.json`.
+- `status`: Print `.superloop/state.json`.
 - `approve`: Record an approval or rejection for a pending approval gate.
-- `cancel`: Remove `.ralph/state.json`.
+- `cancel`: Remove `.superloop/state.json`.
 - `run --fast`: Use `runner.fast_args` if provided (falls back to `runner.args`).
 - `run --dry-run`: Read-only status summary from existing artifacts; no runner calls.
 - `status --summary`: Print latest gate/evidence snapshot from `run-summary.json` (use `--loop` to pick a loop).
@@ -159,5 +159,5 @@ Each loop writes to:
 
 ## Development
 
-- Edit `src/*.sh` and run `scripts/build.sh` to regenerate `ralph-codex.sh`.
-- CI checks that the generated `ralph-codex.sh` is up to date.
+- Edit `src/*.sh` and run `scripts/build.sh` to regenerate `superloop.sh`.
+- CI checks that the generated `superloop.sh` is up to date.

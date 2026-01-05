@@ -82,7 +82,7 @@ main() {
   repo=$(cd "$repo" && pwd)
 
   if [[ -z "$config_path" ]]; then
-    config_path="$repo/.ralph/config.json"
+    config_path="$repo/.superloop/config.json"
   fi
   if [[ -z "$schema_path" ]]; then
     schema_path="$repo/schema/config.schema.json"

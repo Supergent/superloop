@@ -8,18 +8,18 @@
   "loops": [
     {
       "id": "productization-phase-1",
-      "spec_file": ".ralph/spec.md",
+      "spec_file": ".superloop/spec.md",
       "max_iterations": 20,
       "completion_promise": "READY",
       "checklists": ["PRODUCTIZATION_PHASE_1.MD"],
       "tests": {
         "mode": "on_promise",
-        "commands": ["./ralph-codex.sh --version"]
+        "commands": ["./superloop.sh --version"]
       },
       "evidence": {
         "enabled": true,
         "require_on_completion": true,
-        "artifacts": ["LICENSE", "CHANGELOG.md", "ralph-codex.sh", "schema/config.schema.json", ".github/workflows/ci.yml"]
+        "artifacts": ["LICENSE", "CHANGELOG.md", "superloop.sh", "schema/config.schema.json", ".github/workflows/ci.yml"]
       },
       "approval": {
         "enabled": true,
@@ -41,7 +41,7 @@
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": [
-          ".ralph/**",
+          ".superloop/**",
           ".git/**",
           "node_modules/**",
           "dist/**",

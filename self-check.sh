@@ -93,10 +93,10 @@ fi
 REPO=$(cd "$REPO" && pwd)
 
 FILES=(
-  ".ralph/loops/$LOOP_ID/plan.md"
-  ".ralph/loops/$LOOP_ID/implementer.md"
-  ".ralph/loops/$LOOP_ID/test-report.md"
-  ".ralph/loops/$LOOP_ID/review.md"
+  ".superloop/loops/$LOOP_ID/plan.md"
+  ".superloop/loops/$LOOP_ID/implementer.md"
+  ".superloop/loops/$LOOP_ID/test-report.md"
+  ".superloop/loops/$LOOP_ID/review.md"
 )
 
 tmp1=$(mktemp)
@@ -109,11 +109,11 @@ if [[ $FAST -eq 1 ]]; then
 fi
 
 echo "Running loop (1/2)..."
-"$ROOT_DIR/ralph-codex.sh" "${run_args[@]}"
+"$ROOT_DIR/superloop.sh" "${run_args[@]}"
 snapshot_hashes "$REPO" "$tmp1" "${FILES[@]}"
 
 echo "Running loop (2/2)..."
-"$ROOT_DIR/ralph-codex.sh" "${run_args[@]}"
+"$ROOT_DIR/superloop.sh" "${run_args[@]}"
 snapshot_hashes "$REPO" "$tmp2" "${FILES[@]}"
 
 if diff -u "$tmp1" "$tmp2" >/dev/null; then

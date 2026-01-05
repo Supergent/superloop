@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SRC_DIR="$ROOT_DIR/src"
-OUT_FILE="$ROOT_DIR/ralph-codex.sh"
+OUT_FILE="$ROOT_DIR/superloop.sh"
 
 PARTS=(
   "00-header.sh"

@@ -166,7 +166,7 @@ report_cmd() {
     fi
   fi
 
-  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local loop_dir="$repo/.superloop/loops/$loop_id"
   local summary_file="$loop_dir/run-summary.json"
   local timeline_file="$loop_dir/timeline.md"
   local events_file="$loop_dir/events.jsonl"

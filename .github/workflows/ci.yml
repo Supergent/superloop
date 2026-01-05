@@ -13,15 +13,15 @@ jobs:
       - name: Build wrapper
         run: ./scripts/build.sh
       - name: Verify generated script is up to date
-        run: git diff --exit-code ralph-codex.sh
+        run: git diff --exit-code superloop.sh
       - name: Validate config schema
-        run: ./ralph-codex.sh validate --repo .
+        run: ./superloop.sh validate --repo .
       - name: Dry-run smoke check
-        run: ./ralph-codex.sh run --repo . --loop productization-phase-1 --dry-run
+        run: ./superloop.sh run --repo . --loop productization-phase-1 --dry-run
       - name: Generate report
-        run: ./ralph-codex.sh report --repo . --loop productization-phase-1
+        run: ./superloop.sh report --repo . --loop productization-phase-1
       - name: Upload report artifact
         uses: actions/upload-artifact@v4
         with:
           name: ralph-report
-          path: .ralph/loops/productization-phase-1/report.html
+          path: .superloop/loops/productization-phase-1/report.html

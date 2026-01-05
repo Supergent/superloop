@@ -3,32 +3,32 @@ set -euo pipefail
 # Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 usage() {
   cat <<'USAGE'
 Supergent Runner Wrapper
 
 Usage:
-  ralph-codex.sh init [--repo DIR] [--force]
-  ralph-codex.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
-  ralph-codex.sh status [--repo DIR] [--summary] [--loop ID]
-  ralph-codex.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
-  ralph-codex.sh cancel [--repo DIR]
-  ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
-  ralph-codex.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
-  ralph-codex.sh --version
+  superloop.sh init [--repo DIR] [--force]
+  superloop.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
+  superloop.sh status [--repo DIR] [--summary] [--loop ID]
+  superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
+  superloop.sh cancel [--repo DIR]
+  superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
+  superloop.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
+  superloop.sh --version
 
 Options:
   --repo DIR       Repository root (default: current directory)
-  --config FILE    Config file path (default: .ralph/config.json)
+  --config FILE    Config file path (default: .superloop/config.json)
   --schema FILE    Schema file path (default: schema/config.schema.json)
   --loop ID        Run only the loop with this id (or select loop for status/report)
   --summary        Print latest gate/evidence snapshot from run-summary.json
-  --force          Overwrite existing .ralph files on init
+  --force          Overwrite existing .superloop files on init
   --fast           Use runner.fast_args (if set) instead of runner.args
   --dry-run        Read-only status summary from existing artifacts; no runner calls
-  --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
+  --out FILE       Report output path (default: .superloop/loops/<id>/report.html)
   --by NAME        Approver name for approval decisions (default: $USER)
   --note TEXT      Optional decision note for approval/rejection
   --reject         Record a rejection instead of approval
@@ -74,7 +74,7 @@ timestamp() {
 }
 
 DEFAULT_STUCK_IGNORE=(
-  ".ralph/**"
+  ".superloop/**"
   ".git/**"
   "node_modules/**"
   "dist/**"
@@ -1557,7 +1557,7 @@ read_stuck_streak() {
 init_cmd() {
   local repo="$1"
   local force="$2"
-  local ralph_dir="$repo/.ralph"
+  local ralph_dir="$repo/.superloop"
 
   mkdir -p "$ralph_dir/roles" "$ralph_dir/loops" "$ralph_dir/logs"
 
@@ -1576,7 +1576,7 @@ init_cmd() {
   "loops": [
     {
       "id": "initiation",
-      "spec_file": ".ralph/spec.md",
+      "spec_file": ".superloop/spec.md",
       "max_iterations": 20,
       "completion_promise": "INITIATION_READY",
       "checklists": [],
@@ -1609,7 +1609,7 @@ init_cmd() {
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": [
-          ".ralph/**",
+          ".superloop/**",
           ".git/**",
           "node_modules/**",
           "dist/**",
@@ -1707,7 +1707,7 @@ Rules:
 - Write your review to the reviewer report file path listed in context.
 EOF
 
-  echo "Initialized .ralph in $ralph_dir"
+  echo "Initialized .superloop in $ralph_dir"
 }
 
 run_cmd() {
@@ -1719,7 +1719,7 @@ run_cmd() {
 
   need_cmd jq
 
-  local ralph_dir="$repo/.ralph"
+  local ralph_dir="$repo/.superloop"
   local state_file="$ralph_dir/state.json"
 
   if [[ ! -f "$config_path" ]]; then
@@ -1994,7 +1994,7 @@ run_cmd() {
         local approval_wait_data
         approval_wait_data=$(jq -n --arg approval_file "${approval_file#$repo/}" '{status: "pending", approval_file: $approval_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_wait" "$approval_wait_data"
-        echo "Approval pending for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        echo "Approval pending for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
         if [[ "${dry_run:-0}" -ne 1 ]]; then
           write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
         fi
@@ -2489,7 +2489,7 @@ run_cmd() {
           '{approval_file: $approval_file, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
 
-        echo "Approval required for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        echo "Approval required for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
         write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
         return 0
       fi
@@ -2541,7 +2541,7 @@ status_cmd() {
       die "loop id required for status --summary (use --loop or config)"
     fi
 
-    local summary_file="$repo/.ralph/loops/$target_loop/run-summary.json"
+    local summary_file="$repo/.superloop/loops/$target_loop/run-summary.json"
     if [[ ! -f "$summary_file" ]]; then
       echo "No run summary found for loop '$target_loop'."
       return 0
@@ -2573,7 +2573,7 @@ status_cmd() {
     return 0
   fi
 
-  local state_file="$repo/.ralph/state.json"
+  local state_file="$repo/.superloop/state.json"
 
   if [[ ! -f "$state_file" ]]; then
     echo "No state file found."
@@ -2585,7 +2585,7 @@ status_cmd() {
 
 cancel_cmd() {
   local repo="$1"
-  local state_file="$repo/.ralph/state.json"
+  local state_file="$repo/.superloop/state.json"
 
   if [[ ! -f "$state_file" ]]; then
     echo "No active state file found."
@@ -2609,7 +2609,7 @@ approve_cmd() {
     die "--loop is required for approve"
   fi
 
-  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local loop_dir="$repo/.superloop/loops/$loop_id"
   local approval_file="$loop_dir/approval.json"
   local events_file="$loop_dir/events.jsonl"
 
@@ -2839,7 +2839,7 @@ report_cmd() {
     fi
   fi
 
-  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local loop_dir="$repo/.superloop/loops/$loop_id"
   local summary_file="$loop_dir/run-summary.json"
   local timeline_file="$loop_dir/timeline.md"
   local events_file="$loop_dir/events.jsonl"
@@ -3120,7 +3120,7 @@ main() {
   repo=$(cd "$repo" && pwd)
 
   if [[ -z "$config_path" ]]; then
-    config_path="$repo/.ralph/config.json"
+    config_path="$repo/.superloop/config.json"
   fi
   if [[ -z "$schema_path" ]]; then
     schema_path="$repo/schema/config.schema.json"

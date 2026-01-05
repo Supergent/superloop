@@ -1,7 +1,7 @@
 # Getting Started with Supergent
 
 Supergent is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
-The runner is configured in `.ralph/config.json` and can be any CLI that accepts a prompt and writes a last message file.
+The runner is configured in `.superloop/config.json` and can be any CLI that accepts a prompt and writes a last message file.
 
 ## Philosophy
 
@@ -36,7 +36,7 @@ A loop only completes when all gates are green:
 
 ### Iteration artifacts
 
-Each iteration writes artifacts under `.ralph/loops/<loop-id>/`:
+Each iteration writes artifacts under `.superloop/loops/<loop-id>/`:
 
 - Plan, reports, test output, checklist status.
 - Gate summary and evidence manifest.
@@ -51,38 +51,38 @@ Each iteration writes artifacts under `.ralph/loops/<loop-id>/`:
 
 ## Minimal workflow
 
-1) Initialize `.ralph` in your repo:
+1) Initialize `.superloop` in your repo:
 
 ```bash
-./ralph-codex.sh init --repo /path/to/repo
+./superloop.sh init --repo /path/to/repo
 ```
 
 2) Write the spec:
 
 ```
-/path/to/repo/.ralph/spec.md
+/path/to/repo/.superloop/spec.md
 ```
 
 3) Create a checklist file in your repo.
 
-4) Configure the loop in `.ralph/config.json`.
+4) Configure the loop in `.superloop/config.json`.
 
 5) Run the loop:
 
 ```bash
-./ralph-codex.sh run --repo /path/to/repo
+./superloop.sh run --repo /path/to/repo
 ```
 
 6) If approval is required:
 
 ```bash
-./ralph-codex.sh approve --repo /path/to/repo --loop <loop-id>
+./superloop.sh approve --repo /path/to/repo --loop <loop-id>
 ```
 
 7) Generate an HTML report:
 
 ```bash
-./ralph-codex.sh report --repo /path/to/repo --loop <loop-id>
+./superloop.sh report --repo /path/to/repo --loop <loop-id>
 ```
 
 ## Tutorial: Log summarizer (more than hello world)
@@ -100,12 +100,12 @@ git init
 ### 2) Initialize Supergent
 
 ```bash
-/path/to/ralph-codex/ralph-codex.sh init --repo .
+/path/to/ralph-codex/superloop.sh init --repo .
 ```
 
 ### 3) Write the spec
 
-Replace `.ralph/spec.md` with the following:
+Replace `.superloop/spec.md` with the following:
 
 ```md
 # Log Summarizer
@@ -139,7 +139,7 @@ Create `CHECKLIST.md`:
 
 ### 5) Configure the loop
 
-Edit `.ralph/config.json` to point to your spec and checklist:
+Edit `.superloop/config.json` to point to your spec and checklist:
 
 ```json
 {
@@ -152,7 +152,7 @@ Edit `.ralph/config.json` to point to your spec and checklist:
   "loops": [
     {
       "id": "logsum",
-      "spec_file": ".ralph/spec.md",
+      "spec_file": ".superloop/spec.md",
       "max_iterations": 10,
       "completion_promise": "READY",
       "checklists": ["CHECKLIST.md"],
@@ -185,7 +185,7 @@ Edit `.ralph/config.json` to point to your spec and checklist:
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": [
-          ".ralph/**",
+          ".superloop/**",
           ".git/**",
           "node_modules/**",
           "dist/**",
@@ -208,13 +208,13 @@ Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeho
 ### 6) Run the loop
 
 ```bash
-/path/to/ralph-codex/ralph-codex.sh run --repo . --loop logsum
+/path/to/ralph-codex/superloop.sh run --repo . --loop logsum
 ```
 
 If it pauses for approval:
 
 ```bash
-/path/to/ralph-codex/ralph-codex.sh approve --repo . --loop logsum
+/path/to/ralph-codex/superloop.sh approve --repo . --loop logsum
 ```
 
 ### 7) Inspect results
@@ -222,7 +222,7 @@ If it pauses for approval:
 Artifacts live here:
 
 ```
-.ralph/loops/logsum/
+.superloop/loops/logsum/
 ```
 
 Key files to check:
@@ -238,7 +238,7 @@ If the reviewer is too lenient, tighten the spec or checklist. If the plan churn
 
 ## Troubleshooting
 
-- "Approval pending": run `ralph-codex.sh approve`.
+- "Approval pending": run `superloop.sh approve`.
 - "Stuck detected": inspect `stuck-report.md`, then refine spec or checklist.
 - "Plan churn": clarify spec and reduce ambiguity.
 - "Reviewer mismatch": ensure the reviewer promise exactly matches `completion_promise`.

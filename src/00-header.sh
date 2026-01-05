@@ -3,32 +3,32 @@ set -euo pipefail
 # Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 usage() {
   cat <<'USAGE'
 Supergent Runner Wrapper
 
 Usage:
-  ralph-codex.sh init [--repo DIR] [--force]
-  ralph-codex.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
-  ralph-codex.sh status [--repo DIR] [--summary] [--loop ID]
-  ralph-codex.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
-  ralph-codex.sh cancel [--repo DIR]
-  ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
-  ralph-codex.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
-  ralph-codex.sh --version
+  superloop.sh init [--repo DIR] [--force]
+  superloop.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
+  superloop.sh status [--repo DIR] [--summary] [--loop ID]
+  superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
+  superloop.sh cancel [--repo DIR]
+  superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
+  superloop.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
+  superloop.sh --version
 
 Options:
   --repo DIR       Repository root (default: current directory)
-  --config FILE    Config file path (default: .ralph/config.json)
+  --config FILE    Config file path (default: .superloop/config.json)
   --schema FILE    Schema file path (default: schema/config.schema.json)
   --loop ID        Run only the loop with this id (or select loop for status/report)
   --summary        Print latest gate/evidence snapshot from run-summary.json
-  --force          Overwrite existing .ralph files on init
+  --force          Overwrite existing .superloop files on init
   --fast           Use runner.fast_args (if set) instead of runner.args
   --dry-run        Read-only status summary from existing artifacts; no runner calls
-  --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
+  --out FILE       Report output path (default: .superloop/loops/<id>/report.html)
   --by NAME        Approver name for approval decisions (default: $USER)
   --note TEXT      Optional decision note for approval/rejection
   --reject         Record a rejection instead of approval
@@ -74,7 +74,7 @@ timestamp() {
 }
 
 DEFAULT_STUCK_IGNORE=(
-  ".ralph/**"
+  ".superloop/**"
   ".git/**"
   "node_modules/**"
   "dist/**"

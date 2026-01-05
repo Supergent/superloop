@@ -1,7 +1,7 @@
 init_cmd() {
   local repo="$1"
   local force="$2"
-  local ralph_dir="$repo/.ralph"
+  local ralph_dir="$repo/.superloop"
 
   mkdir -p "$ralph_dir/roles" "$ralph_dir/loops" "$ralph_dir/logs"
 
@@ -20,7 +20,7 @@ init_cmd() {
   "loops": [
     {
       "id": "initiation",
-      "spec_file": ".ralph/spec.md",
+      "spec_file": ".superloop/spec.md",
       "max_iterations": 20,
       "completion_promise": "INITIATION_READY",
       "checklists": [],
@@ -53,7 +53,7 @@ init_cmd() {
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": [
-          ".ralph/**",
+          ".superloop/**",
           ".git/**",
           "node_modules/**",
           "dist/**",
@@ -151,7 +151,7 @@ Rules:
 - Write your review to the reviewer report file path listed in context.
 EOF
 
-  echo "Initialized .ralph in $ralph_dir"
+  echo "Initialized .superloop in $ralph_dir"
 }
 
 run_cmd() {
@@ -163,7 +163,7 @@ run_cmd() {
 
   need_cmd jq
 
-  local ralph_dir="$repo/.ralph"
+  local ralph_dir="$repo/.superloop"
   local state_file="$ralph_dir/state.json"
 
   if [[ ! -f "$config_path" ]]; then
@@ -438,7 +438,7 @@ run_cmd() {
         local approval_wait_data
         approval_wait_data=$(jq -n --arg approval_file "${approval_file#$repo/}" '{status: "pending", approval_file: $approval_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_wait" "$approval_wait_data"
-        echo "Approval pending for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        echo "Approval pending for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
         if [[ "${dry_run:-0}" -ne 1 ]]; then
           write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
         fi
@@ -933,7 +933,7 @@ run_cmd() {
           '{approval_file: $approval_file, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
 
-        echo "Approval required for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        echo "Approval required for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
         write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
         return 0
       fi
@@ -985,7 +985,7 @@ status_cmd() {
       die "loop id required for status --summary (use --loop or config)"
     fi
 
-    local summary_file="$repo/.ralph/loops/$target_loop/run-summary.json"
+    local summary_file="$repo/.superloop/loops/$target_loop/run-summary.json"
     if [[ ! -f "$summary_file" ]]; then
       echo "No run summary found for loop '$target_loop'."
       return 0
@@ -1017,7 +1017,7 @@ status_cmd() {
     return 0
   fi
 
-  local state_file="$repo/.ralph/state.json"
+  local state_file="$repo/.superloop/state.json"
 
   if [[ ! -f "$state_file" ]]; then
     echo "No state file found."
@@ -1029,7 +1029,7 @@ status_cmd() {
 
 cancel_cmd() {
   local repo="$1"
-  local state_file="$repo/.ralph/state.json"
+  local state_file="$repo/.superloop/state.json"
 
   if [[ ! -f "$state_file" ]]; then
     echo "No active state file found."
@@ -1053,7 +1053,7 @@ approve_cmd() {
     die "--loop is required for approve"
   fi
 
-  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local loop_dir="$repo/.superloop/loops/$loop_id"
   local approval_file="$loop_dir/approval.json"
   local events_file="$loop_dir/events.jsonl"
 
