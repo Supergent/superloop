@@ -17,7 +17,7 @@ Checks:
 Options:
   --repo DIR   Repository root to test.
   --loop ID    Loop id to run (required).
-  --fast       Use codex.fast_args if configured.
+  --fast       Use runner.fast_args if configured.
 USAGE
 }
 

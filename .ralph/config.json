@@ -1,7 +1,9 @@
 {
-  "codex": {
-    "args": ["--full-auto"],
-    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\""]
+  "runner": {
+    "command": ["codex", "exec"],
+    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "prompt_mode": "stdin"
   },
   "loops": [
     {

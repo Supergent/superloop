@@ -1,6 +1,7 @@
 # Getting Started with Ralphcodex
 
-Ralphcodex is a Codex CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
+Ralphcodex is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
+The runner is configured in `.ralph/config.json` and can be any CLI that accepts a prompt and writes a last message file.
 
 ## Philosophy
 
@@ -142,9 +143,11 @@ Edit `.ralph/config.json` to point to your spec and checklist:
 
 ```json
 {
-  "codex": {
-    "args": ["--full-auto"],
-    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\""]
+  "runner": {
+    "command": ["codex", "exec"],
+    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "prompt_mode": "stdin"
   },
   "loops": [
     {
@@ -199,6 +202,8 @@ Edit `.ralph/config.json` to point to your spec and checklist:
   ]
 }
 ```
+
+Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeholders.
 
 ### 6) Run the loop
 

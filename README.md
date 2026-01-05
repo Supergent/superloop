@@ -1,6 +1,6 @@
 # Ralph++ Codex Wrapper
 
-This is a Codex CLI wrapper that runs a multi-role Ralph-style loop (planner, implementer, tester, reviewer) with enforced gates for checklists and tests.
+This is a runner-driven CLI wrapper that runs a multi-role Ralph-style loop (planner, implementer, tester, reviewer) with enforced gates for checklists and tests.
 
 ## Quick start
 
@@ -32,13 +32,15 @@ For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
 
 ## Config overview
 
-`.ralph/config.json` controls the loop. Example:
+`.ralph/config.json` controls the loop and runner (examples use `codex exec`). Example:
 
 ```json
 {
-  "codex": {
-    "args": ["--full-auto"],
-    "fast_args": ["--full-auto", "--model", "gpt-5.2-codex"]
+  "runner": {
+    "command": ["codex", "exec"],
+    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "prompt_mode": "stdin"
   },
   "loops": [
     {
@@ -129,8 +131,8 @@ Each loop writes to:
 - `status`: Print `.ralph/state.json`.
 - `approve`: Record an approval or rejection for a pending approval gate.
 - `cancel`: Remove `.ralph/state.json`.
-- `run --fast`: Use `codex.fast_args` if provided (falls back to `codex.args`).
-- `run --dry-run`: Read-only status summary from existing artifacts; no Codex calls.
+- `run --fast`: Use `runner.fast_args` if provided (falls back to `runner.args`).
+- `run --dry-run`: Read-only status summary from existing artifacts; no runner calls.
 - `status --summary`: Print latest gate/evidence snapshot from `run-summary.json` (use `--loop` to pick a loop).
 - `validate`: Validate a config file against `schema/config.schema.json`.
 - `report`: Generate an HTML report from loop artifacts (events, summary, timeline).
@@ -149,6 +151,8 @@ Each loop writes to:
 - Anti-churn: role prompts discourage unnecessary edits, and the wrapper restores plan/report files when content is unchanged to avoid rewrite noise.
 - Evidence manifests are written to `evidence.json` when enabled and include artifact hashes/mtimes and gate-produced file metadata.
 - Reviewer packets are written to `reviewer-packet.md` when enabled to summarize gates, tests, checklists, and evidence for the reviewer.
-- Optional per-role timeouts can stop a run if a Codex role exceeds the configured limit.
+- Optional per-role timeouts can stop a run if a role exceeds the configured limit.
 - Optional approval gating can pause completion until a human approves (records decisions in `decisions.jsonl`/`decisions.md`).
 - Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.
+- Runner prompt mode controls whether prompts are piped via stdin or provided as a file.
+- Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeholders.

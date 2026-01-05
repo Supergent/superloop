@@ -3,9 +3,13 @@
   "title": "Ralphcodex Config",
   "type": "object",
   "properties": {
-    "codex": {
+    "runner": {
       "type": "object",
       "properties": {
+        "command": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
         "args": {
           "type": "array",
           "items": {"type": "string"}
@@ -13,9 +17,13 @@
         "fast_args": {
           "type": "array",
           "items": {"type": "string"}
+        },
+        "prompt_mode": {
+          "type": "string",
+          "enum": ["stdin", "file"]
         }
       },
-      "required": ["args", "fast_args"]
+      "required": ["command", "args"]
     },
     "loops": {
       "type": "array",
@@ -119,5 +127,5 @@
       }
     }
   },
-  "required": ["codex", "loops"]
+  "required": ["runner", "loops"]
 }

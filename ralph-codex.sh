@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.1.5"
+VERSION="0.2.0"
 
 usage() {
   cat <<'USAGE'
@@ -25,7 +25,7 @@ Options:
   --loop ID        Run only the loop with this id (or select loop for status/report)
   --summary        Print latest gate/evidence snapshot from run-summary.json
   --force          Overwrite existing .ralph files on init
-  --fast           Use codex.fast_args (if set) instead of codex.args
+  --fast           Use runner.fast_args (if set) instead of runner.args
   --dry-run        Read-only status summary from existing artifacts; no Codex calls
   --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
   --by NAME        Approver name for approval decisions (default: $USER)
@@ -51,6 +51,21 @@ print_version() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
+}
+
+need_exec() {
+  local cmd="$1"
+
+  if [[ -z "$cmd" ]]; then
+    die "missing runner command"
+  fi
+  if [[ "$cmd" == */* ]]; then
+    if [[ ! -x "$cmd" ]]; then
+      die "command not executable: $cmd"
+    fi
+    return 0
+  fi
+  need_cmd "$cmd"
 }
 
 timestamp() {
@@ -725,11 +740,12 @@ EOF
   fi
 }
 
-run_codex_with_timeout() {
+run_command_with_timeout() {
   local prompt_file="$1"
   local log_file="$2"
   local timeout_seconds="$3"
-  shift 3
+  local prompt_mode="$4"
+  shift 4
   local -a cmd=("$@")
 
   local python_bin=""
@@ -737,15 +753,20 @@ run_codex_with_timeout() {
   if [[ -z "$python_bin" ]]; then
     echo "warning: python not found; running without timeout enforcement" >&2
     set +e
-    "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    if [[ "$prompt_mode" == "stdin" ]]; then
+      "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    else
+      "${cmd[@]}" | tee "$log_file"
+    fi
     local status=${PIPESTATUS[0]}
     set -e
     return "$status"
   fi
 
-  CODEX_PROMPT_FILE="$prompt_file" \
-  CODEX_LOG_FILE="$log_file" \
-  CODEX_TIMEOUT_SECONDS="$timeout_seconds" \
+  RUNNER_PROMPT_FILE="$prompt_file" \
+  RUNNER_LOG_FILE="$log_file" \
+  RUNNER_TIMEOUT_SECONDS="$timeout_seconds" \
+  RUNNER_PROMPT_MODE="$prompt_mode" \
   "$python_bin" - "${cmd[@]}" <<'PY'
 import os
 import queue
@@ -756,23 +777,31 @@ import time
 
 
 def main():
-    timeout_raw = os.environ.get("CODEX_TIMEOUT_SECONDS", "0") or "0"
+    timeout_raw = os.environ.get("RUNNER_TIMEOUT_SECONDS", "0") or "0"
     try:
         timeout_seconds = int(timeout_raw)
     except ValueError:
         timeout_seconds = 0
 
-    prompt_path = os.environ.get("CODEX_PROMPT_FILE")
-    log_path = os.environ.get("CODEX_LOG_FILE")
+    prompt_path = os.environ.get("RUNNER_PROMPT_FILE")
+    log_path = os.environ.get("RUNNER_LOG_FILE")
+    prompt_mode = os.environ.get("RUNNER_PROMPT_MODE", "stdin") or "stdin"
     cmd = sys.argv[1:]
-    if not prompt_path or not log_path:
-        sys.stderr.write("missing CODEX_PROMPT_FILE or CODEX_LOG_FILE\n")
+    if not log_path:
+        sys.stderr.write("missing RUNNER_LOG_FILE\n")
+        return 2
+    if prompt_mode == "stdin" and not prompt_path:
+        sys.stderr.write("missing RUNNER_PROMPT_FILE\n")
         return 2
     if not cmd:
         sys.stderr.write("missing command args\n")
         return 2
+    if prompt_mode == "stdin":
+        prompt_handle = open(prompt_path, "rb")
+    else:
+        prompt_handle = open(os.devnull, "rb")
 
-    with open(prompt_path, "rb") as prompt, open(log_path, "w", buffering=1) as log:
+    with prompt_handle as prompt, open(log_path, "w", buffering=1) as log:
         proc = subprocess.Popen(
             cmd,
             stdin=prompt,
@@ -832,6 +861,18 @@ PY
   return $?
 }
 
+expand_runner_arg() {
+  local arg="$1"
+  local repo="$2"
+  local prompt_file="$3"
+  local last_message_file="$4"
+
+  arg=${arg//\{repo\}/$repo}
+  arg=${arg//\{prompt_file\}/$prompt_file}
+  arg=${arg//\{last_message_file\}/$last_message_file}
+  printf '%s' "$arg"
+}
+
 run_role() {
   local repo="$1"
   shift
@@ -845,19 +886,45 @@ run_role() {
   shift
   local timeout_seconds="${1:-0}"
   shift
-  local -a codex_args=("$@")
+  local prompt_mode="${1:-stdin}"
+  shift
+  local -a runner_command=()
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--" ]]; then
+      shift
+      break
+    fi
+    runner_command+=("$1")
+    shift
+  done
+  local -a runner_args=("$@")
 
   mkdir -p "$(dirname "$last_message_file")" "$(dirname "$log_file")"
 
-  local -a cmd=(codex exec "${codex_args[@]}" -C "$repo" --output-last-message "$last_message_file" -)
+  if [[ ${#runner_command[@]} -eq 0 ]]; then
+    die "runner.command is empty"
+  fi
+
+  local -a cmd=()
+  local part
+  for part in "${runner_command[@]}"; do
+    cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+  done
+  for part in "${runner_args[@]}"; do
+    cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+  done
 
   local status=0
   if [[ "${timeout_seconds:-0}" -gt 0 ]]; then
-    run_codex_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "${cmd[@]}"
+    run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "${cmd[@]}"
     status=$?
   else
     set +e
-    "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    if [[ "$prompt_mode" == "stdin" ]]; then
+      "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    else
+      "${cmd[@]}" | tee "$log_file"
+    fi
     status=${PIPESTATUS[0]}
     set -e
   fi
@@ -866,7 +933,7 @@ run_role() {
     return 124
   fi
   if [[ $status -ne 0 ]]; then
-    die "codex exec failed for role '$role' (exit $status)"
+    die "runner command failed for role '$role' (exit $status)"
   fi
 }
 
@@ -1494,9 +1561,11 @@ init_cmd() {
 
   cat > "$ralph_dir/config.json" <<'EOF'
 {
-  "codex": {
-    "args": ["--full-auto"],
-    "fast_args": []
+  "runner": {
+    "command": ["codex", "exec"],
+    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "fast_args": [],
+    "prompt_mode": "stdin"
   },
   "loops": [
     {
@@ -1643,9 +1712,6 @@ run_cmd() {
   local dry_run="$5"
 
   need_cmd jq
-  if [[ "${dry_run:-0}" -ne 1 ]]; then
-    need_cmd codex
-  fi
 
   local ralph_dir="$repo/.ralph"
   local state_file="$ralph_dir/state.json"
@@ -1660,21 +1726,43 @@ run_cmd() {
     die "config has no loops"
   fi
 
-  local -a codex_args=()
+  local -a runner_command=()
   while IFS= read -r line; do
-    codex_args+=("$line")
-  done < <(jq -r '.codex.args[]?' "$config_path")
+    runner_command+=("$line")
+  done < <(jq -r '.runner.command[]?' "$config_path")
+  if [[ ${#runner_command[@]} -eq 0 ]]; then
+    die "runner.command is required"
+  fi
 
-  local -a fast_args=()
+  local -a runner_args=()
   while IFS= read -r line; do
-    fast_args+=("$line")
-  done < <(jq -r '.codex.fast_args[]?' "$config_path")
+    runner_args+=("$line")
+  done < <(jq -r '.runner.args[]?' "$config_path")
+  if [[ ${#runner_args[@]} -eq 0 ]]; then
+    die "runner.args is required"
+  fi
 
+  local -a runner_fast_args=()
+  while IFS= read -r line; do
+    runner_fast_args+=("$line")
+  done < <(jq -r '.runner.fast_args[]?' "$config_path")
+
+  local runner_prompt_mode
+  runner_prompt_mode=$(jq -r '.runner.prompt_mode // "stdin"' "$config_path")
+  if [[ "$runner_prompt_mode" != "stdin" && "$runner_prompt_mode" != "file" ]]; then
+    die "runner.prompt_mode must be stdin or file"
+  fi
+
+  if [[ "${dry_run:-0}" -ne 1 ]]; then
+    need_exec "${runner_command[0]}"
+  fi
+
+  local -a runner_active_args=("${runner_args[@]}")
   if [[ "${fast_mode:-0}" -eq 1 ]]; then
-    if [[ ${#fast_args[@]} -gt 0 ]]; then
-      codex_args=("${fast_args[@]}")
+    if [[ ${#runner_fast_args[@]} -gt 0 ]]; then
+      runner_active_args=("${runner_fast_args[@]}")
     else
-      echo "warning: --fast set but codex.fast_args is empty; using codex.args" >&2
+      echo "warning: --fast set but runner.fast_args is empty; using runner.args" >&2
     fi
   fi
 
@@ -2111,7 +2199,7 @@ run_cmd() {
           '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
 
-        run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "${codex_args[@]}"
+        run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
         local role_status=$?
         if [[ -n "$report_guard" ]]; then
           if [[ $role_status -eq 124 ]]; then
