@@ -57,6 +57,33 @@
             },
             "required": ["enabled", "require_on_completion", "artifacts"]
           },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "require_on_completion": {"type": "boolean"}
+            },
+            "required": ["enabled", "require_on_completion"]
+          },
+          "reviewer_packet": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"}
+            },
+            "required": ["enabled"]
+          },
+          "timeouts": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "default": {"type": "integer"},
+              "planner": {"type": "integer"},
+              "implementer": {"type": "integer"},
+              "tester": {"type": "integer"},
+              "reviewer": {"type": "integer"}
+            },
+            "required": ["enabled", "default", "planner", "implementer", "tester", "reviewer"]
+          },
           "stuck": {
             "type": "object",
             "properties": {
@@ -83,6 +110,9 @@
           "checklists",
           "tests",
           "evidence",
+          "approval",
+          "reviewer_packet",
+          "timeouts",
           "stuck",
           "roles"
         ]

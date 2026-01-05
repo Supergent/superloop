@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.1.2"
+VERSION="0.1.5"
 
 usage() {
   cat <<'USAGE'
@@ -12,6 +12,7 @@ Usage:
   ralph-codex.sh init [--repo DIR] [--force]
   ralph-codex.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
   ralph-codex.sh status [--repo DIR] [--summary] [--loop ID]
+  ralph-codex.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   ralph-codex.sh cancel [--repo DIR]
   ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
   ralph-codex.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
@@ -27,6 +28,9 @@ Options:
   --fast           Use codex.fast_args (if set) instead of codex.args
   --dry-run        Read-only status summary from existing artifacts; no Codex calls
   --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
+  --by NAME        Approver name for approval decisions (default: $USER)
+  --note TEXT      Optional decision note for approval/rejection
+  --reject         Record a rejection instead of approval
   --version        Print version and exit
 
 Notes:
@@ -697,6 +701,7 @@ build_role_prompt() {
   local checklist_status="${12}"
   local checklist_remaining="${13}"
   local evidence_file="${14}"
+  local reviewer_packet="${15:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -714,6 +719,117 @@ Context files (read as needed):
 - Checklist remaining: $checklist_remaining
 - Evidence: $evidence_file
 EOF
+
+  if [[ -n "$reviewer_packet" ]]; then
+    echo "- Reviewer packet: $reviewer_packet" >> "$prompt_file"
+  fi
+}
+
+run_codex_with_timeout() {
+  local prompt_file="$1"
+  local log_file="$2"
+  local timeout_seconds="$3"
+  shift 3
+  local -a cmd=("$@")
+
+  local python_bin=""
+  python_bin=$(select_python || true)
+  if [[ -z "$python_bin" ]]; then
+    echo "warning: python not found; running without timeout enforcement" >&2
+    set +e
+    "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    local status=${PIPESTATUS[0]}
+    set -e
+    return "$status"
+  fi
+
+  CODEX_PROMPT_FILE="$prompt_file" \
+  CODEX_LOG_FILE="$log_file" \
+  CODEX_TIMEOUT_SECONDS="$timeout_seconds" \
+  "$python_bin" - "${cmd[@]}" <<'PY'
+import os
+import queue
+import subprocess
+import sys
+import threading
+import time
+
+
+def main():
+    timeout_raw = os.environ.get("CODEX_TIMEOUT_SECONDS", "0") or "0"
+    try:
+        timeout_seconds = int(timeout_raw)
+    except ValueError:
+        timeout_seconds = 0
+
+    prompt_path = os.environ.get("CODEX_PROMPT_FILE")
+    log_path = os.environ.get("CODEX_LOG_FILE")
+    cmd = sys.argv[1:]
+    if not prompt_path or not log_path:
+        sys.stderr.write("missing CODEX_PROMPT_FILE or CODEX_LOG_FILE\n")
+        return 2
+    if not cmd:
+        sys.stderr.write("missing command args\n")
+        return 2
+
+    with open(prompt_path, "rb") as prompt, open(log_path, "w", buffering=1) as log:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=prompt,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        q = queue.Queue()
+
+        def reader():
+            try:
+                for line in proc.stdout:
+                    q.put(line)
+            finally:
+                q.put(None)
+
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+
+        deadline = time.time() + timeout_seconds if timeout_seconds > 0 else None
+        timed_out = False
+
+        while True:
+            if deadline and time.time() >= deadline and proc.poll() is None:
+                timed_out = True
+                proc.terminate()
+                break
+            try:
+                line = q.get(timeout=0.1)
+            except queue.Empty:
+                if proc.poll() is not None and q.empty():
+                    break
+                continue
+            if line is None:
+                break
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            log.write(line)
+            log.flush()
+
+        if timed_out and proc.poll() is None:
+            time.sleep(2)
+            if proc.poll() is None:
+                proc.kill()
+
+        rc = proc.wait()
+        if timed_out:
+            return 124
+        return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PY
+  return $?
 }
 
 run_role() {
@@ -727,15 +843,28 @@ run_role() {
   shift
   local log_file="$1"
   shift
+  local timeout_seconds="${1:-0}"
+  shift
   local -a codex_args=("$@")
 
   mkdir -p "$(dirname "$last_message_file")" "$(dirname "$log_file")"
 
-  set +e
-  codex exec "${codex_args[@]}" -C "$repo" --output-last-message "$last_message_file" - < "$prompt_file" | tee "$log_file"
-  local status=${PIPESTATUS[0]}
-  set -e
+  local -a cmd=(codex exec "${codex_args[@]}" -C "$repo" --output-last-message "$last_message_file" -)
 
+  local status=0
+  if [[ "${timeout_seconds:-0}" -gt 0 ]]; then
+    run_codex_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "${cmd[@]}"
+    status=$?
+  else
+    set +e
+    "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+    status=${PIPESTATUS[0]}
+    set -e
+  fi
+
+  if [[ $status -eq 124 ]]; then
+    return 124
+  fi
   if [[ $status -ne 0 ]]; then
     die "codex exec failed for role '$role' (exit $status)"
   fi
@@ -783,6 +912,69 @@ extract_promise() {
   perl -0777 -ne 'if (/<promise>(.*?)<\/promise>/s) { $p=$1; $p=~s/^\s+|\s+$//g; $p=~s/\s+/ /g; print $p }' "$message_file" 2>/dev/null || true
 }
 
+write_reviewer_packet() {
+  local loop_dir="$1"
+  local loop_id="$2"
+  local iteration="$3"
+  local gate_summary="$4"
+  local test_status="$5"
+  local test_report="$6"
+  local evidence_file="$7"
+  local checklist_status="$8"
+  local checklist_remaining="$9"
+  local packet_file="${10}"
+
+  {
+    echo "# Reviewer Packet"
+    echo ""
+    echo "Loop: $loop_id"
+    echo "Iteration: $iteration"
+    echo "Generated at: $(timestamp)"
+    echo ""
+    echo "## Gate Summary"
+    if [[ -f "$gate_summary" ]]; then
+      cat "$gate_summary"
+    else
+      echo "Missing gate summary."
+    fi
+    echo ""
+    echo "## Test Status"
+    if [[ -f "$test_status" ]]; then
+      cat "$test_status"
+    else
+      echo "Missing test status."
+    fi
+    echo ""
+    echo "## Test Report"
+    if [[ -f "$test_report" ]]; then
+      cat "$test_report"
+    else
+      echo "Missing test report."
+    fi
+    echo ""
+    echo "## Checklist Status"
+    if [[ -f "$checklist_status" ]]; then
+      cat "$checklist_status"
+    else
+      echo "Missing checklist status."
+    fi
+    echo ""
+    echo "## Checklist Remaining"
+    if [[ -f "$checklist_remaining" ]]; then
+      cat "$checklist_remaining"
+    else
+      echo "Missing checklist remaining list."
+    fi
+    echo ""
+    echo "## Evidence"
+    if [[ -f "$evidence_file" ]]; then
+      cat "$evidence_file"
+    else
+      echo "Missing evidence manifest."
+    fi
+  } > "$packet_file"
+}
+
 write_iteration_notes() {
   local notes_file="$1"
   local loop_id="$2"
@@ -794,6 +986,7 @@ write_iteration_notes() {
   local evidence_status="${8:-}"
   local stuck_streak="${9:-}"
   local stuck_threshold="${10:-}"
+  local approval_status="${11:-}"
 
   cat <<EOF > "$notes_file"
 Iteration: $iteration
@@ -802,6 +995,7 @@ Promise matched: $promise_matched
 Tests: $tests_status (mode: $tests_mode)
 Checklist: $checklist_status
 Evidence: ${evidence_status:-skipped}
+Approval: ${approval_status:-skipped}
 Stuck streak: ${stuck_streak:-0}/${stuck_threshold:-0}
 Generated at: $(timestamp)
 
@@ -818,10 +1012,160 @@ write_gate_summary() {
   local checklist_status="$4"
   local evidence_status="$5"
   local stuck_status="$6"
+  local approval_status="${7:-skipped}"
 
-  printf 'promise=%s tests=%s checklist=%s evidence=%s stuck=%s\n' \
-    "$promise_matched" "$tests_status" "$checklist_status" "$evidence_status" "$stuck_status" \
+  printf 'promise=%s tests=%s checklist=%s evidence=%s stuck=%s approval=%s\n' \
+    "$promise_matched" "$tests_status" "$checklist_status" "$evidence_status" "$stuck_status" "$approval_status" \
     > "$summary_file"
+}
+
+read_approval_status() {
+  local approval_file="$1"
+
+  if [[ ! -f "$approval_file" ]]; then
+    echo "none"
+    return 0
+  fi
+
+  local status
+  status=$(jq -r '.status // "pending"' "$approval_file" 2>/dev/null || true)
+  if [[ -z "$status" || "$status" == "null" ]]; then
+    status="pending"
+  fi
+  echo "$status"
+}
+
+write_approval_request() {
+  local approval_file="$1"
+  local loop_id="$2"
+  local run_id="$3"
+  local iteration="$4"
+  local iteration_started_at="$5"
+  local iteration_ended_at="$6"
+  local promise_expected="$7"
+  local promise_text="$8"
+  local promise_matched="$9"
+  local tests_status="${10}"
+  local checklist_status="${11}"
+  local evidence_status="${12}"
+  local gate_summary_file="${13}"
+  local evidence_file="${14}"
+  local reviewer_report="${15}"
+  local test_report="${16}"
+  local plan_file="${17}"
+  local notes_file="${18}"
+
+  local promise_matched_json="false"
+  if [[ "$promise_matched" == "true" ]]; then
+    promise_matched_json="true"
+  fi
+
+  jq -n \
+    --arg status "pending" \
+    --arg loop_id "$loop_id" \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    --arg requested_at "$(timestamp)" \
+    --arg iteration_started_at "$iteration_started_at" \
+    --arg iteration_ended_at "$iteration_ended_at" \
+    --arg promise_expected "$promise_expected" \
+    --arg promise_text "$promise_text" \
+    --argjson promise_matched "$promise_matched_json" \
+    --arg tests_status "$tests_status" \
+    --arg checklist_status "$checklist_status" \
+    --arg evidence_status "$evidence_status" \
+    --arg gate_summary_file "$gate_summary_file" \
+    --arg evidence_file "$evidence_file" \
+    --arg reviewer_report "$reviewer_report" \
+    --arg test_report "$test_report" \
+    --arg plan_file "$plan_file" \
+    --arg notes_file "$notes_file" \
+    '{
+      status: $status,
+      loop_id: $loop_id,
+      run_id: $run_id,
+      iteration: $iteration,
+      requested_at: $requested_at,
+      iteration_started_at: $iteration_started_at,
+      iteration_ended_at: $iteration_ended_at,
+      candidate: {
+        promise: {
+          expected: $promise_expected,
+          text: (if ($promise_text | length) > 0 then $promise_text else null end),
+          matched: $promise_matched
+        },
+        gates: {
+          tests: $tests_status,
+          checklist: $checklist_status,
+          evidence: $evidence_status
+        }
+      },
+      files: {
+        gate_summary: $gate_summary_file,
+        evidence: $evidence_file,
+        reviewer_report: $reviewer_report,
+        test_report: $test_report,
+        plan: $plan_file,
+        iteration_notes: $notes_file
+      }
+    } | with_entries(select(.value != null))' \
+    > "$approval_file"
+}
+
+append_decision_log() {
+  local loop_dir="$1"
+  local loop_id="$2"
+  local run_id="$3"
+  local iteration="$4"
+  local decision="$5"
+  local decided_by="$6"
+  local note="$7"
+  local approval_file="$8"
+  local decided_at="${9:-}"
+
+  local decisions_jsonl="$loop_dir/decisions.jsonl"
+  local decisions_md="$loop_dir/decisions.md"
+  if [[ -z "$decided_at" ]]; then
+    decided_at=$(timestamp)
+  fi
+
+  jq -c -n \
+    --arg timestamp "$decided_at" \
+    --arg loop_id "$loop_id" \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    --arg decision "$decision" \
+    --arg decided_by "$decided_by" \
+    --arg note "$note" \
+    --arg approval_file "$approval_file" \
+    '{
+      timestamp: $timestamp,
+      loop_id: $loop_id,
+      run_id: $run_id,
+      iteration: $iteration,
+      decision: $decision,
+      by: $decided_by,
+      note: (if ($note | length) > 0 then $note else null end),
+      approval_file: (if ($approval_file | length) > 0 then $approval_file else null end)
+    } | with_entries(select(.value != null))' \
+    >> "$decisions_jsonl"
+
+  {
+    echo "## $decided_at $decision"
+    echo ""
+    echo "- Loop: $loop_id"
+    echo "- Run: $run_id"
+    echo "- Iteration: $iteration"
+    echo "- Decision: $decision"
+    echo "- By: $decided_by"
+    if [[ -n "$note" ]]; then
+      echo "- Note: $note"
+    fi
+    if [[ -n "$approval_file" ]]; then
+      echo "- Approval file: $approval_file"
+    fi
+    echo ""
+  } >> "$decisions_md"
 }
 
 log_event() {
@@ -880,11 +1224,12 @@ append_run_summary() {
   local tests_status="${12}"
   local checklist_status="${13}"
   local evidence_status="${14}"
-  local stuck_streak="${15}"
-  local stuck_threshold="${16}"
-  local completion_ok="${17}"
-  local loop_dir="${18}"
-  local events_file="${19}"
+  local approval_status="${15}"
+  local stuck_streak="${16}"
+  local stuck_threshold="${17}"
+  local completion_ok="${18}"
+  local loop_dir="${19}"
+  local events_file="${20}"
 
   local plan_file="$loop_dir/plan.md"
   local implementer_report="$loop_dir/implementer.md"
@@ -897,10 +1242,14 @@ append_run_summary() {
   local evidence_file="$loop_dir/evidence.json"
   local summary_file_gate="$loop_dir/gate-summary.txt"
   local notes_file="$loop_dir/iteration_notes.md"
+  local reviewer_packet="$loop_dir/reviewer-packet.md"
+  local approval_file="$loop_dir/approval.json"
+  local decisions_jsonl="$loop_dir/decisions.jsonl"
+  local decisions_md="$loop_dir/decisions.md"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
-  local evidence_meta summary_meta notes_meta events_meta
+  local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
   plan_meta=$(json_or_default "$plan_meta" "{}")
@@ -926,6 +1275,14 @@ append_run_summary() {
   notes_meta=$(json_or_default "$notes_meta" "{}")
   events_meta=$(file_meta_json "${events_file#$repo/}" "$events_file")
   events_meta=$(json_or_default "$events_meta" "{}")
+  reviewer_packet_meta=$(file_meta_json "${reviewer_packet#$repo/}" "$reviewer_packet")
+  reviewer_packet_meta=$(json_or_default "$reviewer_packet_meta" "{}")
+  approval_meta=$(file_meta_json "${approval_file#$repo/}" "$approval_file" "approval")
+  approval_meta=$(json_or_default "$approval_meta" "{}")
+  decisions_meta=$(file_meta_json "${decisions_jsonl#$repo/}" "$decisions_jsonl")
+  decisions_meta=$(json_or_default "$decisions_meta" "{}")
+  decisions_md_meta=$(file_meta_json "${decisions_md#$repo/}" "$decisions_md")
+  decisions_md_meta=$(json_or_default "$decisions_md_meta" "{}")
 
   local artifacts_json
   artifacts_json=$(jq -n \
@@ -941,6 +1298,10 @@ append_run_summary() {
     --argjson gate_summary "$summary_meta" \
     --argjson iteration_notes "$notes_meta" \
     --argjson events "$events_meta" \
+    --argjson reviewer_packet "$reviewer_packet_meta" \
+    --argjson approval "$approval_meta" \
+    --argjson decisions "$decisions_meta" \
+    --argjson decisions_md "$decisions_md_meta" \
     '{
       plan: $plan,
       implementer: $implementer,
@@ -953,7 +1314,11 @@ append_run_summary() {
       evidence: $evidence,
       gate_summary: $gate_summary,
       iteration_notes: $iteration_notes,
-      events: $events
+      events: $events,
+      reviewer_packet: $reviewer_packet,
+      approval: $approval,
+      decisions: $decisions,
+      decisions_md: $decisions_md
     }')
   artifacts_json=$(json_or_default "$artifacts_json" "{}")
 
@@ -979,6 +1344,7 @@ append_run_summary() {
     --arg tests_status "$tests_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
+    --arg approval_status "$approval_status" \
     --argjson stuck_streak "$stuck_streak" \
     --argjson stuck_threshold "$stuck_threshold" \
     --argjson completion_ok "$completion_json" \
@@ -996,7 +1362,8 @@ append_run_summary() {
       gates: {
         tests: $tests_status,
         checklist: $checklist_status,
-        evidence: $evidence_status
+        evidence: $evidence_status,
+        approval: $approval_status
       },
       tests_mode: $tests_mode,
       stuck: { streak: $stuck_streak, threshold: $stuck_threshold },
@@ -1043,7 +1410,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
@@ -1147,6 +1514,21 @@ init_cmd() {
         "require_on_completion": true,
         "artifacts": []
       },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": true
+      },
+      "reviewer_packet": {
+        "enabled": true
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 900,
+        "planner": 300,
+        "implementer": 900,
+        "tester": 300,
+        "reviewer": 1200
+      },
       "stuck": {
         "enabled": true,
         "threshold": 3,
@@ -1237,7 +1619,8 @@ EOF
 You are the Reviewer.
 
 Responsibilities:
-- Read the spec, checklist status, test status, and reports.
+- Read the reviewer packet first (if present), then verify against the spec as needed.
+- Read the checklist status, test status, and reports.
 - Validate that requirements are met and gates are green.
 - Write a short review report.
 
@@ -1354,10 +1737,14 @@ run_cmd() {
     local checklist_status="$loop_dir/checklist-status.json"
     local checklist_remaining="$loop_dir/checklist-remaining.md"
     local evidence_file="$loop_dir/evidence.json"
+    local reviewer_packet="$loop_dir/reviewer-packet.md"
     local summary_file="$loop_dir/gate-summary.txt"
     local events_file="$loop_dir/events.jsonl"
     local run_summary_file="$loop_dir/run-summary.json"
     local timeline_file="$loop_dir/timeline.md"
+    local approval_file="$loop_dir/approval.json"
+    local decisions_jsonl="$loop_dir/decisions.jsonl"
+    local decisions_md="$loop_dir/decisions.md"
 
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
@@ -1395,6 +1782,27 @@ run_cmd() {
     local evidence_require
     evidence_require=$(jq -r '.evidence.require_on_completion // false' <<<"$loop_json")
 
+    local approval_enabled
+    approval_enabled=$(jq -r '.approval.enabled // false' <<<"$loop_json")
+    local approval_require
+    approval_require=$(jq -r '.approval.require_on_completion // false' <<<"$loop_json")
+
+    local timeouts_enabled
+    timeouts_enabled=$(jq -r '.timeouts.enabled // false' <<<"$loop_json")
+    local timeout_default
+    timeout_default=$(jq -r '.timeouts.default // 0' <<<"$loop_json")
+    local timeout_planner
+    timeout_planner=$(jq -r '.timeouts.planner // 0' <<<"$loop_json")
+    local timeout_implementer
+    timeout_implementer=$(jq -r '.timeouts.implementer // 0' <<<"$loop_json")
+    local timeout_tester
+    timeout_tester=$(jq -r '.timeouts.tester // 0' <<<"$loop_json")
+    local timeout_reviewer
+    timeout_reviewer=$(jq -r '.timeouts.reviewer // 0' <<<"$loop_json")
+
+    local reviewer_packet_enabled
+    reviewer_packet_enabled=$(jq -r '.reviewer_packet.enabled // false' <<<"$loop_json")
+
     local stuck_enabled
     stuck_enabled=$(jq -r '.stuck.enabled // false' <<<"$loop_json")
     local stuck_threshold
@@ -1410,6 +1818,10 @@ run_cmd() {
     fi
     if [[ "$stuck_threshold" -le 0 ]]; then
       stuck_enabled="false"
+    fi
+
+    if [[ "$reviewer_packet_enabled" != "true" ]]; then
+      reviewer_packet=""
     fi
 
     if [[ "${dry_run:-0}" -eq 1 ]]; then
@@ -1452,7 +1864,12 @@ run_cmd() {
         stuck_value="${stuck_streak_read}/${stuck_threshold}"
       fi
 
-      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status checklist=$checklist_status_text evidence=$evidence_status stuck=$stuck_value"
+      local approval_status="none"
+      if [[ "$approval_enabled" == "true" && -f "$approval_file" ]]; then
+        approval_status=$(read_approval_status "$approval_file")
+      fi
+
+      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
       if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
         return 0
       fi
@@ -1470,6 +1887,110 @@ run_cmd() {
       --argjson checklists "$checklist_patterns_json" \
       '{spec_file: $spec_file, max_iterations: $max_iterations, tests_mode: $tests_mode, test_commands: $test_commands, checklists: $checklists}')
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_start" "$loop_start_data"
+
+    local approval_required=0
+    if [[ "$approval_enabled" == "true" && "$approval_require" == "true" ]]; then
+      approval_required=1
+    fi
+
+    if [[ "$approval_enabled" == "true" ]]; then
+      local approval_state
+      approval_state=$(read_approval_status "$approval_file")
+      if [[ "$approval_state" == "pending" ]]; then
+        local approval_wait_data
+        approval_wait_data=$(jq -n --arg approval_file "${approval_file#$repo/}" '{status: "pending", approval_file: $approval_file}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_wait" "$approval_wait_data"
+        echo "Approval pending for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        if [[ "${dry_run:-0}" -ne 1 ]]; then
+          write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+        fi
+        return 0
+      elif [[ "$approval_state" == "approved" ]]; then
+        local approval_run_id approval_iteration approval_promise_text approval_promise_matched
+        local approval_tests approval_checklist approval_evidence approval_started_at approval_ended_at
+        local approval_decision_by approval_decision_note approval_decision_at
+        approval_run_id=$(jq -r '.run_id // ""' "$approval_file")
+        approval_iteration=$(jq -r '.iteration // 0' "$approval_file")
+        approval_promise_text=$(jq -r '.candidate.promise.text // ""' "$approval_file")
+        approval_promise_matched=$(jq -r '.candidate.promise.matched // false' "$approval_file")
+        approval_tests=$(jq -r '.candidate.gates.tests // "unknown"' "$approval_file")
+        approval_checklist=$(jq -r '.candidate.gates.checklist // "unknown"' "$approval_file")
+        approval_evidence=$(jq -r '.candidate.gates.evidence // "unknown"' "$approval_file")
+        approval_started_at=$(jq -r '.iteration_started_at // ""' "$approval_file")
+        approval_ended_at=$(jq -r '.iteration_ended_at // ""' "$approval_file")
+        approval_decision_by=$(jq -r '.decision.by // ""' "$approval_file")
+        approval_decision_note=$(jq -r '.decision.note // ""' "$approval_file")
+        approval_decision_at=$(jq -r '.decision.at // ""' "$approval_file")
+
+        if [[ -z "$approval_run_id" || "$approval_run_id" == "null" ]]; then
+          approval_run_id="$run_id"
+        fi
+        if [[ "$approval_iteration" -le 0 ]]; then
+          approval_iteration="$iteration"
+        fi
+        if [[ -z "$approval_started_at" || "$approval_started_at" == "null" ]]; then
+          approval_started_at=$(timestamp)
+        fi
+        if [[ -z "$approval_ended_at" || "$approval_ended_at" == "null" ]]; then
+          approval_ended_at="$approval_started_at"
+        fi
+
+        local promise_matched="$approval_promise_matched"
+        if [[ "$promise_matched" != "true" ]]; then
+          promise_matched="false"
+        fi
+        local tests_status="$approval_tests"
+        local checklist_status_text="$approval_checklist"
+        local evidence_status="$approval_evidence"
+        local approval_status="approved"
+
+        local stuck_streak="0"
+        if [[ "$stuck_enabled" == "true" ]]; then
+          stuck_streak=$(read_stuck_streak "$loop_dir/stuck.json")
+        fi
+        local stuck_value="n/a"
+        if [[ "$stuck_enabled" == "true" ]]; then
+          stuck_value="${stuck_streak}/${stuck_threshold}"
+        fi
+
+        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+
+        local approval_consume_data
+        approval_consume_data=$(jq -n \
+          --arg status "approved" \
+          --arg by "$approval_decision_by" \
+          --arg note "$approval_decision_note" \
+          --arg at "$approval_decision_at" \
+          '{status: $status, by: (if ($by | length) > 0 then $by else null end), note: (if ($note | length) > 0 then $note else null end), at: (if ($at | length) > 0 then $at else null end)}')
+        log_event "$events_file" "$loop_id" "$approval_iteration" "$approval_run_id" "approval_consumed" "$approval_consume_data"
+
+        local completion_ok=1
+        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+        write_timeline "$run_summary_file" "$timeline_file"
+
+        local loop_complete_data
+        loop_complete_data=$(jq -n \
+          --argjson iteration "$approval_iteration" \
+          --arg run_id "$approval_run_id" \
+          '{iteration: $iteration, run_id: $run_id, approval: true}')
+        log_event "$events_file" "$loop_id" "$approval_iteration" "$approval_run_id" "loop_complete" "$loop_complete_data"
+        echo "Loop '$loop_id' complete at iteration $approval_iteration (approved)."
+        rm -f "$approval_file"
+
+        iteration=1
+        if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
+          write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+          return 0
+        fi
+        continue
+      elif [[ "$approval_state" == "rejected" ]]; then
+        local approval_reject_data
+        approval_reject_data=$(jq -n --arg approval_file "${approval_file#$repo/}" '{status: "rejected", approval_file: $approval_file}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_rejected" "$approval_reject_data"
+        rm -f "$approval_file"
+      fi
+    fi
 
     while true; do
       if [[ $max_iterations -gt 0 && $iteration -gt $max_iterations ]]; then
@@ -1517,12 +2038,28 @@ run_cmd() {
           "$test_status" \
           "$checklist_status" \
           "$checklist_remaining" \
-          "$evidence_file"
+          "$evidence_file" \
+          "$reviewer_packet"
+
+        if [[ "$role" == "reviewer" && "$reviewer_packet_enabled" == "true" && -n "$reviewer_packet" ]]; then
+          write_reviewer_packet \
+            "$loop_dir" \
+            "$loop_id" \
+            "$iteration" \
+            "$summary_file" \
+            "$test_status" \
+            "$test_report" \
+            "$evidence_file" \
+            "$checklist_status" \
+            "$checklist_remaining" \
+            "$reviewer_packet"
+        fi
 
         local last_message_file="$last_messages_dir/${role}.txt"
         local role_log="$log_dir/${role}.log"
         local report_guard=""
         local report_snapshot=""
+        local role_timeout_seconds=0
 
         case "$role" in
           planner)
@@ -1543,6 +2080,29 @@ run_cmd() {
           snapshot_file "$report_guard" "$report_snapshot"
         fi
 
+        if [[ "$timeouts_enabled" == "true" ]]; then
+          case "$role" in
+            planner)
+              role_timeout_seconds="$timeout_planner"
+              ;;
+            implementer)
+              role_timeout_seconds="$timeout_implementer"
+              ;;
+            tester)
+              role_timeout_seconds="$timeout_tester"
+              ;;
+            reviewer)
+              role_timeout_seconds="$timeout_reviewer"
+              ;;
+            *)
+              role_timeout_seconds="$timeout_default"
+              ;;
+          esac
+          if [[ -z "${role_timeout_seconds:-}" || "$role_timeout_seconds" -le 0 ]]; then
+            role_timeout_seconds="$timeout_default"
+          fi
+        fi
+
         local role_start_data
         role_start_data=$(jq -n \
           --arg prompt_file "$prompt_file" \
@@ -1551,9 +2111,27 @@ run_cmd() {
           '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
 
-        run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "${codex_args[@]}"
+        run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "${codex_args[@]}"
+        local role_status=$?
         if [[ -n "$report_guard" ]]; then
-          restore_if_unchanged "$report_guard" "$report_snapshot"
+          if [[ $role_status -eq 124 ]]; then
+            rm -f "$report_snapshot"
+          else
+            restore_if_unchanged "$report_guard" "$report_snapshot"
+          fi
+        fi
+        if [[ $role_status -eq 124 ]]; then
+          local timeout_data
+          timeout_data=$(jq -n \
+            --arg role "$role" \
+            --argjson timeout "$role_timeout_seconds" \
+            '{role: $role, timeout_seconds: $timeout}')
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_timeout" "$timeout_data" "$role" "timeout"
+          echo "Role '$role' timed out after ${role_timeout_seconds}s."
+          if [[ "${dry_run:-0}" -ne 1 ]]; then
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+          fi
+          return 1
         fi
         local role_end_data
         role_end_data=$(jq -n \
@@ -1590,7 +2168,7 @@ run_cmd() {
       local checklist_start_data
       checklist_start_data=$(jq -n --argjson patterns "$checklist_patterns_json" '{patterns: $patterns}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "checklist_start" "$checklist_start_data"
-      if check_checklists "$repo" "$loop_dir" "${checklist_patterns[@]}"; then
+      if check_checklists "$repo" "$loop_dir" "${checklist_patterns[@]:-}"; then
         checklist_ok=1
         checklist_status_text="ok"
       else
@@ -1681,14 +2259,26 @@ run_cmd() {
         evidence_gate_ok=$evidence_ok
       fi
 
-      local completion_ok=0
+      local candidate_ok=0
       if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
+        candidate_ok=1
+      fi
+
+      local approval_status="skipped"
+      local approval_ok=1
+      if [[ $approval_required -eq 1 && $candidate_ok -eq 1 ]]; then
+        approval_status="pending"
+        approval_ok=0
+      fi
+
+      local completion_ok=0
+      if [[ $candidate_ok -eq 1 && $approval_ok -eq 1 ]]; then
         completion_ok=1
       fi
 
       local stuck_streak="0"
       local stuck_triggered="false"
-      if [[ $completion_ok -eq 0 && "$stuck_enabled" == "true" ]]; then
+      if [[ $completion_ok -eq 0 && "$stuck_enabled" == "true" && $candidate_ok -eq 0 ]]; then
         local stuck_result
         stuck_result=$(update_stuck_state "$repo" "$loop_dir" "$stuck_threshold" "${stuck_ignore[@]}")
         local stuck_rc=$?
@@ -1697,12 +2287,12 @@ run_cmd() {
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
           stuck_triggered="true"
-          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold"
+          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
           local stuck_value="n/a"
           if [[ "$stuck_enabled" == "true" ]]; then
             stuck_value="${stuck_streak}/${stuck_threshold}"
           fi
-          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value"
+          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
           local stuck_data
           stuck_data=$(jq -n \
             --argjson streak "$stuck_streak" \
@@ -1735,20 +2325,21 @@ run_cmd() {
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
       fi
 
-      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold"
+      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
       local stuck_value="n/a"
       if [[ "$stuck_enabled" == "true" ]]; then
         stuck_value="${stuck_streak}/${stuck_threshold}"
       fi
-      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value"
+      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
       local gates_data
       gates_data=$(jq -n \
         --argjson promise "$promise_matched_json" \
         --arg tests "$tests_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
+        --arg approval "$approval_status" \
         --arg stuck "$stuck_value" \
-        '{promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, stuck: $stuck}')
+        '{promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "gates_evaluated" "$gates_data"
 
       local iteration_ended_at
@@ -1766,11 +2357,48 @@ run_cmd() {
         --arg tests "$tests_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
-        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
+        --arg approval "$approval_status" \
+        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, approval: $approval}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
 
-      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
       write_timeline "$run_summary_file" "$timeline_file"
+
+      if [[ $approval_required -eq 1 && $candidate_ok -eq 1 ]]; then
+        write_approval_request \
+          "$approval_file" \
+          "$loop_id" \
+          "$run_id" \
+          "$iteration" \
+          "$iteration_started_at" \
+          "$iteration_ended_at" \
+          "$completion_promise" \
+          "$promise_text" \
+          "$promise_matched" \
+          "$tests_status" \
+          "$checklist_status_text" \
+          "$evidence_status" \
+          "${summary_file#$repo/}" \
+          "${evidence_file#$repo/}" \
+          "${reviewer_report#$repo/}" \
+          "${test_report#$repo/}" \
+          "${plan_file#$repo/}" \
+          "${notes_file#$repo/}"
+
+        local approval_request_data
+        approval_request_data=$(jq -n \
+          --arg approval_file "${approval_file#$repo/}" \
+          --argjson promise "$promise_matched_json" \
+          --arg tests "$tests_status" \
+          --arg checklist "$checklist_status_text" \
+          --arg evidence "$evidence_status" \
+          '{approval_file: $approval_file, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
+
+        echo "Approval required for loop '$loop_id'. Run: ralph-codex.sh approve --repo $repo --loop $loop_id"
+        write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+        return 0
+      fi
 
       if [[ $completion_ok -eq 1 ]]; then
         local loop_complete_data
@@ -1840,6 +2468,7 @@ status_cmd() {
           "tests=" + ($e.gates.tests // "unknown"),
           "checklist=" + ($e.gates.checklist // "unknown"),
           "evidence=" + ($e.gates.evidence // "unknown"),
+          "approval=" + ($e.gates.approval // "unknown"),
           "evidence_file=" + ($e.artifacts.evidence.path // "unknown"),
           "evidence_exists=" + (($e.artifacts.evidence.exists // false) | tostring),
           "evidence_sha256=" + ($e.artifacts.evidence.sha256 // "unknown"),
@@ -1871,6 +2500,81 @@ cancel_cmd() {
 
   rm "$state_file"
   echo "Cancelled loop state."
+}
+
+approve_cmd() {
+  local repo="$1"
+  local loop_id="$2"
+  local approver="$3"
+  local note="$4"
+  local reject="$5"
+
+  need_cmd jq
+
+  if [[ -z "$loop_id" ]]; then
+    die "--loop is required for approve"
+  fi
+
+  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local approval_file="$loop_dir/approval.json"
+  local events_file="$loop_dir/events.jsonl"
+
+  if [[ ! -f "$approval_file" ]]; then
+    die "no approval request found for loop '$loop_id'"
+  fi
+
+  local status
+  status=$(jq -r '.status // "pending"' "$approval_file")
+  if [[ "$status" != "pending" ]]; then
+    die "approval request is not pending (status=$status)"
+  fi
+
+  local run_id iteration
+  run_id=$(jq -r '.run_id // ""' "$approval_file")
+  iteration=$(jq -r '.iteration // 0' "$approval_file")
+  if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+    run_id="unknown"
+  fi
+  if [[ -z "$iteration" || "$iteration" == "null" ]]; then
+    iteration=0
+  fi
+
+  local decided_by="$approver"
+  if [[ -z "$decided_by" ]]; then
+    decided_by="${USER:-unknown}"
+  fi
+  local decision="approved"
+  if [[ "${reject:-0}" -eq 1 ]]; then
+    decision="rejected"
+  fi
+  local decided_at
+  decided_at=$(timestamp)
+
+  jq \
+    --arg status "$decision" \
+    --arg decided_by "$decided_by" \
+    --arg decided_at "$decided_at" \
+    --arg note "$note" \
+    '.status = $status
+     | .decision = {status: $status, by: $decided_by, note: (if ($note | length) > 0 then $note else null end), at: $decided_at}
+     | .decided_at = $decided_at
+     | .decided_by = $decided_by
+     | .decided_note = (if ($note | length) > 0 then $note else null end)' \
+    "$approval_file" > "${approval_file}.tmp"
+  mv "${approval_file}.tmp" "$approval_file"
+
+  append_decision_log "$loop_dir" "$loop_id" "$run_id" "$iteration" "$decision" "$decided_by" "$note" "${approval_file#$repo/}" "$decided_at"
+
+  local decision_data
+  decision_data=$(jq -n \
+    --arg status "$decision" \
+    --arg by "$decided_by" \
+    --arg note "$note" \
+    --arg at "$decided_at" \
+    '{status: $status, by: $by, note: (if ($note | length) > 0 then $note else null end), at: $at}')
+  log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_decision" "$decision_data" "human" "$decision"
+
+  echo "Recorded approval decision ($decision) for loop '$loop_id'."
 }
 
 select_python() {
@@ -2047,6 +2751,10 @@ report_cmd() {
   local events_file="$loop_dir/events.jsonl"
   local gate_summary="$loop_dir/gate-summary.txt"
   local evidence_file="$loop_dir/evidence.json"
+  local reviewer_packet="$loop_dir/reviewer-packet.md"
+  local approval_file="$loop_dir/approval.json"
+  local decisions_md="$loop_dir/decisions.md"
+  local decisions_jsonl="$loop_dir/decisions.jsonl"
   local report_file="$out_path"
   if [[ -z "$report_file" ]]; then
     report_file="$loop_dir/report.html"
@@ -2058,7 +2766,7 @@ report_cmd() {
     die "missing python3/python for report generation"
   fi
 
-  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$report_file" <<'PY'
+  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$reviewer_packet" "$approval_file" "$decisions_md" "$decisions_jsonl" "$report_file" <<'PY'
 import datetime
 import html
 import json
@@ -2102,12 +2810,20 @@ timeline_path = sys.argv[3]
 events_path = sys.argv[4]
 gate_path = sys.argv[5]
 evidence_path = sys.argv[6]
-out_path = sys.argv[7]
+reviewer_packet_path = sys.argv[7]
+approval_path = sys.argv[8]
+decisions_md_path = sys.argv[9]
+decisions_jsonl_path = sys.argv[10]
+out_path = sys.argv[11]
 
 summary = read_json(summary_path)
 timeline = read_text(timeline_path)
 gate_summary = read_text(gate_path).strip()
 evidence = read_json(evidence_path)
+reviewer_packet = read_text(reviewer_packet_path).strip()
+approval = read_json(approval_path)
+decisions_md = read_text(decisions_md_path).strip()
+decisions_jsonl = read_text(decisions_jsonl_path).strip()
 
 events_lines = []
 if os.path.exists(events_path):
@@ -2158,6 +2874,23 @@ if evidence is not None:
     sections.append("<h2>Evidence Manifest</h2><pre>{}</pre>".format(escape_block(json_block(evidence))))
 else:
     sections.append("<h2>Evidence Manifest</h2><p>No evidence manifest found.</p>")
+
+if reviewer_packet:
+    sections.append("<h2>Reviewer Packet</h2><pre>{}</pre>".format(escape_block(reviewer_packet)))
+else:
+    sections.append("<h2>Reviewer Packet</h2><p>No reviewer packet found.</p>")
+
+if approval is not None:
+    sections.append("<h2>Approval Request</h2><pre>{}</pre>".format(escape_block(json_block(approval))))
+else:
+    sections.append("<h2>Approval Request</h2><p>No approval request found.</p>")
+
+if decisions_md:
+    sections.append("<h2>Decisions</h2><pre>{}</pre>".format(escape_block(decisions_md)))
+elif decisions_jsonl:
+    sections.append("<h2>Decisions</h2><pre>{}</pre>".format(escape_block(decisions_jsonl)))
+else:
+    sections.append("<h2>Decisions</h2><p>No decisions found.</p>")
 
 html_doc = """<!doctype html>
 <html>
@@ -2226,6 +2959,9 @@ main() {
   local force=0
   local fast=0
   local dry_run=0
+  local approver=""
+  local note=""
+  local reject=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2252,6 +2988,18 @@ main() {
       --out)
         out_path="$2"
         shift 2
+        ;;
+      --by)
+        approver="$2"
+        shift 2
+        ;;
+      --note)
+        note="$2"
+        shift 2
+        ;;
+      --reject)
+        reject=1
+        shift
         ;;
       --force)
         force=1
@@ -2293,6 +3041,9 @@ main() {
       ;;
     status)
       status_cmd "$repo" "$summary" "$loop_id" "$config_path"
+      ;;
+    approve)
+      approve_cmd "$repo" "$loop_id" "$approver" "$note" "$reject"
       ;;
     cancel)
       cancel_cmd "$repo"

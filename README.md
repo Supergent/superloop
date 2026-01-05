@@ -54,6 +54,21 @@ This is a Codex CLI wrapper that runs a multi-role Ralph-style loop (planner, im
         "require_on_completion": true,
         "artifacts": ["README.md", "src/index.ts"]
       },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": true
+      },
+      "reviewer_packet": {
+        "enabled": true
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 900,
+        "planner": 300,
+        "implementer": 900,
+        "tester": 300,
+        "reviewer": 1200
+      },
       "stuck": {
         "enabled": true,
         "threshold": 3,
@@ -92,8 +107,12 @@ Each loop writes to:
   checklist-status.json
   checklist-remaining.md
   evidence.json
+  reviewer-packet.md
+  approval.json
   gate-summary.txt
   events.jsonl
+  decisions.jsonl
+  decisions.md
   run-summary.json
   timeline.md
   report.html
@@ -106,6 +125,7 @@ Each loop writes to:
 - `init`: Create `.ralph/` scaffolding.
 - `run`: Start or resume the loop.
 - `status`: Print `.ralph/state.json`.
+- `approve`: Record an approval or rejection for a pending approval gate.
 - `cancel`: Remove `.ralph/state.json`.
 - `run --fast`: Use `codex.fast_args` if provided (falls back to `codex.args`).
 - `run --dry-run`: Read-only status summary from existing artifacts; no Codex calls.
@@ -126,4 +146,7 @@ Each loop writes to:
 - Gate summaries are written to `gate-summary.txt` each iteration (promise/tests/checklists/evidence/stuck).
 - Anti-churn: role prompts discourage unnecessary edits, and the wrapper restores plan/report files when content is unchanged to avoid rewrite noise.
 - Evidence manifests are written to `evidence.json` when enabled and include artifact hashes/mtimes and gate-produced file metadata.
+- Reviewer packets are written to `reviewer-packet.md` when enabled to summarize gates, tests, checklists, and evidence for the reviewer.
+- Optional per-role timeouts can stop a run if a Codex role exceeds the configured limit.
+- Optional approval gating can pause completion until a human approves (records decisions in `decisions.jsonl`/`decisions.md`).
 - Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5 - 2026-01-05
+- Fix approval decision updates so empty notes do not blank approval.json.
+
+## 0.1.4 - 2026-01-05
+- Add per-role timeout support to prevent hanging Codex runs.
+- Add reviewer packet generation to reduce reviewer context load.
+
+## 0.1.3 - 2026-01-05
+- Add optional approval gating with `approve` command and decision logs.
+- Include approval/decision artifacts in run summaries and reports.
+
 ## 0.1.2 - 2026-01-05
 - Add `status --summary` to show latest gate/evidence snapshot from run summaries.
 - Add CI report generation and upload of `report.html` artifact.
