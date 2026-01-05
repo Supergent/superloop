@@ -28,6 +28,8 @@ This is a Codex CLI wrapper that runs a multi-role Ralph-style loop (planner, im
 /Users/multiplicity/Work/ralph-codex/ralph-codex.sh run --repo /path/to/repo
 ```
 
+For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
+
 ## Config overview
 
 `.ralph/config.json` controls the loop. Example:
