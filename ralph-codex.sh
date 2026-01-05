@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.1.1"
+VERSION="0.1.2"
 
 usage() {
   cat <<'USAGE'
@@ -11,7 +11,7 @@ Ralph++ Codex Wrapper
 Usage:
   ralph-codex.sh init [--repo DIR] [--force]
   ralph-codex.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
-  ralph-codex.sh status [--repo DIR]
+  ralph-codex.sh status [--repo DIR] [--summary] [--loop ID]
   ralph-codex.sh cancel [--repo DIR]
   ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
   ralph-codex.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
@@ -21,7 +21,8 @@ Options:
   --repo DIR       Repository root (default: current directory)
   --config FILE    Config file path (default: .ralph/config.json)
   --schema FILE    Schema file path (default: schema/config.schema.json)
-  --loop ID        Run only the loop with this id
+  --loop ID        Run only the loop with this id (or select loop for status/report)
+  --summary        Print latest gate/evidence snapshot from run-summary.json
   --force          Overwrite existing .ralph files on init
   --fast           Use codex.fast_args (if set) instead of codex.args
   --dry-run        Read-only status summary from existing artifacts; no Codex calls
@@ -1804,6 +1805,51 @@ run_cmd() {
 
 status_cmd() {
   local repo="$1"
+  local summary="${2:-0}"
+  local loop_id="${3:-}"
+  local config_path="${4:-}"
+
+  if [[ "${summary:-0}" -eq 1 ]]; then
+    need_cmd jq
+    local target_loop="$loop_id"
+    if [[ -z "$target_loop" && -n "$config_path" && -f "$config_path" ]]; then
+      target_loop=$(jq -r '.loops[0].id // ""' "$config_path")
+    fi
+    if [[ -z "$target_loop" || "$target_loop" == "null" ]]; then
+      die "loop id required for status --summary (use --loop or config)"
+    fi
+
+    local summary_file="$repo/.ralph/loops/$target_loop/run-summary.json"
+    if [[ ! -f "$summary_file" ]]; then
+      echo "No run summary found for loop '$target_loop'."
+      return 0
+    fi
+
+    jq -r --arg loop "$target_loop" '
+      .updated_at as $updated |
+      .entries[-1] as $e |
+      if $e == null then
+        "No run summary entries found for loop \($loop)."
+      else
+        [
+          "loop=" + $loop,
+          "run_id=" + ($e.run_id // "unknown"),
+          "iteration=" + (($e.iteration // 0) | tostring),
+          "updated_at=" + ($updated // "unknown"),
+          "promise=" + (($e.promise.matched // false) | tostring),
+          "tests=" + ($e.gates.tests // "unknown"),
+          "checklist=" + ($e.gates.checklist // "unknown"),
+          "evidence=" + ($e.gates.evidence // "unknown"),
+          "evidence_file=" + ($e.artifacts.evidence.path // "unknown"),
+          "evidence_exists=" + (($e.artifacts.evidence.exists // false) | tostring),
+          "evidence_sha256=" + ($e.artifacts.evidence.sha256 // "unknown"),
+          "evidence_mtime=" + (($e.artifacts.evidence.mtime // "unknown") | tostring)
+        ] | join(" ")
+      end
+    ' "$summary_file"
+    return 0
+  fi
+
   local state_file="$repo/.ralph/state.json"
 
   if [[ ! -f "$state_file" ]]; then
@@ -2176,6 +2222,7 @@ main() {
   local schema_path=""
   local loop_id=""
   local out_path=""
+  local summary=0
   local force=0
   local fast=0
   local dry_run=0
@@ -2197,6 +2244,10 @@ main() {
       --loop)
         loop_id="$2"
         shift 2
+        ;;
+      --summary)
+        summary=1
+        shift
         ;;
       --out)
         out_path="$2"
@@ -2241,7 +2292,7 @@ main() {
       run_cmd "$repo" "$config_path" "$loop_id" "$fast" "$dry_run"
       ;;
     status)
-      status_cmd "$repo"
+      status_cmd "$repo" "$summary" "$loop_id" "$config_path"
       ;;
     cancel)
       cancel_cmd "$repo"

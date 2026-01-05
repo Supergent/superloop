@@ -109,6 +109,7 @@ Each loop writes to:
 - `cancel`: Remove `.ralph/state.json`.
 - `run --fast`: Use `codex.fast_args` if provided (falls back to `codex.args`).
 - `run --dry-run`: Read-only status summary from existing artifacts; no Codex calls.
+- `status --summary`: Print latest gate/evidence snapshot from `run-summary.json` (use `--loop` to pick a loop).
 - `validate`: Validate a config file against `schema/config.schema.json`.
 - `report`: Generate an HTML report from loop artifacts (events, summary, timeline).
 - `report --out FILE`: Write the report to a custom path.

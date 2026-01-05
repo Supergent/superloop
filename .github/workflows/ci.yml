@@ -14,3 +14,10 @@ jobs:
         run: ./ralph-codex.sh validate --repo .
       - name: Dry-run smoke check
         run: ./ralph-codex.sh run --repo . --loop productization-phase-1 --dry-run
+      - name: Generate report
+        run: ./ralph-codex.sh report --repo . --loop productization-phase-1
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ralph-report
+          path: .ralph/loops/productization-phase-1/report.html
