@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.1.0"
+VERSION="0.1.1"
 
 usage() {
   cat <<'USAGE'
@@ -14,6 +14,7 @@ Usage:
   ralph-codex.sh status [--repo DIR]
   ralph-codex.sh cancel [--repo DIR]
   ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
+  ralph-codex.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
   ralph-codex.sh --version
 
 Options:
@@ -24,6 +25,7 @@ Options:
   --force          Overwrite existing .ralph files on init
   --fast           Use codex.fast_args (if set) instead of codex.args
   --dry-run        Read-only status summary from existing artifacts; no Codex calls
+  --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
   --version        Print version and exit
 
 Notes:
@@ -97,6 +99,105 @@ hash_stdin() {
   fi
 
   return 1
+}
+
+json_or_default() {
+  local raw="$1"
+  local fallback="$2"
+
+  if [[ -z "$raw" ]]; then
+    echo "$fallback"
+    return 0
+  fi
+
+  if jq -e -s 'length == 1' >/dev/null 2>&1 <<<"$raw"; then
+    echo "$raw"
+    return 0
+  fi
+
+  echo "$fallback"
+}
+
+file_mtime() {
+  local file="$1"
+  if [[ ! -e "$file" ]]; then
+    return 1
+  fi
+
+  local mtime=""
+  mtime=$(stat -f %m "$file" 2>/dev/null || true)
+  if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    echo "$mtime"
+    return 0
+  fi
+
+  mtime=$(stat -c %Y "$file" 2>/dev/null || true)
+  if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    echo "$mtime"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+try:
+    print(int(os.path.getmtime(path)))
+except Exception:
+    sys.exit(1)
+PY
+    return $?
+  fi
+  if command -v python >/dev/null 2>&1; then
+    python - "$file" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+try:
+    print(int(os.path.getmtime(path)))
+except Exception:
+    sys.exit(1)
+PY
+    return $?
+  fi
+
+  return 1
+}
+
+file_meta_json() {
+  local display_path="$1"
+  local full_path="$2"
+  local gate="${3:-}"
+
+  local exists_json="false"
+  local sha_json="null"
+  local mtime_json="null"
+
+  if [[ -f "$full_path" ]]; then
+    exists_json="true"
+    local hash
+    hash=$(hash_file "$full_path" 2>/dev/null || true)
+    if [[ -n "$hash" ]]; then
+      sha_json="\"$hash\""
+    fi
+    local mtime
+    mtime=$(file_mtime "$full_path" 2>/dev/null || true)
+    if [[ -n "$mtime" ]]; then
+      mtime_json="$mtime"
+    fi
+  fi
+
+  jq -n \
+    --arg path "$display_path" \
+    --argjson exists "$exists_json" \
+    --argjson sha "$sha_json" \
+    --argjson mtime "$mtime_json" \
+    --arg gate "$gate" \
+    '{path: $path, exists: $exists, sha256: $sha, mtime: $mtime, gate: (if ($gate | length) > 0 then $gate else null end)}' \
+    | jq 'with_entries(select(.value != null))'
 }
 
 should_ignore() {
@@ -274,13 +375,33 @@ write_evidence_manifest() {
   if [[ -f "$test_status_file" ]]; then
     test_status_json=$(cat "$test_status_file")
   fi
+  local test_status_sha_json="null"
+  local test_status_mtime_json="null"
+  if [[ -f "$test_status_file" ]]; then
+    local status_hash
+    status_hash=$(hash_file "$test_status_file" 2>/dev/null || true)
+    if [[ -n "$status_hash" ]]; then
+      test_status_sha_json="\"$status_hash\""
+    fi
+    local status_mtime
+    status_mtime=$(file_mtime "$test_status_file" 2>/dev/null || true)
+    if [[ -n "$status_mtime" ]]; then
+      test_status_mtime_json="$status_mtime"
+    fi
+  fi
 
   local test_output_sha_json="null"
+  local test_output_mtime_json="null"
   if [[ -f "$test_output_file" ]]; then
     local output_hash
     output_hash=$(hash_file "$test_output_file" 2>/dev/null || true)
     if [[ -n "$output_hash" ]]; then
       test_output_sha_json="\"$output_hash\""
+    fi
+    local output_mtime
+    output_mtime=$(file_mtime "$test_output_file" 2>/dev/null || true)
+    if [[ -n "$output_mtime" ]]; then
+      test_output_mtime_json="$output_mtime"
     fi
   fi
 
@@ -288,11 +409,41 @@ write_evidence_manifest() {
   if [[ -f "$checklist_status_file" ]]; then
     checklist_status_json=$(cat "$checklist_status_file")
   fi
+  local checklist_status_sha_json="null"
+  local checklist_status_mtime_json="null"
+  if [[ -f "$checklist_status_file" ]]; then
+    local checklist_hash
+    checklist_hash=$(hash_file "$checklist_status_file" 2>/dev/null || true)
+    if [[ -n "$checklist_hash" ]]; then
+      checklist_status_sha_json="\"$checklist_hash\""
+    fi
+    local checklist_mtime
+    checklist_mtime=$(file_mtime "$checklist_status_file" 2>/dev/null || true)
+    if [[ -n "$checklist_mtime" ]]; then
+      checklist_status_mtime_json="$checklist_mtime"
+    fi
+  fi
+  local checklist_remaining_file="$loop_dir/checklist-remaining.md"
+  local checklist_remaining_sha_json="null"
+  local checklist_remaining_mtime_json="null"
+  if [[ -f "$checklist_remaining_file" ]]; then
+    local remaining_hash
+    remaining_hash=$(hash_file "$checklist_remaining_file" 2>/dev/null || true)
+    if [[ -n "$remaining_hash" ]]; then
+      checklist_remaining_sha_json="\"$remaining_hash\""
+    fi
+    local remaining_mtime
+    remaining_mtime=$(file_mtime "$checklist_remaining_file" 2>/dev/null || true)
+    if [[ -n "$remaining_mtime" ]]; then
+      checklist_remaining_mtime_json="$remaining_mtime"
+    fi
+  fi
   local checklist_patterns_json
   checklist_patterns_json=$(jq -c '.checklists // []' <<<"$loop_json")
 
   local artifacts_jsonl="$loop_dir/evidence-artifacts.jsonl"
   : > "$artifacts_jsonl"
+  local artifacts_gate="evidence"
 
   while IFS= read -r pattern; do
     if [[ -z "$pattern" ]]; then
@@ -304,7 +455,8 @@ write_evidence_manifest() {
     done < <(expand_pattern "$repo" "$pattern")
 
     if [[ ${#expanded[@]} -eq 0 ]]; then
-      jq -n --arg path "$pattern" '{path: $path, exists: false, sha256: null}' >> "$artifacts_jsonl"
+      jq -n --arg path "$pattern" --arg gate "$artifacts_gate" \
+        '{path: $path, exists: false, sha256: null, mtime: null, gate: $gate}' >> "$artifacts_jsonl"
       continue
     fi
 
@@ -313,19 +465,33 @@ write_evidence_manifest() {
       if [[ -f "$repo/$file" ]]; then
         local hash
         hash=$(hash_file "$repo/$file" 2>/dev/null || true)
+        local mtime_json="null"
+        local mtime
+        mtime=$(file_mtime "$repo/$file" 2>/dev/null || true)
+        if [[ -n "$mtime" ]]; then
+          mtime_json="$mtime"
+        fi
         if [[ -n "$hash" ]]; then
-          jq -n --arg path "$file" --arg sha "$hash" '{path: $path, exists: true, sha256: $sha}' >> "$artifacts_jsonl"
+          jq -n --arg path "$file" --arg sha "$hash" --arg gate "$artifacts_gate" --argjson mtime "$mtime_json" \
+            '{path: $path, exists: true, sha256: $sha, mtime: $mtime, gate: $gate}' >> "$artifacts_jsonl"
         else
-          jq -n --arg path "$file" '{path: $path, exists: true, sha256: null}' >> "$artifacts_jsonl"
+          jq -n --arg path "$file" --arg gate "$artifacts_gate" --argjson mtime "$mtime_json" \
+            '{path: $path, exists: true, sha256: null, mtime: $mtime, gate: $gate}' >> "$artifacts_jsonl"
         fi
       else
-        jq -n --arg path "$file" '{path: $path, exists: false, sha256: null}' >> "$artifacts_jsonl"
+        jq -n --arg path "$file" --arg gate "$artifacts_gate" \
+          '{path: $path, exists: false, sha256: null, mtime: null, gate: $gate}' >> "$artifacts_jsonl"
       fi
     done
   done < <(jq -r '.evidence.artifacts[]?' <<<"$loop_json")
 
   local artifacts_json
   artifacts_json=$(jq -s '.' "$artifacts_jsonl")
+
+  local test_status_rel="${test_status_file#$repo/}"
+  local test_output_rel="${test_output_file#$repo/}"
+  local checklist_status_rel="${checklist_status_file#$repo/}"
+  local checklist_remaining_rel="${checklist_remaining_file#$repo/}"
 
   jq -n \
     --arg generated_at "$(timestamp)" \
@@ -335,9 +501,20 @@ write_evidence_manifest() {
     --arg tests_mode "$tests_mode" \
     --argjson test_commands "$test_commands_json" \
     --argjson test_status "$test_status_json" \
+    --arg test_status_file "$test_status_rel" \
+    --argjson test_status_sha "$test_status_sha_json" \
+    --argjson test_status_mtime "$test_status_mtime_json" \
+    --arg test_output_file "$test_output_rel" \
     --argjson test_output_sha "$test_output_sha_json" \
+    --argjson test_output_mtime "$test_output_mtime_json" \
     --argjson checklist_patterns "$checklist_patterns_json" \
     --argjson checklist_status "$checklist_status_json" \
+    --arg checklist_status_file "$checklist_status_rel" \
+    --argjson checklist_status_sha "$checklist_status_sha_json" \
+    --argjson checklist_status_mtime "$checklist_status_mtime_json" \
+    --arg checklist_remaining_file "$checklist_remaining_rel" \
+    --argjson checklist_remaining_sha "$checklist_remaining_sha_json" \
+    --argjson checklist_remaining_mtime "$checklist_remaining_mtime_json" \
     --argjson artifacts "$artifacts_json" \
     '{
       generated_at: $generated_at,
@@ -348,11 +525,22 @@ write_evidence_manifest() {
         mode: $tests_mode,
         commands: $test_commands,
         status: $test_status,
-        output_sha256: $test_output_sha
+        status_file: $test_status_file,
+        status_sha256: $test_status_sha,
+        status_mtime: $test_status_mtime,
+        output_file: $test_output_file,
+        output_sha256: $test_output_sha,
+        output_mtime: $test_output_mtime
       },
       checklists: {
         patterns: $checklist_patterns,
-        status: $checklist_status
+        status: $checklist_status,
+        status_file: $checklist_status_file,
+        status_sha256: $checklist_status_sha,
+        status_mtime: $checklist_status_mtime,
+        remaining_file: $checklist_remaining_file,
+        remaining_sha256: $checklist_remaining_sha,
+        remaining_mtime: $checklist_remaining_mtime
       },
       artifacts: $artifacts
     }' \
@@ -633,6 +821,230 @@ write_gate_summary() {
   printf 'promise=%s tests=%s checklist=%s evidence=%s stuck=%s\n' \
     "$promise_matched" "$tests_status" "$checklist_status" "$evidence_status" "$stuck_status" \
     > "$summary_file"
+}
+
+log_event() {
+  local events_file="$1"
+  local loop_id="$2"
+  local iteration="$3"
+  local run_id="$4"
+  local event="$5"
+  local data_json_raw="${6:-}"
+  local data_json
+  data_json=$(json_or_default "$data_json_raw" "null")
+  local role="${7:-}"
+  local status="${8:-}"
+  local message="${9:-}"
+
+  if [[ -z "$events_file" ]]; then
+    return 0
+  fi
+
+  jq -c -n \
+    --arg timestamp "$(timestamp)" \
+    --arg event "$event" \
+    --arg loop_id "$loop_id" \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    --arg role "$role" \
+    --arg status "$status" \
+    --arg message "$message" \
+    --argjson data "$data_json" \
+    '{
+      timestamp: $timestamp,
+      event: $event,
+      loop_id: $loop_id,
+      run_id: $run_id,
+      iteration: $iteration,
+      role: (if ($role | length) > 0 then $role else null end),
+      status: (if ($status | length) > 0 then $status else null end),
+      message: (if ($message | length) > 0 then $message else null end),
+      data: $data
+    } | with_entries(select(.value != null))' \
+    >> "$events_file" || true
+}
+
+append_run_summary() {
+  local summary_file="$1"
+  local repo="$2"
+  local loop_id="$3"
+  local run_id="$4"
+  local iteration="$5"
+  local started_at="$6"
+  local ended_at="$7"
+  local promise_matched="$8"
+  local completion_promise="$9"
+  local promise_text="${10}"
+  local tests_mode="${11}"
+  local tests_status="${12}"
+  local checklist_status="${13}"
+  local evidence_status="${14}"
+  local stuck_streak="${15}"
+  local stuck_threshold="${16}"
+  local completion_ok="${17}"
+  local loop_dir="${18}"
+  local events_file="${19}"
+
+  local plan_file="$loop_dir/plan.md"
+  local implementer_report="$loop_dir/implementer.md"
+  local test_report="$loop_dir/test-report.md"
+  local reviewer_report="$loop_dir/review.md"
+  local test_output="$loop_dir/test-output.txt"
+  local test_status="$loop_dir/test-status.json"
+  local checklist_status_file="$loop_dir/checklist-status.json"
+  local checklist_remaining="$loop_dir/checklist-remaining.md"
+  local evidence_file="$loop_dir/evidence.json"
+  local summary_file_gate="$loop_dir/gate-summary.txt"
+  local notes_file="$loop_dir/iteration_notes.md"
+
+  local plan_meta implementer_meta test_report_meta reviewer_meta
+  local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
+  local evidence_meta summary_meta notes_meta events_meta
+
+  plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
+  plan_meta=$(json_or_default "$plan_meta" "{}")
+  implementer_meta=$(file_meta_json "${implementer_report#$repo/}" "$implementer_report")
+  implementer_meta=$(json_or_default "$implementer_meta" "{}")
+  test_report_meta=$(file_meta_json "${test_report#$repo/}" "$test_report")
+  test_report_meta=$(json_or_default "$test_report_meta" "{}")
+  reviewer_meta=$(file_meta_json "${reviewer_report#$repo/}" "$reviewer_report")
+  reviewer_meta=$(json_or_default "$reviewer_meta" "{}")
+  test_output_meta=$(file_meta_json "${test_output#$repo/}" "$test_output")
+  test_output_meta=$(json_or_default "$test_output_meta" "{}")
+  test_status_meta=$(file_meta_json "${test_status#$repo/}" "$test_status")
+  test_status_meta=$(json_or_default "$test_status_meta" "{}")
+  checklist_status_meta=$(file_meta_json "${checklist_status_file#$repo/}" "$checklist_status_file")
+  checklist_status_meta=$(json_or_default "$checklist_status_meta" "{}")
+  checklist_remaining_meta=$(file_meta_json "${checklist_remaining#$repo/}" "$checklist_remaining")
+  checklist_remaining_meta=$(json_or_default "$checklist_remaining_meta" "{}")
+  evidence_meta=$(file_meta_json "${evidence_file#$repo/}" "$evidence_file")
+  evidence_meta=$(json_or_default "$evidence_meta" "{}")
+  summary_meta=$(file_meta_json "${summary_file_gate#$repo/}" "$summary_file_gate")
+  summary_meta=$(json_or_default "$summary_meta" "{}")
+  notes_meta=$(file_meta_json "${notes_file#$repo/}" "$notes_file")
+  notes_meta=$(json_or_default "$notes_meta" "{}")
+  events_meta=$(file_meta_json "${events_file#$repo/}" "$events_file")
+  events_meta=$(json_or_default "$events_meta" "{}")
+
+  local artifacts_json
+  artifacts_json=$(jq -n \
+    --argjson plan "$plan_meta" \
+    --argjson implementer "$implementer_meta" \
+    --argjson test_report "$test_report_meta" \
+    --argjson reviewer "$reviewer_meta" \
+    --argjson test_output "$test_output_meta" \
+    --argjson test_status "$test_status_meta" \
+    --argjson checklist_status "$checklist_status_meta" \
+    --argjson checklist_remaining "$checklist_remaining_meta" \
+    --argjson evidence "$evidence_meta" \
+    --argjson gate_summary "$summary_meta" \
+    --argjson iteration_notes "$notes_meta" \
+    --argjson events "$events_meta" \
+    '{
+      plan: $plan,
+      implementer: $implementer,
+      test_report: $test_report,
+      reviewer: $reviewer,
+      test_output: $test_output,
+      test_status: $test_status,
+      checklist_status: $checklist_status,
+      checklist_remaining: $checklist_remaining,
+      evidence: $evidence,
+      gate_summary: $gate_summary,
+      iteration_notes: $iteration_notes,
+      events: $events
+    }')
+  artifacts_json=$(json_or_default "$artifacts_json" "{}")
+
+  local promise_matched_json="false"
+  if [[ "$promise_matched" == "true" ]]; then
+    promise_matched_json="true"
+  fi
+  local completion_json="false"
+  if [[ "$completion_ok" -eq 1 ]]; then
+    completion_json="true"
+  fi
+
+  local entry_json
+  entry_json=$(jq -n \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    --arg started_at "$started_at" \
+    --arg ended_at "$ended_at" \
+    --arg promise_expected "$completion_promise" \
+    --arg promise_text "$promise_text" \
+    --argjson promise_matched "$promise_matched_json" \
+    --arg tests_mode "$tests_mode" \
+    --arg tests_status "$tests_status" \
+    --arg checklist_status "$checklist_status" \
+    --arg evidence_status "$evidence_status" \
+    --argjson stuck_streak "$stuck_streak" \
+    --argjson stuck_threshold "$stuck_threshold" \
+    --argjson completion_ok "$completion_json" \
+    --argjson artifacts "$artifacts_json" \
+    '{
+      run_id: $run_id,
+      iteration: $iteration,
+      started_at: $started_at,
+      ended_at: $ended_at,
+      promise: {
+        expected: $promise_expected,
+        text: ($promise_text | select(length>0)),
+        matched: $promise_matched
+      },
+      gates: {
+        tests: $tests_status,
+        checklist: $checklist_status,
+        evidence: $evidence_status
+      },
+      tests_mode: $tests_mode,
+      stuck: { streak: $stuck_streak, threshold: $stuck_threshold },
+      completion_ok: $completion_ok,
+      artifacts: $artifacts
+    } | with_entries(select(.value != null))')
+  entry_json=$(json_or_default "$entry_json" "{}")
+
+  local updated_at
+  updated_at=$(timestamp)
+
+  local entry_file="$loop_dir/run-summary-entry.json"
+  printf '%s\n' "$entry_json" > "$entry_file"
+
+  if [[ -f "$summary_file" ]]; then
+    jq -s --arg updated_at "$updated_at" \
+      '.[0] as $entry | .[1] | .entries = (.entries // []) + [$entry] | .updated_at = $updated_at' \
+      "$entry_file" "$summary_file" > "${summary_file}.tmp"
+  else
+    jq -s --arg loop_id "$loop_id" --arg updated_at "$updated_at" \
+      '{version: 1, loop_id: $loop_id, updated_at: $updated_at, entries: [.[0]]}' \
+      "$entry_file" > "${summary_file}.tmp"
+  fi
+
+  mv "${summary_file}.tmp" "$summary_file"
+}
+
+write_timeline() {
+  local summary_file="$1"
+  local timeline_file="$2"
+
+  if [[ ! -f "$summary_file" ]]; then
+    return 0
+  fi
+
+  local loop_id
+  loop_id=$(jq -r '.loop_id // ""' "$summary_file")
+
+  {
+    echo "# Timeline"
+    if [[ -n "$loop_id" && "$loop_id" != "null" ]]; then
+      echo ""
+      echo "Loop: $loop_id"
+    fi
+    echo ""
+    jq -r '.entries[]? |
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
+      "$summary_file"
+  } > "$timeline_file"
 }
 
 read_test_status_summary() {
@@ -942,6 +1354,9 @@ run_cmd() {
     local checklist_remaining="$loop_dir/checklist-remaining.md"
     local evidence_file="$loop_dir/evidence.json"
     local summary_file="$loop_dir/gate-summary.txt"
+    local events_file="$loop_dir/events.jsonl"
+    local run_summary_file="$loop_dir/run-summary.json"
+    local timeline_file="$loop_dir/timeline.md"
 
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
@@ -958,6 +1373,8 @@ run_cmd() {
     while IFS= read -r line; do
       checklist_patterns+=("$line")
     done < <(jq -r '.checklists[]?' <<<"$loop_json")
+    local checklist_patterns_json
+    checklist_patterns_json=$(jq -c '.checklists // []' <<<"$loop_json")
 
     local tests_mode
     tests_mode=$(jq -r '.tests.mode // "disabled"' <<<"$loop_json")
@@ -965,6 +1382,8 @@ run_cmd() {
     while IFS= read -r line; do
       test_commands+=("$line")
     done < <(jq -r '.tests.commands[]?' <<<"$loop_json")
+    local test_commands_json
+    test_commands_json=$(jq -c '.tests.commands // []' <<<"$loop_json")
 
     if [[ ${#test_commands[@]} -eq 0 ]]; then
       tests_mode="disabled"
@@ -1039,9 +1458,24 @@ run_cmd() {
       continue
     fi
 
+    local run_id
+    run_id=$(timestamp)
+    local loop_start_data
+    loop_start_data=$(jq -n \
+      --arg spec_file "$spec_file" \
+      --argjson max_iterations "$max_iterations" \
+      --arg tests_mode "$tests_mode" \
+      --argjson test_commands "$test_commands_json" \
+      --argjson checklists "$checklist_patterns_json" \
+      '{spec_file: $spec_file, max_iterations: $max_iterations, tests_mode: $tests_mode, test_commands: $test_commands, checklists: $checklists}')
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_start" "$loop_start_data"
+
     while true; do
       if [[ $max_iterations -gt 0 && $iteration -gt $max_iterations ]]; then
         echo "Max iterations reached for loop '$loop_id' ($max_iterations). Stopping."
+        local loop_stop_data
+        loop_stop_data=$(jq -n --arg reason "max_iterations" --argjson max_iterations "$max_iterations" '{reason: $reason, max_iterations: $max_iterations}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_stop" "$loop_stop_data"
         if [[ "${dry_run:-0}" -ne 1 ]]; then
           write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
         fi
@@ -1053,6 +1487,12 @@ run_cmd() {
         log_dir="$loop_dir/logs/iter-$iteration"
         mkdir -p "$log_dir" "$last_messages_dir"
       fi
+
+      local iteration_started_at
+      iteration_started_at=$(timestamp)
+      local iteration_start_data
+      iteration_start_data=$(jq -n --arg started_at "$iteration_started_at" '{started_at: $started_at}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_start" "$iteration_start_data"
 
       local last_role=""
       for role in "${roles[@]}"; do
@@ -1102,25 +1542,53 @@ run_cmd() {
           snapshot_file "$report_guard" "$report_snapshot"
         fi
 
+        local role_start_data
+        role_start_data=$(jq -n \
+          --arg prompt_file "$prompt_file" \
+          --arg log_file "$role_log" \
+          --arg last_message_file "$last_message_file" \
+          '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
+
         run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "${codex_args[@]}"
         if [[ -n "$report_guard" ]]; then
           restore_if_unchanged "$report_guard" "$report_snapshot"
         fi
+        local role_end_data
+        role_end_data=$(jq -n \
+          --arg log_file "$role_log" \
+          --arg last_message_file "$last_message_file" \
+          '{log_file: $log_file, last_message_file: $last_message_file}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_end" "$role_end_data" "$role"
         last_role="$role"
       done
 
       local promise_matched="false"
+      local promise_text=""
       if [[ -n "$completion_promise" ]]; then
         local last_message_file="$last_messages_dir/${last_role}.txt"
-        local promise_text
         promise_text=$(extract_promise "$last_message_file")
         if [[ -n "$promise_text" && "$promise_text" == "$completion_promise" ]]; then
           promise_matched="true"
         fi
       fi
+      local promise_matched_json="false"
+      if [[ "$promise_matched" == "true" ]]; then
+        promise_matched_json="true"
+      fi
+      local promise_data
+      promise_data=$(jq -n \
+        --arg expected "$completion_promise" \
+        --arg text "$promise_text" \
+        --argjson matched "$promise_matched_json" \
+        '{expected: $expected, text: $text, matched: $matched}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "promise_checked" "$promise_data"
 
       local checklist_ok=1
       local checklist_status_text="ok"
+      local checklist_start_data
+      checklist_start_data=$(jq -n --argjson patterns "$checklist_patterns_json" '{patterns: $patterns}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "checklist_start" "$checklist_start_data"
       if check_checklists "$repo" "$loop_dir" "${checklist_patterns[@]}"; then
         checklist_ok=1
         checklist_status_text="ok"
@@ -1128,9 +1596,27 @@ run_cmd() {
         checklist_ok=0
         checklist_status_text="remaining"
       fi
+      local checklist_ok_json="false"
+      if [[ $checklist_ok -eq 1 ]]; then
+        checklist_ok_json="true"
+      fi
+      local checklist_status_json="null"
+      if [[ -f "$checklist_status" ]]; then
+        checklist_status_json=$(cat "$checklist_status")
+      fi
+      local checklist_end_data
+      checklist_end_data=$(jq -n \
+        --arg status "$checklist_status_text" \
+        --argjson ok "$checklist_ok_json" \
+        --argjson details "$checklist_status_json" \
+        '{status: $status, ok: $ok, details: $details}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "checklist_end" "$checklist_end_data"
 
       local tests_status="skipped"
       local tests_ok=1
+      local tests_start_data
+      tests_start_data=$(jq -n --arg mode "$tests_mode" --argjson commands "$test_commands_json" '{mode: $mode, commands: $commands}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_start" "$tests_start_data"
       if [[ "$tests_mode" == "every" ]]; then
         if run_tests "$repo" "$loop_dir" "${test_commands[@]}"; then
           tests_status="ok"
@@ -1158,10 +1644,23 @@ run_cmd() {
         tests_status="skipped"
         tests_ok=1
       fi
+      local test_status_json="null"
+      if [[ -f "$test_status" ]]; then
+        test_status_json=$(cat "$test_status")
+      fi
+      local tests_end_data
+      tests_end_data=$(jq -n \
+        --arg status "$tests_status" \
+        --argjson details "$test_status_json" \
+        '{status: $status, details: $details}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_end" "$tests_end_data"
 
       local evidence_status="skipped"
       local evidence_ok=1
       local evidence_gate_ok=1
+      local evidence_start_data
+      evidence_start_data=$(jq -n --arg enabled "$evidence_enabled" '{enabled: $enabled}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "evidence_start" "$evidence_start_data"
       if [[ "$evidence_enabled" == "true" ]]; then
         if write_evidence_manifest "$repo" "$loop_dir" "$loop_id" "$iteration" "$spec_file" "$loop_json" "$test_status" "$test_output" "$checklist_status" "$evidence_file"; then
           evidence_status="ok"
@@ -1171,6 +1670,12 @@ run_cmd() {
           evidence_ok=0
         fi
       fi
+      local evidence_end_data
+      evidence_end_data=$(jq -n \
+        --arg status "$evidence_status" \
+        --arg evidence_file "${evidence_file#$repo/}" \
+        '{status: $status, evidence_file: $evidence_file}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "evidence_end" "$evidence_end_data"
       if [[ "$evidence_enabled" == "true" && "$evidence_require" == "true" ]]; then
         evidence_gate_ok=$evidence_ok
       fi
@@ -1181,6 +1686,7 @@ run_cmd() {
       fi
 
       local stuck_streak="0"
+      local stuck_triggered="false"
       if [[ $completion_ok -eq 0 && "$stuck_enabled" == "true" ]]; then
         local stuck_result
         stuck_result=$(update_stuck_state "$repo" "$loop_dir" "$stuck_threshold" "${stuck_ignore[@]}")
@@ -1189,20 +1695,43 @@ run_cmd() {
           stuck_streak="$stuck_result"
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
+          stuck_triggered="true"
           write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold"
           local stuck_value="n/a"
           if [[ "$stuck_enabled" == "true" ]]; then
             stuck_value="${stuck_streak}/${stuck_threshold}"
           fi
           write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value"
+          local stuck_data
+          stuck_data=$(jq -n \
+            --argjson streak "$stuck_streak" \
+            --argjson threshold "$stuck_threshold" \
+            --argjson triggered true \
+            --arg action "$stuck_action" \
+            '{streak: $streak, threshold: $threshold, triggered: $triggered, action: $action}')
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
           if [[ "$stuck_action" == "report_and_stop" ]]; then
             echo "Stuck detection triggered for loop '$loop_id'. Stopping."
+            local loop_stop_data
+            loop_stop_data=$(jq -n --arg reason "stuck" --argjson streak "$stuck_streak" --argjson threshold "$stuck_threshold" '{reason: $reason, streak: $streak, threshold: $threshold}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_stop" "$loop_stop_data"
             write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
             return 1
           fi
         else
           die "stuck detection failed for loop '$loop_id'"
         fi
+      fi
+      if [[ "$stuck_enabled" == "true" && "$stuck_triggered" != "true" ]]; then
+        local stuck_triggered_json="false"
+        local stuck_data
+        stuck_data=$(jq -n \
+          --argjson streak "$stuck_streak" \
+          --argjson threshold "$stuck_threshold" \
+          --argjson triggered "$stuck_triggered_json" \
+          --arg action "$stuck_action" \
+          '{streak: $streak, threshold: $threshold, triggered: $triggered, action: $action}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
       fi
 
       write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold"
@@ -1211,8 +1740,44 @@ run_cmd() {
         stuck_value="${stuck_streak}/${stuck_threshold}"
       fi
       write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value"
+      local gates_data
+      gates_data=$(jq -n \
+        --argjson promise "$promise_matched_json" \
+        --arg tests "$tests_status" \
+        --arg checklist "$checklist_status_text" \
+        --arg evidence "$evidence_status" \
+        --arg stuck "$stuck_value" \
+        '{promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, stuck: $stuck}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "gates_evaluated" "$gates_data"
+
+      local iteration_ended_at
+      iteration_ended_at=$(timestamp)
+      local completion_json="false"
+      if [[ $completion_ok -eq 1 ]]; then
+        completion_json="true"
+      fi
+      local iteration_end_data
+      iteration_end_data=$(jq -n \
+        --arg started_at "$iteration_started_at" \
+        --arg ended_at "$iteration_ended_at" \
+        --argjson completion "$completion_json" \
+        --argjson promise "$promise_matched_json" \
+        --arg tests "$tests_status" \
+        --arg checklist "$checklist_status_text" \
+        --arg evidence "$evidence_status" \
+        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
+
+      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+      write_timeline "$run_summary_file" "$timeline_file"
 
       if [[ $completion_ok -eq 1 ]]; then
+        local loop_complete_data
+        loop_complete_data=$(jq -n \
+          --argjson iteration "$iteration" \
+          --arg run_id "$run_id" \
+          '{iteration: $iteration, run_id: $run_id}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_complete" "$loop_complete_data"
         echo "Loop '$loop_id' complete at iteration $iteration."
         iteration=1
         break
@@ -1405,6 +1970,199 @@ if __name__ == "__main__":
 PY
 }
 
+report_cmd() {
+  local repo="$1"
+  local config_path="$2"
+  local loop_id="$3"
+  local out_path="$4"
+
+  need_cmd jq
+
+  if [[ ! -f "$config_path" ]]; then
+    die "config not found: $config_path"
+  fi
+
+  if [[ -z "$loop_id" ]]; then
+    loop_id=$(jq -r '.loops[0].id // ""' "$config_path")
+    if [[ -z "$loop_id" || "$loop_id" == "null" ]]; then
+      die "loop id not found in config"
+    fi
+  else
+    local match
+    match=$(jq -r --arg id "$loop_id" '.loops[]? | select(.id == $id) | .id' "$config_path" | head -n1)
+    if [[ -z "$match" ]]; then
+      die "loop id not found: $loop_id"
+    fi
+  fi
+
+  local loop_dir="$repo/.ralph/loops/$loop_id"
+  local summary_file="$loop_dir/run-summary.json"
+  local timeline_file="$loop_dir/timeline.md"
+  local events_file="$loop_dir/events.jsonl"
+  local gate_summary="$loop_dir/gate-summary.txt"
+  local evidence_file="$loop_dir/evidence.json"
+  local report_file="$out_path"
+  if [[ -z "$report_file" ]]; then
+    report_file="$loop_dir/report.html"
+  fi
+
+  local python_bin=""
+  python_bin=$(select_python || true)
+  if [[ -z "$python_bin" ]]; then
+    die "missing python3/python for report generation"
+  fi
+
+  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$report_file" <<'PY'
+import datetime
+import html
+import json
+import os
+import sys
+
+
+def read_text(path):
+    if not path or not os.path.exists(path):
+        return ""
+    with open(path, "r") as handle:
+        return handle.read()
+
+
+def read_json(path):
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        return {"_error": str(exc)}
+
+
+def escape_block(text):
+    return html.escape(text or "")
+
+
+def json_block(value):
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value, indent=2, sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+loop_id = sys.argv[1]
+summary_path = sys.argv[2]
+timeline_path = sys.argv[3]
+events_path = sys.argv[4]
+gate_path = sys.argv[5]
+evidence_path = sys.argv[6]
+out_path = sys.argv[7]
+
+summary = read_json(summary_path)
+timeline = read_text(timeline_path)
+gate_summary = read_text(gate_path).strip()
+evidence = read_json(evidence_path)
+
+events_lines = []
+if os.path.exists(events_path):
+    with open(events_path, "r") as handle:
+        events_lines = handle.read().splitlines()
+
+latest_entry = None
+if isinstance(summary, dict):
+    entries = summary.get("entries") or []
+    if entries:
+        latest_entry = entries[-1]
+
+generated_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+sections = []
+
+overview = [
+    "<div class='meta'>",
+    "<div><strong>Loop:</strong> {}</div>".format(html.escape(loop_id)),
+    "<div><strong>Generated:</strong> {}</div>".format(html.escape(generated_at)),
+    "<div><strong>Summary file:</strong> {}</div>".format(html.escape(summary_path)),
+    "</div>",
+]
+sections.append("<h2>Overview</h2>" + "".join(overview))
+
+if gate_summary:
+    sections.append("<h2>Gate Summary</h2><pre>{}</pre>".format(escape_block(gate_summary)))
+else:
+    sections.append("<h2>Gate Summary</h2><p>No gate summary found.</p>")
+
+if latest_entry is not None:
+    sections.append("<h2>Latest Iteration</h2><pre>{}</pre>".format(escape_block(json_block(latest_entry))))
+else:
+    sections.append("<h2>Latest Iteration</h2><p>No run summary entries found.</p>")
+
+if timeline:
+    sections.append("<h2>Timeline</h2><pre>{}</pre>".format(escape_block(timeline)))
+else:
+    sections.append("<h2>Timeline</h2><p>No timeline found.</p>")
+
+if events_lines:
+    tail = events_lines[-40:]
+    sections.append("<h2>Recent Events</h2><pre>{}</pre>".format(escape_block("\n".join(tail))))
+else:
+    sections.append("<h2>Recent Events</h2><p>No events found.</p>")
+
+if evidence is not None:
+    sections.append("<h2>Evidence Manifest</h2><pre>{}</pre>".format(escape_block(json_block(evidence))))
+else:
+    sections.append("<h2>Evidence Manifest</h2><p>No evidence manifest found.</p>")
+
+html_doc = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ralphcodex Report - {loop_id}</title>
+  <style>
+    body {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      margin: 24px;
+      color: #111;
+      background: #f8f6f2;
+    }}
+    h1 {{
+      font-size: 22px;
+      margin-bottom: 8px;
+    }}
+    h2 {{
+      margin-top: 24px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 6px;
+    }}
+    pre {{
+      background: #fff;
+      border: 1px solid #e2e2e2;
+      padding: 12px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }}
+    .meta {{
+      background: #fff;
+      border: 1px solid #e2e2e2;
+      padding: 12px;
+      margin-bottom: 12px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>Ralphcodex Report</h1>
+  {sections}
+</body>
+</html>
+""".format(loop_id=html.escape(loop_id), sections="\n".join(sections))
+
+with open(out_path, "w") as handle:
+    handle.write(html_doc)
+PY
+
+  echo "Wrote report to $report_file"
+}
+
 main() {
   local cmd="${1:-}"
   if [[ "$cmd" == "--version" || "$cmd" == "-v" ]]; then
@@ -1417,6 +2175,7 @@ main() {
   local config_path=""
   local schema_path=""
   local loop_id=""
+  local out_path=""
   local force=0
   local fast=0
   local dry_run=0
@@ -1437,6 +2196,10 @@ main() {
         ;;
       --loop)
         loop_id="$2"
+        shift 2
+        ;;
+      --out)
+        out_path="$2"
         shift 2
         ;;
       --force)
@@ -1485,6 +2248,9 @@ main() {
       ;;
     validate)
       validate_cmd "$repo" "$config_path" "$schema_path"
+      ;;
+    report)
+      report_cmd "$repo" "$config_path" "$loop_id" "$out_path"
       ;;
     *)
       usage

@@ -91,7 +91,12 @@ Each loop writes to:
   test-status.json
   checklist-status.json
   checklist-remaining.md
+  evidence.json
   gate-summary.txt
+  events.jsonl
+  run-summary.json
+  timeline.md
+  report.html
   last_messages/
   logs/iter-N/
 ```
@@ -105,6 +110,8 @@ Each loop writes to:
 - `run --fast`: Use `codex.fast_args` if provided (falls back to `codex.args`).
 - `run --dry-run`: Read-only status summary from existing artifacts; no Codex calls.
 - `validate`: Validate a config file against `schema/config.schema.json`.
+- `report`: Generate an HTML report from loop artifacts (events, summary, timeline).
+- `report --out FILE`: Write the report to a custom path.
 - `--version`: Print the current wrapper version.
 - `self-check.sh --repo DIR --loop ID [--fast]`: Run a churn smoke check (two consecutive runs must leave plan/report files unchanged).
 
@@ -117,5 +124,5 @@ Each loop writes to:
 - The tester writes `test-report.md` and the reviewer writes `review.md` each iteration.
 - Gate summaries are written to `gate-summary.txt` each iteration (promise/tests/checklists/evidence/stuck).
 - Anti-churn: role prompts discourage unnecessary edits, and the wrapper restores plan/report files when content is unchanged to avoid rewrite noise.
-- Evidence manifests are written to `evidence.json` when enabled; optional artifact hashes can be enforced on completion.
+- Evidence manifests are written to `evidence.json` when enabled and include artifact hashes/mtimes and gate-produced file metadata.
 - Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.
