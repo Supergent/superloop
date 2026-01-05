@@ -1,11 +1,11 @@
-# Getting Started with Ralphcodex
+# Getting Started with Supergent
 
-Ralphcodex is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
+Supergent is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
 The runner is configured in `.ralph/config.json` and can be any CLI that accepts a prompt and writes a last message file.
 
 ## Philosophy
 
-Ralphcodex treats software work as a controlled loop instead of a single pass.
+Supergent treats software work as a controlled loop instead of a single pass.
 
 - Explicit intent beats implicit intent: a written spec is the source of truth.
 - Separation of roles reduces blind spots: planner vs implementer vs tester vs reviewer.
@@ -97,7 +97,7 @@ cd ralph-demo
 git init
 ```
 
-### 2) Initialize Ralphcodex
+### 2) Initialize Supergent
 
 ```bash
 /path/to/ralph-codex/ralph-codex.sh init --repo .

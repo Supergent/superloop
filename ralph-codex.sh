@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 VERSION="0.2.0"
 
 usage() {
   cat <<'USAGE'
-Ralph++ Codex Wrapper
+Supergent Runner Wrapper
 
 Usage:
   ralph-codex.sh init [--repo DIR] [--force]
@@ -26,7 +27,7 @@ Options:
   --summary        Print latest gate/evidence snapshot from run-summary.json
   --force          Overwrite existing .ralph files on init
   --fast           Use runner.fast_args (if set) instead of runner.args
-  --dry-run        Read-only status summary from existing artifacts; no Codex calls
+  --dry-run        Read-only status summary from existing artifacts; no runner calls
   --out FILE       Report output path (default: .ralph/loops/<id>/report.html)
   --by NAME        Approver name for approval decisions (default: $USER)
   --note TEXT      Optional decision note for approval/rejection
@@ -34,7 +35,7 @@ Options:
   --version        Print version and exit
 
 Notes:
-- This wrapper runs Codex in a multi-role loop (planner, implementer, tester, reviewer).
+- This wrapper runs the configured runner in a multi-role loop (planner, implementer, tester, reviewer).
 - The loop stops only when the reviewer outputs a matching promise AND gates pass.
 - Gates: checklist validation + optional tests (per config).
 USAGE
@@ -701,6 +702,7 @@ run_tests() {
   return 1
 }
 
+
 build_role_prompt() {
   local role="$1"
   local role_template="$2"
@@ -739,6 +741,7 @@ EOF
     echo "- Reviewer packet: $reviewer_packet" >> "$prompt_file"
   fi
 }
+
 
 run_command_with_timeout() {
   local prompt_file="$1"
@@ -936,6 +939,7 @@ run_role() {
     die "runner command failed for role '$role' (exit $status)"
   fi
 }
+
 
 snapshot_file() {
   local file="$1"
@@ -1178,6 +1182,7 @@ write_approval_request() {
     } | with_entries(select(.value != null))' \
     > "$approval_file"
 }
+
 
 append_decision_log() {
   local loop_dir="$1"
@@ -1548,6 +1553,7 @@ read_stuck_streak() {
   echo "$streak"
 }
 
+
 init_cmd() {
   local repo="$1"
   local force="$2"
@@ -1622,7 +1628,7 @@ init_cmd() {
 EOF
 
   cat > "$ralph_dir/spec.md" <<'EOF'
-# Ralph Loop Spec
+# Supergent Loop Spec
 
 Replace this file with the actual task specification.
 
@@ -2984,7 +2990,7 @@ html_doc = """<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Ralphcodex Report - {loop_id}</title>
+  <title>Supergent Report - {loop_id}</title>
   <style>
     body {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -3017,7 +3023,7 @@ html_doc = """<!doctype html>
   </style>
 </head>
 <body>
-  <h1>Ralphcodex Report</h1>
+  <h1>Supergent Report</h1>
   {sections}
 </body>
 </html>
@@ -3150,3 +3156,4 @@ main() {
 }
 
 main "$@"
+

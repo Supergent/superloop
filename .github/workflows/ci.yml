@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build wrapper
+        run: ./scripts/build.sh
+      - name: Verify generated script is up to date
+        run: git diff --exit-code ralph-codex.sh
       - name: Validate config schema
         run: ./ralph-codex.sh validate --repo .
       - name: Dry-run smoke check

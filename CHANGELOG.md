@@ -3,6 +3,8 @@
 ## 0.2.0 - 2026-01-05
 - Replace codex-specific config with a generic runner abstraction (breaking config change).
 - Add placeholder expansion for runner arguments and prompt mode selection.
+- Split the wrapper into src modules with a build script (single-file output preserved).
+- Rename branding to Supergent.
 
 ## 0.1.5 - 2026-01-05
 - Fix approval decision updates so empty notes do not blank approval.json.

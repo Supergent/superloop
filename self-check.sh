@@ -5,7 +5,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
   cat <<'USAGE'
-Ralph++ Wrapper Self-Check
+Supergent Wrapper Self-Check
 
 Usage:
   self-check.sh --repo DIR --loop ID [--fast]

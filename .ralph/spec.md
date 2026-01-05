@@ -1,7 +1,7 @@
-# Ralphcodex Productization: Phase 1
+# Supergent Productization: Phase 1
 
 Goal:
-- Establish a minimal product-ready foundation for the Ralphcodex wrapper.
+- Establish a minimal product-ready foundation for the Supergent wrapper.
 
 Scope:
 - Add licensing, versioning, and a first-pass config schema/validation.

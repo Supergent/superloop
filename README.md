@@ -1,6 +1,6 @@
-# Ralph++ Codex Wrapper
+# Supergent Runner Wrapper
 
-This is a runner-driven CLI wrapper that runs a multi-role Ralph-style loop (planner, implementer, tester, reviewer) with enforced gates for checklists and tests.
+This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with enforced gates for checklists and tests.
 
 ## Quick start
 
@@ -156,3 +156,8 @@ Each loop writes to:
 - Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.
 - Runner prompt mode controls whether prompts are piped via stdin or provided as a file.
 - Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeholders.
+
+## Development
+
+- Edit `src/*.sh` and run `scripts/build.sh` to regenerate `ralph-codex.sh`.
+- CI checks that the generated `ralph-codex.sh` is up to date.
