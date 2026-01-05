@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate config schema
+        run: ./ralph-codex.sh validate --repo .
+      - name: Dry-run smoke check
+        run: ./ralph-codex.sh run --repo . --loop productization-phase-1 --dry-run

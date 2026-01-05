@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ralphcodex Config",
+  "type": "object",
+  "properties": {
+    "codex": {
+      "type": "object",
+      "properties": {
+        "args": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "fast_args": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "required": ["args", "fast_args"]
+    },
+    "loops": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "spec_file": {"type": "string"},
+          "max_iterations": {"type": "integer"},
+          "completion_promise": {"type": "string"},
+          "checklists": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "tests": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["disabled", "every", "on_promise"]
+              },
+              "commands": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "required": ["mode", "commands"]
+          },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "require_on_completion": {"type": "boolean"},
+              "artifacts": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "required": ["enabled", "require_on_completion", "artifacts"]
+          },
+          "stuck": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "threshold": {"type": "integer"},
+              "action": {"type": "string"},
+              "ignore": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "required": ["enabled", "threshold", "action", "ignore"]
+          },
+          "roles": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "required": [
+          "id",
+          "spec_file",
+          "max_iterations",
+          "completion_promise",
+          "checklists",
+          "tests",
+          "evidence",
+          "stuck",
+          "roles"
+        ]
+      }
+    }
+  },
+  "required": ["codex", "loops"]
+}

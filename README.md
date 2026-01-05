@@ -103,7 +103,9 @@ Each loop writes to:
 - `status`: Print `.ralph/state.json`.
 - `cancel`: Remove `.ralph/state.json`.
 - `run --fast`: Use `codex.fast_args` if provided (falls back to `codex.args`).
-- `run --dry-run`: Run planner+reviewer only for a quick status check without writing state or gate artifacts.
+- `run --dry-run`: Read-only status summary from existing artifacts; no Codex calls.
+- `validate`: Validate a config file against `schema/config.schema.json`.
+- `--version`: Print the current wrapper version.
 - `self-check.sh --repo DIR --loop ID [--fast]`: Run a churn smoke check (two consecutive runs must leave plan/report files unchanged).
 
 ## Notes

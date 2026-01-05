@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+VERSION="0.1.0"
 
 usage() {
   cat <<'USAGE'
@@ -12,14 +13,18 @@ Usage:
   ralph-codex.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
   ralph-codex.sh status [--repo DIR]
   ralph-codex.sh cancel [--repo DIR]
+  ralph-codex.sh validate [--repo DIR] [--config FILE] [--schema FILE]
+  ralph-codex.sh --version
 
 Options:
   --repo DIR       Repository root (default: current directory)
   --config FILE    Config file path (default: .ralph/config.json)
+  --schema FILE    Schema file path (default: schema/config.schema.json)
   --loop ID        Run only the loop with this id
   --force          Overwrite existing .ralph files on init
   --fast           Use codex.fast_args (if set) instead of codex.args
-  --dry-run        Run planner+reviewer only; avoid writing state or gate artifacts
+  --dry-run        Read-only status summary from existing artifacts; no Codex calls
+  --version        Print version and exit
 
 Notes:
 - This wrapper runs Codex in a multi-role loop (planner, implementer, tester, reviewer).
@@ -31,6 +36,10 @@ USAGE
 die() {
   echo "error: $*" >&2
   exit 1
+}
+
+print_version() {
+  echo "$VERSION"
 }
 
 need_cmd() {
@@ -838,7 +847,9 @@ run_cmd() {
   local dry_run="$5"
 
   need_cmd jq
-  need_cmd codex
+  if [[ "${dry_run:-0}" -ne 1 ]]; then
+    need_cmd codex
+  fi
 
   local ralph_dir="$repo/.ralph"
   local state_file="$ralph_dir/state.json"
@@ -916,10 +927,9 @@ run_cmd() {
 
     local loop_dir="$ralph_dir/loops/$loop_id"
     local role_dir="$ralph_dir/roles"
-    local prompt_dir=""
-    local log_dir=""
-    local last_messages_dir=""
-    local tmp_run_dir=""
+    local prompt_dir="$loop_dir/prompts"
+    local log_dir="$loop_dir/logs/iter-$iteration"
+    local last_messages_dir="$loop_dir/last_messages"
 
     local plan_file="$loop_dir/plan.md"
     local notes_file="$loop_dir/iteration_notes.md"
@@ -933,27 +943,8 @@ run_cmd() {
     local evidence_file="$loop_dir/evidence.json"
     local summary_file="$loop_dir/gate-summary.txt"
 
-    if [[ "${dry_run:-0}" -eq 1 ]]; then
-      if [[ ! -d "$loop_dir" ]]; then
-        die "loop directory missing: $loop_dir"
-      fi
-      for f in "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"; do
-        if [[ ! -f "$f" ]]; then
-          die "missing required file for dry-run: $f"
-        fi
-      done
-      tmp_run_dir=$(mktemp -d)
-      prompt_dir="$tmp_run_dir/prompts"
-      log_dir="$tmp_run_dir/logs/iter-$iteration"
-      last_messages_dir="$tmp_run_dir/last_messages"
-      mkdir -p "$prompt_dir" "$log_dir" "$last_messages_dir"
-    else
-      prompt_dir="$loop_dir/prompts"
-      log_dir="$loop_dir/logs/iter-$iteration"
-      last_messages_dir="$loop_dir/last_messages"
-      mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
-      touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
-    fi
+    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
+    touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
 
     local -a roles=()
     while IFS= read -r line; do
@@ -961,9 +952,6 @@ run_cmd() {
     done < <(jq -r '.roles[]?' <<<"$loop_json")
     if [[ ${#roles[@]} -eq 0 ]]; then
       roles=(planner implementer tester reviewer)
-    fi
-    if [[ "${dry_run:-0}" -eq 1 ]]; then
-      roles=(planner reviewer)
     fi
 
     local -a checklist_patterns=()
@@ -1002,6 +990,53 @@ run_cmd() {
     fi
     if [[ "$stuck_threshold" -le 0 ]]; then
       stuck_enabled="false"
+    fi
+
+    if [[ "${dry_run:-0}" -eq 1 ]]; then
+      local promise_status="n/a"
+      if [[ -n "$completion_promise" ]]; then
+        local reviewer_last_message="$loop_dir/last_messages/reviewer.txt"
+        if [[ -f "$reviewer_last_message" ]]; then
+          local promise_text
+          promise_text=$(extract_promise "$reviewer_last_message")
+          if [[ -n "$promise_text" ]]; then
+            if [[ "$promise_text" == "$completion_promise" ]]; then
+              promise_status="true"
+            else
+              promise_status="false"
+            fi
+          else
+            promise_status="unknown"
+          fi
+        else
+          promise_status="unknown"
+        fi
+      fi
+
+      local tests_status checklist_status_text evidence_status stuck_value
+      tests_status=$(read_test_status_summary "$test_status")
+      checklist_status_text=$(read_checklist_status_summary "$checklist_status")
+      if [[ "$evidence_enabled" == "true" ]]; then
+        if [[ -f "$evidence_file" ]]; then
+          evidence_status="ok"
+        else
+          evidence_status="missing"
+        fi
+      else
+        evidence_status="skipped"
+      fi
+      stuck_value="n/a"
+      if [[ "$stuck_enabled" == "true" ]]; then
+        local stuck_streak_read
+        stuck_streak_read=$(read_stuck_streak "$loop_dir/stuck.json")
+        stuck_value="${stuck_streak_read}/${stuck_threshold}"
+      fi
+
+      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status checklist=$checklist_status_text evidence=$evidence_status stuck=$stuck_value"
+      if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
+        return 0
+      fi
+      continue
     fi
 
     while true; do
@@ -1082,32 +1117,6 @@ run_cmd() {
         if [[ -n "$promise_text" && "$promise_text" == "$completion_promise" ]]; then
           promise_matched="true"
         fi
-      fi
-
-      if [[ "${dry_run:-0}" -eq 1 ]]; then
-        local tests_status checklist_status_text evidence_status stuck_value
-        tests_status=$(read_test_status_summary "$test_status")
-        checklist_status_text=$(read_checklist_status_summary "$checklist_status")
-        if [[ "$evidence_enabled" == "true" ]]; then
-          if [[ -f "$evidence_file" ]]; then
-            evidence_status="ok"
-          else
-            evidence_status="missing"
-          fi
-        else
-          evidence_status="skipped"
-        fi
-        stuck_value="n/a"
-        if [[ "$stuck_enabled" == "true" ]]; then
-          local stuck_streak_read
-          stuck_streak_read=$(read_stuck_streak "$loop_dir/stuck.json")
-          stuck_value="${stuck_streak_read}/${stuck_threshold}"
-        fi
-        echo "Dry-run summary ($loop_id): promise=$promise_matched tests=$tests_status checklist=$checklist_status_text evidence=$evidence_status stuck=$stuck_value"
-        if [[ -n "$tmp_run_dir" ]]; then
-          rm -rf "$tmp_run_dir"
-        fi
-        break
       fi
 
       local checklist_ok=1
@@ -1253,12 +1262,160 @@ cancel_cmd() {
   echo "Cancelled loop state."
 }
 
+select_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
+validate_cmd() {
+  local repo="$1"
+  local config_path="$2"
+  local schema_path="$3"
+
+  if [[ ! -f "$config_path" ]]; then
+    die "config not found: $config_path"
+  fi
+  if [[ ! -f "$schema_path" ]]; then
+    die "schema not found: $schema_path"
+  fi
+
+  local python_bin=""
+  python_bin=$(select_python || true)
+  if [[ -z "$python_bin" ]]; then
+    die "missing python3/python for schema validation"
+  fi
+
+  "$python_bin" - "$schema_path" "$config_path" <<'PY'
+import json
+import sys
+
+
+def error(message, path):
+    sys.stderr.write("schema validation error at {}: {}\n".format(path, message))
+    return False
+
+
+def is_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def is_number(value):
+    return (isinstance(value, int) or isinstance(value, float)) and not isinstance(value, bool)
+
+
+def validate(instance, schema, path):
+    if "enum" in schema:
+        if instance not in schema["enum"]:
+            return error("expected one of {}".format(schema["enum"]), path)
+
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if not isinstance(instance, dict):
+            return error("expected object", path)
+        props = schema.get("properties", {})
+        required = schema.get("required", [])
+        for key in required:
+            if key not in instance:
+                return error("missing required property '{}'".format(key), "{}.{}".format(path, key))
+        additional = schema.get("additionalProperties", True)
+        for key, value in instance.items():
+            if key in props:
+                if not validate(value, props[key], "{}.{}".format(path, key)):
+                    return False
+            else:
+                if additional is False:
+                    return error("unexpected property '{}'".format(key), "{}.{}".format(path, key))
+                if isinstance(additional, dict):
+                    if not validate(value, additional, "{}.{}".format(path, key)):
+                        return False
+        return True
+
+    if schema_type == "array":
+        if not isinstance(instance, list):
+            return error("expected array", path)
+        if "minItems" in schema and len(instance) < schema["minItems"]:
+            return error("expected at least {} items".format(schema["minItems"]), path)
+        item_schema = schema.get("items")
+        if item_schema is not None:
+            for index, item in enumerate(instance):
+                if not validate(item, item_schema, "{}[{}]".format(path, index)):
+                    return False
+        return True
+
+    if schema_type == "string":
+        if not isinstance(instance, str):
+            return error("expected string", path)
+        return True
+
+    if schema_type == "integer":
+        if not is_integer(instance):
+            return error("expected integer", path)
+        return True
+
+    if schema_type == "number":
+        if not is_number(instance):
+            return error("expected number", path)
+        return True
+
+    if schema_type == "boolean":
+        if not isinstance(instance, bool):
+            return error("expected boolean", path)
+        return True
+
+    return True
+
+
+def load_json(path):
+    with open(path, "r") as handle:
+        return json.load(handle)
+
+
+def main():
+    if len(sys.argv) < 3:
+        sys.stderr.write("usage: validate <schema> <config>\n")
+        return 2
+    schema_path = sys.argv[1]
+    config_path = sys.argv[2]
+    try:
+        schema = load_json(schema_path)
+    except Exception as exc:
+        sys.stderr.write("error: failed to read schema {}: {}\n".format(schema_path, exc))
+        return 1
+    try:
+        config = load_json(config_path)
+    except Exception as exc:
+        sys.stderr.write("error: failed to read config {}: {}\n".format(config_path, exc))
+        return 1
+
+    if not validate(config, schema, "$"):
+        return 1
+    print("ok: config matches schema")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PY
+}
+
 main() {
   local cmd="${1:-}"
+  if [[ "$cmd" == "--version" || "$cmd" == "-v" ]]; then
+    print_version
+    return 0
+  fi
   shift || true
 
   local repo="."
   local config_path=""
+  local schema_path=""
   local loop_id=""
   local force=0
   local fast=0
@@ -1272,6 +1429,10 @@ main() {
         ;;
       --config)
         config_path="$2"
+        shift 2
+        ;;
+      --schema)
+        schema_path="$2"
         shift 2
         ;;
       --loop)
@@ -1305,6 +1466,9 @@ main() {
   if [[ -z "$config_path" ]]; then
     config_path="$repo/.ralph/config.json"
   fi
+  if [[ -z "$schema_path" ]]; then
+    schema_path="$repo/schema/config.schema.json"
+  fi
 
   case "$cmd" in
     init)
@@ -1318,6 +1482,9 @@ main() {
       ;;
     cancel)
       cancel_cmd "$repo"
+      ;;
+    validate)
+      validate_cmd "$repo" "$config_path" "$schema_path"
       ;;
     *)
       usage

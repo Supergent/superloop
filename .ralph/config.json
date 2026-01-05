@@ -1,0 +1,42 @@
+{
+  "codex": {
+    "args": ["--full-auto"],
+    "fast_args": []
+  },
+  "loops": [
+    {
+      "id": "productization-phase-1",
+      "spec_file": ".ralph/spec.md",
+      "max_iterations": 20,
+      "completion_promise": "READY",
+      "checklists": ["PRODUCTIZATION_PHASE_1.MD"],
+      "tests": {
+        "mode": "on_promise",
+        "commands": ["./ralph-codex.sh --version"]
+      },
+      "evidence": {
+        "enabled": true,
+        "require_on_completion": true,
+        "artifacts": ["LICENSE", "CHANGELOG.md", "ralph-codex.sh", "schema/config.schema.json", ".github/workflows/ci.yml"]
+      },
+      "stuck": {
+        "enabled": true,
+        "threshold": 3,
+        "action": "report_and_stop",
+        "ignore": [
+          ".ralph/**",
+          ".git/**",
+          "node_modules/**",
+          "dist/**",
+          "build/**",
+          "coverage/**",
+          ".next/**",
+          ".venv/**",
+          ".tox/**",
+          ".cache/**"
+        ]
+      },
+      "roles": ["planner", "implementer", "tester", "reviewer"]
+    }
+  ]
+}
