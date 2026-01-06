@@ -2,6 +2,7 @@
 
 Supergent is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
 The runner is configured in `.superloop/config.json` and can be any CLI that accepts a prompt and writes a last message file.
+The legacy `.ralph/` workspace is deprecated; use `.superloop/` only.
 
 ## Philosophy
 

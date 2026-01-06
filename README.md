@@ -30,6 +30,8 @@ This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implem
 
 For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
 
+Note: the legacy `.ralph/` workspace is deprecated. Use `.superloop/` only; if you still have `.ralph/`, migrate manually by re-initializing and copying the spec/config, then remove `.ralph/` once verified.
+
 ## Config overview
 
 `.superloop/config.json` controls the loop and runner (examples use `codex exec`). Example:
