@@ -293,7 +293,7 @@ compute_signature() {
 
   local -a entries=()
   local file
-  for file in "${files[@]}"; do
+  for file in "${files[@]:-}"; do
     if [[ -z "$file" ]]; then
       continue
     fi
