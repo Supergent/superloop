@@ -1,0 +1,2 @@
+session "Write openprose ok output":
+  prompt: "Write exactly openprose ok into .superloop/loops/openprose-test/openprose-out.txt."

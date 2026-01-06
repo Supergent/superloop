@@ -603,7 +603,7 @@ run_cmd() {
           planner)
             report_guard="$plan_file"
             ;;
-          implementer)
+          implementer|openprose)
             report_guard="$implementer_report"
             ;;
           tester)
@@ -649,8 +649,14 @@ run_cmd() {
           '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
 
-        run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
-        local role_status=$?
+        local role_status=0
+        if [[ "$role" == "openprose" ]]; then
+          run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          role_status=$?
+        else
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          role_status=$?
+        fi
         if [[ -n "$report_guard" ]]; then
           if [[ $role_status -eq 124 ]]; then
             rm -f "$report_snapshot"
