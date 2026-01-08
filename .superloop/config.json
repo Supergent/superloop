@@ -73,7 +73,7 @@
         "commands": [
           "cd packages/superloop-ui && bun run build",
           "cd packages/superloop-ui && bun run typecheck",
-          "cd packages/superloop-ui && bun run lint"
+          "cd packages/superloop-ui && PATH=\"$PWD/node_modules/.bin:$PATH\" biome check ."
         ]
       },
       "evidence": {

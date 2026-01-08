@@ -1,7 +1,7 @@
 import chalk from "chalk";
 
 import { injectBindings } from "../lib/bindings.js";
-import { readLatestPrototype, type PrototypeVersion } from "../lib/prototypes.js";
+import { type PrototypeVersion, readLatestPrototype } from "../lib/prototypes.js";
 import { loadSuperloopData } from "../lib/superloop-data.js";
 import { renderCli } from "../renderers/cli.js";
 import { renderTui } from "../renderers/tui.js";
@@ -16,7 +16,7 @@ export async function renderPrototypeCommand(params: {
 }): Promise<void> {
   const view = await readLatestPrototype({
     repoRoot: params.repoRoot,
-    viewName: params.viewName
+    viewName: params.viewName,
   });
 
   if (!view) {
@@ -34,7 +34,7 @@ export async function renderPrototypeCommand(params: {
   if (!params.raw) {
     const superloop = await loadSuperloopData({
       repoRoot: params.repoRoot,
-      loopId: params.loopId
+      loopId: params.loopId,
     });
     content = injectBindings(content, superloop.data);
   }

@@ -1,5 +1,5 @@
 export type {
   PrototypesPayload,
   RenderedPrototypeVersion,
-  RenderedPrototypeView
+  RenderedPrototypeView,
 } from "../lib/payload.js";

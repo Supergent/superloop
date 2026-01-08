@@ -1,23 +1,17 @@
 import chalk from "chalk";
 
-export function renderCli(text: string, title?: string): string {
-  const lines = text.split("\n");
-  const contentWidth = Math.max(
-    ...lines.map((line) => line.length),
-    title ? title.length + 2 : 0
-  );
-  const border = `+${"-".repeat(contentWidth + 2)}+`;
-  const styledBorder = chalk.cyan(border);
+import { buildFrame } from "./frame.js";
 
-  const body = lines.map((line) => {
-    const padded = line.padEnd(contentWidth, " ");
-    return chalk.cyan(`| `) + chalk.white(padded) + chalk.cyan(" |");
+export function renderCli(text: string, title?: string): string {
+  const frame = buildFrame(text, title);
+  const styledBorder = chalk.cyan(frame.border);
+
+  const body = frame.bodyLines.map((line) => {
+    return chalk.cyan("| ") + chalk.white(line) + chalk.cyan(" |");
   });
 
-  if (title) {
-    const titleText = ` ${title} `;
-    const paddedTitle = titleText.padEnd(contentWidth + 2, " ");
-    const titleLine = chalk.cyan("|") + chalk.cyan(paddedTitle) + chalk.cyan("|");
+  if (frame.titleLine) {
+    const titleLine = chalk.cyan("|") + chalk.cyan(frame.titleLine) + chalk.cyan("|");
     return [styledBorder, titleLine, styledBorder, ...body, styledBorder].join("\n");
   }
 

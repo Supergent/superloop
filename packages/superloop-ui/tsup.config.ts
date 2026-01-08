@@ -9,9 +9,9 @@ export default defineConfig([
     target: "node20",
     clean: true,
     banner: {
-      js: "#!/usr/bin/env node"
+      js: "#!/usr/bin/env node",
     },
-    outDir: "dist"
+    outDir: "dist",
   },
   {
     entry: ["src/index.ts"],
@@ -19,7 +19,7 @@ export default defineConfig([
     platform: "node",
     sourcemap: true,
     target: "node20",
-    outDir: "dist"
+    outDir: "dist",
   },
   {
     entry: ["src/dev-server.ts"],
@@ -27,14 +27,14 @@ export default defineConfig([
     platform: "node",
     sourcemap: true,
     target: "node20",
-    outDir: "dist"
+    outDir: "dist",
   },
   {
     entry: ["src/build-assets.ts"],
     format: ["esm"],
     platform: "node",
     target: "node20",
-    outDir: "dist"
+    outDir: "dist",
   },
   {
     entry: ["src/web/main.tsx"],
@@ -43,6 +43,6 @@ export default defineConfig([
     sourcemap: true,
     target: "es2020",
     outDir: "dist/web",
-    splitting: false
-  }
+    splitting: false,
+  },
 ]);

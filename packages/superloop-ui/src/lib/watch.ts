@@ -91,7 +91,7 @@ export function watchPaths(paths: string[], onChange: () => void): WatchHandle {
       for (const watcher of watchers) {
         watcher.close();
       }
-    }
+    },
   };
 }
 

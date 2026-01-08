@@ -12,6 +12,6 @@ export async function devCommand(params: {
     loopId: params.loopId,
     port: params.port,
     host: params.host,
-    open: params.open
+    open: params.open,
   });
 }

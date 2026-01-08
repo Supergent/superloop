@@ -29,6 +29,7 @@ bun run src/cli.ts generate workgrid
 ## File conventions
 
 - Prototypes live under `.superloop/ui/prototypes/<view-name>/`.
+- Single-file prototypes at `.superloop/ui/prototypes/<view-name>.txt` are also supported.
 - Each version is a timestamped `.txt` file, for example `20240102-154233.txt`.
 - Optional metadata is stored in `meta.json` inside the view directory.
 - Use ASCII only (no Unicode box drawing) for max compatibility.

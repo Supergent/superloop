@@ -26,6 +26,7 @@ function PrototypeGrid({ views, onOpen }) {
         initial: { opacity: 0, y: 18 },
         animate: { opacity: 1, y: 0 },
         transition: { duration: 0.35 },
+        type: "button",
         onClick: () => onOpen(view),
         children: [
           /* @__PURE__ */ jsxs("div", { className: "card-head", children: [
@@ -59,17 +60,50 @@ function formatPreview(content) {
   return preview;
 }
 
+// src/renderers/frame.ts
+function buildFrame(text, title) {
+  const lines = text.split("\n");
+  const titleWidth = title ? title.length + 2 : 0;
+  const contentWidth = Math.max(...lines.map((line) => line.length), titleWidth);
+  const border = `+${"-".repeat(contentWidth + 2)}+`;
+  const bodyLines = lines.map((line) => line.padEnd(contentWidth, " "));
+  const titleLine = title ? ` ${title} `.padEnd(contentWidth + 2, " ") : void 0;
+  return {
+    contentWidth,
+    border,
+    titleLine,
+    bodyLines
+  };
+}
+function frameToText(frame) {
+  const lines = [frame.border];
+  if (frame.titleLine) {
+    lines.push(`|${frame.titleLine}|`, frame.border);
+  }
+  for (const line of frame.bodyLines) {
+    lines.push(`| ${line} |`);
+  }
+  lines.push(frame.border);
+  return lines.join("\n");
+}
+
 // src/renderers/web.tsx
 import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
-function RenderSurface({ content, mode }) {
+function RenderSurface({
+  content,
+  mode,
+  title
+}) {
+  const framed = frameToText(buildFrame(content, title));
+  const resolveContent = (surface) => surface === "web" ? content : framed;
   if (mode === "all") {
     return /* @__PURE__ */ jsxs2("div", { className: "surface-grid", children: [
-      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "Web", className: "web", content }),
-      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "CLI", className: "cli", content }),
-      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "TUI", className: "tui", content })
+      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "Web", className: "web", content: resolveContent("web") }),
+      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "CLI", className: "cli", content: resolveContent("cli") }),
+      /* @__PURE__ */ jsx2(SurfaceBlock, { label: "TUI", className: "tui", content: resolveContent("tui") })
     ] });
   }
-  return /* @__PURE__ */ jsx2(SurfaceBlock, { label: mode.toUpperCase(), className: mode, content });
+  return /* @__PURE__ */ jsx2(SurfaceBlock, { label: mode.toUpperCase(), className: mode, content: resolveContent(mode) });
 }
 function SurfaceBlock({
   label,
@@ -207,12 +241,13 @@ function App() {
                   /* @__PURE__ */ jsx3("h2", { children: activeView.name }),
                   /* @__PURE__ */ jsx3("p", { children: activeView.description ?? "No description" })
                 ] }),
-                /* @__PURE__ */ jsx3("button", { className: "ghost", onClick: () => setActiveView(null), children: "Close" })
+                /* @__PURE__ */ jsx3("button", { type: "button", className: "ghost", onClick: () => setActiveView(null), children: "Close" })
               ] }),
               /* @__PURE__ */ jsxs3("div", { className: "panel-controls", children: [
                 /* @__PURE__ */ jsx3("div", { className: "toggle-group", children: ["web", "cli", "tui", "all"].map((mode) => /* @__PURE__ */ jsx3(
                   "button",
                   {
+                    type: "button",
                     className: rendererMode === mode ? "active" : "",
                     onClick: () => setRendererMode(mode),
                     children: mode.toUpperCase()
@@ -220,7 +255,14 @@ function App() {
                   mode
                 )) }),
                 activeView.versions.length > 1 && /* @__PURE__ */ jsxs3("label", { className: "toggle", children: [
-                  /* @__PURE__ */ jsx3("input", { type: "checkbox", checked: compareVersions, onChange: handleCompareToggle }),
+                  /* @__PURE__ */ jsx3(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: compareVersions,
+                      onChange: handleCompareToggle
+                    }
+                  ),
                   "Compare versions"
                 ] })
               ] }),
@@ -248,8 +290,22 @@ function App() {
                   /* @__PURE__ */ jsx3("span", { children: version.filename }),
                   /* @__PURE__ */ jsx3("span", { children: version.createdAt })
                 ] }),
-                /* @__PURE__ */ jsx3(RenderSurface, { content: version.rendered, mode: rendererMode })
-              ] }, version.id)) }) : /* @__PURE__ */ jsx3(RenderSurface, { content: selectedVersion.rendered, mode: rendererMode }) })
+                /* @__PURE__ */ jsx3(
+                  RenderSurface,
+                  {
+                    content: version.rendered,
+                    mode: rendererMode,
+                    title: activeView.name
+                  }
+                )
+              ] }, version.id)) }) : /* @__PURE__ */ jsx3(
+                RenderSurface,
+                {
+                  content: selectedVersion.rendered,
+                  mode: rendererMode,
+                  title: activeView.name
+                }
+              ) })
             ]
           }
         )
@@ -574,6 +630,7 @@ body::before {
   border: 1px solid rgba(148, 163, 184, 0.2);
   background: rgba(2, 6, 23, 0.6);
   position: relative;
+  overflow: auto;
 }
 
 .surface-label {
@@ -593,7 +650,7 @@ body::before {
   font-size: 12px;
   line-height: 1.4;
   color: #e2e8f0;
-  white-space: pre-wrap;
+  white-space: pre;
 }
 
 .surface.web {

@@ -20,7 +20,7 @@ export async function generatePrototype(params: {
     viewName: params.viewName,
     content,
     description,
-    prompt: description
+    prompt: description,
   });
   spinner.succeed(`Prototype created at ${version.path}`);
 }

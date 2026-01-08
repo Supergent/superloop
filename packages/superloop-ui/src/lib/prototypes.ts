@@ -59,26 +59,43 @@ export async function listPrototypes(repoRoot: string): Promise<PrototypeView[]>
   }
 
   const entries = await fs.readdir(root, { withFileTypes: true });
-  const views: PrototypeView[] = [];
+  const viewsByName = new Map<string, PrototypeView>();
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const view = await readViewDirectory(root, entry.name);
       if (view) {
-        views.push(view);
-      }
-      continue;
-    }
-
-    if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
-      const view = await readStandalonePrototype(root, entry.name);
-      if (view) {
-        views.push(view);
+        viewsByName.set(view.name, view);
       }
     }
   }
 
-  return views.sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(VERSION_EXTENSION)) {
+      continue;
+    }
+
+    const viewName = path.basename(entry.name, VERSION_EXTENSION);
+    const filePath = path.join(root, entry.name);
+    const version = await readVersionFile(filePath, entry.name);
+    const existing = viewsByName.get(viewName);
+
+    if (existing) {
+      if (!existing.versions.some((item) => item.filename === entry.name)) {
+        existing.versions.push(version);
+      }
+      existing.versions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      existing.latest = existing.versions[existing.versions.length - 1];
+    } else {
+      viewsByName.set(viewName, {
+        name: viewName,
+        versions: [version],
+        latest: version,
+      });
+    }
+  }
+
+  return Array.from(viewsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function createPrototypeVersion(params: {
@@ -104,7 +121,7 @@ export async function createPrototypeVersion(params: {
     description: params.description ?? meta.description,
     prompt: params.prompt ?? meta.prompt,
     createdAt: meta.createdAt ?? now,
-    updatedAt: now
+    updatedAt: now,
   };
   await fs.writeFile(metaPath, JSON.stringify(nextMeta, null, 2), "utf8");
 
@@ -113,7 +130,7 @@ export async function createPrototypeVersion(params: {
     filename,
     path: filePath,
     createdAt: formatTimestamp(new Date()),
-    content: params.content
+    content: params.content,
   };
 }
 
@@ -123,32 +140,29 @@ export async function readLatestPrototype(params: {
 }): Promise<PrototypeView | null> {
   const root = resolvePrototypesRoot(params.repoRoot);
   const viewDir = path.join(root, params.viewName);
-  if (!(await fileExists(viewDir))) {
-    return null;
+  const view = (await fileExists(viewDir)) ? await readViewDirectory(root, params.viewName) : null;
+
+  const standaloneName = `${params.viewName}${VERSION_EXTENSION}`;
+  const standalonePath = path.join(root, standaloneName);
+  if (await fileExists(standalonePath)) {
+    const version = await readVersionFile(standalonePath, standaloneName);
+    if (view) {
+      if (!view.versions.some((item) => item.filename === standaloneName)) {
+        view.versions.push(version);
+      }
+      view.versions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      view.latest = view.versions[view.versions.length - 1];
+      return view;
+    }
+
+    return {
+      name: params.viewName,
+      versions: [version],
+      latest: version,
+    };
   }
-  const view = await readViewDirectory(root, params.viewName);
+
   return view ?? null;
-}
-
-async function readStandalonePrototype(root: string, filename: string): Promise<PrototypeView | null> {
-  const viewName = path.basename(filename, VERSION_EXTENSION);
-  const filePath = path.join(root, filename);
-  const stats = await fs.stat(filePath);
-  const content = await fs.readFile(filePath, "utf8");
-  const createdAt = formatTimestamp(stats.mtime);
-  const version: PrototypeVersion = {
-    id: createTimestampId(stats.mtime),
-    filename,
-    path: filePath,
-    createdAt,
-    content
-  };
-
-  return {
-    name: viewName,
-    versions: [version],
-    latest: version
-  };
 }
 
 async function readViewDirectory(root: string, viewName: string): Promise<PrototypeView | null> {
@@ -166,17 +180,8 @@ async function readViewDirectory(root: string, viewName: string): Promise<Protot
 
     if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
       const filePath = path.join(viewDir, entry.name);
-      const stats = await fs.stat(filePath);
-      const content = await fs.readFile(filePath, "utf8");
-      const createdAt = formatTimestamp(stats.mtime);
-      const versionId = readVersionId(entry.name, stats.mtime);
-      versions.push({
-        id: versionId,
-        filename: entry.name,
-        path: filePath,
-        createdAt,
-        content
-      });
+      const version = await readVersionFile(filePath, entry.name);
+      versions.push(version);
     }
   }
 
@@ -191,7 +196,7 @@ async function readViewDirectory(root: string, viewName: string): Promise<Protot
     name: viewName,
     description,
     versions,
-    latest
+    latest,
   };
 }
 
@@ -201,4 +206,46 @@ function readVersionId(filename: string, fallbackDate: Date): string {
     return match[1];
   }
   return createTimestampId(fallbackDate);
+}
+
+async function readVersionFile(filePath: string, filename: string): Promise<PrototypeVersion> {
+  const stats = await fs.stat(filePath);
+  const content = await fs.readFile(filePath, "utf8");
+  const versionId = readVersionId(filename, stats.mtime);
+  const createdAt = formatTimestamp(resolveTimestamp(versionId, stats.mtime));
+
+  return {
+    id: versionId,
+    filename,
+    path: filePath,
+    createdAt,
+    content,
+  };
+}
+
+function resolveTimestamp(versionId: string, fallbackDate: Date): Date {
+  const parsed = parseTimestampId(versionId);
+  return parsed ?? fallbackDate;
+}
+
+function parseTimestampId(versionId: string): Date | null {
+  const match = versionId.match(TIMESTAMP_PATTERN);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const id = match[1];
+  const year = Number(id.slice(0, 4));
+  const month = Number(id.slice(4, 6));
+  const day = Number(id.slice(6, 8));
+  const hours = Number(id.slice(9, 11));
+  const minutes = Number(id.slice(11, 13));
+  const seconds = Number(id.slice(13, 15));
+  const date = new Date(year, month - 1, day, hours, minutes, seconds);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
 }

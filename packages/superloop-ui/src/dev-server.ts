@@ -1,12 +1,12 @@
-import http from "node:http";
-import path from "node:path";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import http from "node:http";
+import path from "node:path";
 
-import { buildPrototypesPayload } from "./lib/payload.js";
 import { fileExists } from "./lib/fs-utils.js";
 import { resolvePackageRoot } from "./lib/package-root.js";
 import { resolveLoopDir, resolveLoopsRoot, resolvePrototypesRoot } from "./lib/paths.js";
+import { buildPrototypesPayload } from "./lib/payload.js";
 import { watchPaths } from "./lib/watch.js";
 
 export type DevServerOptions = {
@@ -40,7 +40,7 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        Connection: "keep-alive"
+        Connection: "keep-alive",
       });
       res.write("\n");
       clients.add(res);
@@ -53,7 +53,7 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     if (url.pathname === "/api/prototypes") {
       const payload = await buildPrototypesPayload({
         repoRoot: options.repoRoot,
-        loopId: options.loopId
+        loopId: options.loopId,
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
@@ -74,9 +74,7 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
         res.end("Web bundle not ready. Waiting for build...");
         return;
       }
-      const contentType = url.pathname.endsWith(".map")
-        ? "application/json"
-        : "text/javascript";
+      const contentType = url.pathname.endsWith(".map") ? "application/json" : "text/javascript";
       res.writeHead(200, { "Content-Type": contentType });
       res.end(await fs.readFile(filePath));
       return;
@@ -99,13 +97,13 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
 
   const buildProcess = spawn("bunx", ["tsup", "--watch", "--config", "tsup.config.ts"], {
     cwd: packageRoot,
-    stdio: "inherit"
+    stdio: "inherit",
   });
 
   const broadcast = async () => {
     const payload = await buildPrototypesPayload({
       repoRoot: options.repoRoot,
-      loopId: options.loopId
+      loopId: options.loopId,
     });
     broadcastEvent(clients, "data", payload);
   };
@@ -120,7 +118,7 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     [prototypesRoot, loopsRoot, loopDir].filter((value): value is string => Boolean(value)),
     () => {
       void broadcast();
-    }
+    },
   );
 
   const bundleWatcher = watchPaths([distWebRoot], () => {

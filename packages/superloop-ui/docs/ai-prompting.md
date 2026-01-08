@@ -6,6 +6,7 @@ Use this guide when asking Claude Code to generate ASCII UI mockups.
 
 - Save files to `.superloop/ui/prototypes/<view-name>/`.
 - Use a timestamped filename like `YYYYMMDD-HHMMSS.txt`.
+- Single-file prototypes at `.superloop/ui/prototypes/<view-name>.txt` are also supported for quick experiments.
 - Keep the content ASCII-only (no Unicode box drawing).
 
 ## Prompt template

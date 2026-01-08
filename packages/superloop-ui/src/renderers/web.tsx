@@ -1,23 +1,38 @@
+import { buildFrame, frameToText } from "./frame.js";
+
 export type RendererMode = "web" | "cli" | "tui" | "all";
 
-export function RenderSurface({ content, mode }: { content: string; mode: RendererMode }) {
+export function RenderSurface({
+  content,
+  mode,
+  title,
+}: {
+  content: string;
+  mode: RendererMode;
+  title?: string;
+}) {
+  const framed = frameToText(buildFrame(content, title));
+  const resolveContent = (surface: RendererMode) => (surface === "web" ? content : framed);
+
   if (mode === "all") {
     return (
       <div className="surface-grid">
-        <SurfaceBlock label="Web" className="web" content={content} />
-        <SurfaceBlock label="CLI" className="cli" content={content} />
-        <SurfaceBlock label="TUI" className="tui" content={content} />
+        <SurfaceBlock label="Web" className="web" content={resolveContent("web")} />
+        <SurfaceBlock label="CLI" className="cli" content={resolveContent("cli")} />
+        <SurfaceBlock label="TUI" className="tui" content={resolveContent("tui")} />
       </div>
     );
   }
 
-  return <SurfaceBlock label={mode.toUpperCase()} className={mode} content={content} />;
+  return (
+    <SurfaceBlock label={mode.toUpperCase()} className={mode} content={resolveContent(mode)} />
+  );
 }
 
 export function SurfaceBlock({
   label,
   content,
-  className
+  className,
 }: {
   label: string;
   content: string;

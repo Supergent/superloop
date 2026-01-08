@@ -8,7 +8,7 @@ export function buildPlaceholder(viewName: string, description?: string): string
     "",
     "Replace this text with your ASCII mockup.",
     "Use bindings like {{iteration}} or {{test_status}}.",
-    ""
+    "",
   ];
 
   return renderFrame(lines);

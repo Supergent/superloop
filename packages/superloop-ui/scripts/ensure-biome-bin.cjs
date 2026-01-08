@@ -4,14 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const packageRoot = process.cwd();
-const biomeScript = path.join(
-  packageRoot,
-  "node_modules",
-  "@biomejs",
-  "biome",
-  "bin",
-  "biome"
-);
+const biomeScript = path.join(packageRoot, "node_modules", "@biomejs", "biome", "bin", "biome");
 
 if (!fs.existsSync(biomeScript)) {
   process.exit(0);
@@ -26,18 +19,31 @@ const pathEntries = (process.env.PATH ?? "")
   .filter(Boolean)
   .map((entry) => path.resolve(entry));
 
-const candidates = [];
+const homeDir = path.resolve(os.homedir());
+const tmpDir = path.resolve(os.tmpdir());
+const safeRoots = [homeDir, tmpDir, path.resolve("/usr/local"), path.resolve("/opt/homebrew")];
+const candidates = new Set();
 
-if (process.env.BUN_INSTALL) {
-  candidates.push(path.join(process.env.BUN_INSTALL, "bin"));
+const bunPath = findExecutableOnPath("bun");
+if (bunPath) {
+  candidates.add(path.resolve(path.dirname(bunPath)));
 }
 
-candidates.push(path.join(os.homedir(), ".bun", "bin"));
-candidates.push(path.join(os.homedir(), ".local", "bin"));
+if (process.env.BUN_INSTALL) {
+  candidates.add(path.resolve(path.join(process.env.BUN_INSTALL, "bin")));
+}
 
-for (const dir of candidates) {
-  const resolved = path.resolve(dir);
-  if (!pathEntries.includes(resolved)) {
+candidates.add(path.resolve(path.join(os.homedir(), ".bun", "bin")));
+candidates.add(path.resolve(path.join(os.homedir(), ".local", "bin")));
+
+for (const entry of pathEntries) {
+  if (isSafePathEntry(entry, safeRoots)) {
+    candidates.add(entry);
+  }
+}
+
+for (const resolved of candidates) {
+  if (!pathEntries.includes(resolved) || !isSafePathEntry(resolved, safeRoots)) {
     continue;
   }
 
@@ -66,12 +72,20 @@ for (const dir of candidates) {
 process.exit(0);
 
 function isExecutableOnPath(command) {
+  return Boolean(findExecutableOnPath(command));
+}
+
+function isSafePathEntry(entry, safeRoots) {
+  return safeRoots.some((root) => entry === root || entry.startsWith(`${root}${path.sep}`));
+}
+
+function findExecutableOnPath(command) {
   const searchPaths = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
   for (const entry of searchPaths) {
     const candidate = path.join(entry, command);
     if (fs.existsSync(candidate)) {
-      return true;
+      return candidate;
     }
   }
-  return false;
+  return null;
 }

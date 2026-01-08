@@ -91,23 +91,38 @@ async function listPrototypes(repoRoot) {
     return [];
   }
   const entries = await fs2.readdir(root, { withFileTypes: true });
-  const views = [];
+  const viewsByName = /* @__PURE__ */ new Map();
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const view = await readViewDirectory(root, entry.name);
       if (view) {
-        views.push(view);
-      }
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
-      const view = await readStandalonePrototype(root, entry.name);
-      if (view) {
-        views.push(view);
+        viewsByName.set(view.name, view);
       }
     }
   }
-  return views.sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(VERSION_EXTENSION)) {
+      continue;
+    }
+    const viewName = path2.basename(entry.name, VERSION_EXTENSION);
+    const filePath = path2.join(root, entry.name);
+    const version = await readVersionFile(filePath, entry.name);
+    const existing = viewsByName.get(viewName);
+    if (existing) {
+      if (!existing.versions.some((item) => item.filename === entry.name)) {
+        existing.versions.push(version);
+      }
+      existing.versions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      existing.latest = existing.versions[existing.versions.length - 1];
+    } else {
+      viewsByName.set(viewName, {
+        name: viewName,
+        versions: [version],
+        latest: version
+      });
+    }
+  }
+  return Array.from(viewsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 async function createPrototypeVersion(params) {
   const root = resolvePrototypesRoot(params.repoRoot);
@@ -138,30 +153,26 @@ async function createPrototypeVersion(params) {
 async function readLatestPrototype(params) {
   const root = resolvePrototypesRoot(params.repoRoot);
   const viewDir = path2.join(root, params.viewName);
-  if (!await fileExists(viewDir)) {
-    return null;
+  const view = await fileExists(viewDir) ? await readViewDirectory(root, params.viewName) : null;
+  const standaloneName = `${params.viewName}${VERSION_EXTENSION}`;
+  const standalonePath = path2.join(root, standaloneName);
+  if (await fileExists(standalonePath)) {
+    const version = await readVersionFile(standalonePath, standaloneName);
+    if (view) {
+      if (!view.versions.some((item) => item.filename === standaloneName)) {
+        view.versions.push(version);
+      }
+      view.versions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      view.latest = view.versions[view.versions.length - 1];
+      return view;
+    }
+    return {
+      name: params.viewName,
+      versions: [version],
+      latest: version
+    };
   }
-  const view = await readViewDirectory(root, params.viewName);
   return view ?? null;
-}
-async function readStandalonePrototype(root, filename) {
-  const viewName = path2.basename(filename, VERSION_EXTENSION);
-  const filePath = path2.join(root, filename);
-  const stats = await fs2.stat(filePath);
-  const content = await fs2.readFile(filePath, "utf8");
-  const createdAt = formatTimestamp(stats.mtime);
-  const version = {
-    id: createTimestampId(stats.mtime),
-    filename,
-    path: filePath,
-    createdAt,
-    content
-  };
-  return {
-    name: viewName,
-    versions: [version],
-    latest: version
-  };
 }
 async function readViewDirectory(root, viewName) {
   const viewDir = path2.join(root, viewName);
@@ -176,17 +187,8 @@ async function readViewDirectory(root, viewName) {
     }
     if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
       const filePath = path2.join(viewDir, entry.name);
-      const stats = await fs2.stat(filePath);
-      const content = await fs2.readFile(filePath, "utf8");
-      const createdAt = formatTimestamp(stats.mtime);
-      const versionId = readVersionId(entry.name, stats.mtime);
-      versions.push({
-        id: versionId,
-        filename: entry.name,
-        path: filePath,
-        createdAt,
-        content
-      });
+      const version = await readVersionFile(filePath, entry.name);
+      versions.push(version);
     }
   }
   if (versions.length === 0) {
@@ -207,6 +209,41 @@ function readVersionId(filename, fallbackDate) {
     return match[1];
   }
   return createTimestampId(fallbackDate);
+}
+async function readVersionFile(filePath, filename) {
+  const stats = await fs2.stat(filePath);
+  const content = await fs2.readFile(filePath, "utf8");
+  const versionId = readVersionId(filename, stats.mtime);
+  const createdAt = formatTimestamp(resolveTimestamp(versionId, stats.mtime));
+  return {
+    id: versionId,
+    filename,
+    path: filePath,
+    createdAt,
+    content
+  };
+}
+function resolveTimestamp(versionId, fallbackDate) {
+  const parsed = parseTimestampId(versionId);
+  return parsed ?? fallbackDate;
+}
+function parseTimestampId(versionId) {
+  const match = versionId.match(TIMESTAMP_PATTERN);
+  if (!match?.[1]) {
+    return null;
+  }
+  const id = match[1];
+  const year = Number(id.slice(0, 4));
+  const month = Number(id.slice(4, 6));
+  const day = Number(id.slice(6, 8));
+  const hours = Number(id.slice(9, 11));
+  const minutes = Number(id.slice(11, 13));
+  const seconds = Number(id.slice(13, 15));
+  const date = new Date(year, month - 1, day, hours, minutes, seconds);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
 }
 
 // src/lib/superloop-data.ts
@@ -252,7 +289,9 @@ async function loadSuperloopData(params) {
   const loopDir = resolveLoopDir(params.repoRoot, loopId);
   const runSummary = await readJson(path3.join(loopDir, "run-summary.json"));
   const testStatus = await readJson(path3.join(loopDir, "test-status.json"));
-  const checklistStatus = await readJson(path3.join(loopDir, "checklist-status.json"));
+  const checklistStatus = await readJson(
+    path3.join(loopDir, "checklist-status.json")
+  );
   const entry = runSummary?.entries?.[runSummary.entries.length - 1];
   const data = {
     loop_id: loopId,
@@ -325,62 +364,83 @@ function renderView(view, data) {
 
 // src/renderers/cli.ts
 import chalk from "chalk";
-function renderCli(text, title) {
+
+// src/renderers/frame.ts
+function buildFrame(text, title) {
   const lines = text.split("\n");
-  const contentWidth = Math.max(
-    ...lines.map((line) => line.length),
-    title ? title.length + 2 : 0
-  );
+  const titleWidth = title ? title.length + 2 : 0;
+  const contentWidth = Math.max(...lines.map((line) => line.length), titleWidth);
   const border = `+${"-".repeat(contentWidth + 2)}+`;
-  const styledBorder = chalk.cyan(border);
-  const body = lines.map((line) => {
-    const padded = line.padEnd(contentWidth, " ");
-    return chalk.cyan(`| `) + chalk.white(padded) + chalk.cyan(" |");
+  const bodyLines = lines.map((line) => line.padEnd(contentWidth, " "));
+  const titleLine = title ? ` ${title} `.padEnd(contentWidth + 2, " ") : void 0;
+  return {
+    contentWidth,
+    border,
+    titleLine,
+    bodyLines
+  };
+}
+function frameToText(frame) {
+  const lines = [frame.border];
+  if (frame.titleLine) {
+    lines.push(`|${frame.titleLine}|`, frame.border);
+  }
+  for (const line of frame.bodyLines) {
+    lines.push(`| ${line} |`);
+  }
+  lines.push(frame.border);
+  return lines.join("\n");
+}
+
+// src/renderers/cli.ts
+function renderCli(text, title) {
+  const frame = buildFrame(text, title);
+  const styledBorder = chalk.cyan(frame.border);
+  const body = frame.bodyLines.map((line) => {
+    return chalk.cyan("| ") + chalk.white(line) + chalk.cyan(" |");
   });
-  if (title) {
-    const titleText = ` ${title} `;
-    const paddedTitle = titleText.padEnd(contentWidth + 2, " ");
-    const titleLine = chalk.cyan("|") + chalk.cyan(paddedTitle) + chalk.cyan("|");
+  if (frame.titleLine) {
+    const titleLine = chalk.cyan("|") + chalk.cyan(frame.titleLine) + chalk.cyan("|");
     return [styledBorder, titleLine, styledBorder, ...body, styledBorder].join("\n");
   }
   return [styledBorder, ...body, styledBorder].join("\n");
 }
 
 // src/renderers/tui.ts
-import blessed from "blessed";
+import * as blessed from "blessed";
 async function renderTui(text, title) {
+  const framed = frameToText(buildFrame(text, title));
   return new Promise((resolve) => {
-    const screen = blessed.screen({
+    const screen2 = blessed.screen({
       smartCSR: true,
       title: title ?? "Superloop UI"
     });
-    const box = blessed.box({
+    const box2 = blessed.box({
       top: "center",
       left: "center",
       width: "90%",
       height: "90%",
-      content: text,
-      border: { type: "line" },
+      content: framed,
       tags: false,
       scrollable: true,
       alwaysScroll: true,
       keys: true,
       vi: true
     });
-    screen.append(box);
-    screen.key(["q", "C-c", "escape"], () => {
-      screen.destroy();
+    screen2.append(box2);
+    screen2.key(["q", "C-c", "escape"], () => {
+      screen2.destroy();
       resolve();
     });
-    screen.render();
+    screen2.render();
   });
 }
 
 // src/dev-server.ts
-import http from "http";
-import path6 from "path";
 import { spawn } from "child_process";
 import fs5 from "fs/promises";
+import http from "http";
+import path6 from "path";
 
 // src/lib/package-root.ts
 import path4 from "path";

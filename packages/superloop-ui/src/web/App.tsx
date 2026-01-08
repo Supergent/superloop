@@ -1,5 +1,5 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
 import { PrototypeGrid } from "../components/PrototypeGrid.js";
 import { RenderSurface, type RendererMode } from "../renderers/web.js";
@@ -70,6 +70,12 @@ export function App() {
     const updated = payload.views.find((view) => view.name === activeView.name);
     if (updated) {
       setActiveView(updated);
+      setVersionIndex((previous) => {
+        const previousLast = activeView.versions.length - 1;
+        const nextLast = updated.versions.length - 1;
+        const wasOnLatest = previous >= previousLast;
+        return wasOnLatest ? nextLast : Math.min(previous, nextLast);
+      });
     } else {
       setActiveView(null);
     }
@@ -98,6 +104,10 @@ export function App() {
     setVersionIndex(Number(event.currentTarget.value));
   };
 
+  const handleVersionSelect = (index: number) => {
+    setVersionIndex(index);
+  };
+
   return (
     <div className="app">
       <header className="hero">
@@ -105,8 +115,7 @@ export function App() {
           <p className="eyebrow">Superloop UI Prototyping</p>
           <h1>WorkGrid</h1>
           <p className="subtitle">
-            Live ASCII prototypes rendered across web, CLI, and TUI styles with
-            bound loop data.
+            Live ASCII prototypes rendered across web, CLI, and TUI styles with bound loop data.
           </p>
         </div>
         <div className="hero-meta">
@@ -120,95 +129,130 @@ export function App() {
           </div>
           <div>
             <span className="meta-label">Updated</span>
-            <span>{payload?.updatedAt ? new Date(payload.updatedAt).toLocaleTimeString() : "--"}</span>
+            <span>
+              {payload?.updatedAt ? new Date(payload.updatedAt).toLocaleTimeString() : "--"}
+            </span>
           </div>
         </div>
       </header>
 
-      <PrototypeGrid views={cards} onOpen={handleOpen} />
+      <LayoutGroup>
+        <PrototypeGrid views={cards} onOpen={handleOpen} />
 
-      <AnimatePresence>
-        {activeView && selectedVersion && (
-          <motion.div
-            className="overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
+        <AnimatePresence>
+          {activeView && selectedVersion && (
             <motion.div
-              className="panel"
-              layout
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 20, opacity: 0 }}
+              className="overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
             >
-              <div className="panel-header">
-                <div>
-                  <h2>{activeView.name}</h2>
-                  <p>{activeView.description ?? "No description"}</p>
+              <motion.div
+                className="panel"
+                layoutId={`card-${activeView.name}`}
+                layout
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 20, opacity: 0 }}
+              >
+                <div className="panel-header">
+                  <div>
+                    <h2>{activeView.name}</h2>
+                    <p>{activeView.description ?? "No description"}</p>
+                  </div>
+                  <button type="button" className="ghost" onClick={() => setActiveView(null)}>
+                    Close
+                  </button>
                 </div>
-                <button className="ghost" onClick={() => setActiveView(null)}>
-                  Close
-                </button>
-              </div>
 
-              <div className="panel-controls">
-                <div className="toggle-group">
-                  {(["web", "cli", "tui", "all"] as RendererMode[]).map((mode) => (
-                    <button
-                      key={mode}
-                      className={rendererMode === mode ? "active" : ""}
-                      onClick={() => setRendererMode(mode)}
-                    >
-                      {mode.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-                {activeView.versions.length > 1 && (
-                  <label className="toggle">
-                    <input type="checkbox" checked={compareVersions} onChange={handleCompareToggle} />
-                    Compare versions
-                  </label>
-                )}
-              </div>
-
-              {!compareVersions && (
-                <div className="version-controls">
-                  <span>
-                    Version {versionIndex + 1} of {activeView.versions.length}
-                  </span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={activeView.versions.length - 1}
-                    value={versionIndex}
-                    onChange={handleVersionChange}
-                  />
-                  <span>{selectedVersion.createdAt}</span>
-                </div>
-              )}
-
-              <div className="panel-content">
-                {compareVersions ? (
-                  <div className="compare-grid">
-                    {activeView.versions.map((version) => (
-                      <div key={version.id} className="compare-item">
-                        <div className="compare-meta">
-                          <span>{version.filename}</span>
-                          <span>{version.createdAt}</span>
-                        </div>
-                        <RenderSurface content={version.rendered} mode={rendererMode} />
-                      </div>
+                <div className="panel-controls">
+                  <div className="toggle-group">
+                    {(["web", "cli", "tui", "all"] as RendererMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={rendererMode === mode ? "active" : ""}
+                        onClick={() => setRendererMode(mode)}
+                      >
+                        {mode.toUpperCase()}
+                      </button>
                     ))}
                   </div>
-                ) : (
-                  <RenderSurface content={selectedVersion.rendered} mode={rendererMode} />
+                  {activeView.versions.length > 1 && (
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={compareVersions}
+                        onChange={handleCompareToggle}
+                      />
+                      Compare versions
+                    </label>
+                  )}
+                </div>
+
+                {!compareVersions && (
+                  <div className="version-controls">
+                    <span>
+                      Version {versionIndex + 1} of {activeView.versions.length}
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={activeView.versions.length - 1}
+                      value={versionIndex}
+                      onChange={handleVersionChange}
+                    />
+                    <span>{selectedVersion.createdAt}</span>
+                  </div>
                 )}
-              </div>
+
+                {!compareVersions && activeView.versions.length > 1 && (
+                  <div className="version-timeline">
+                    {activeView.versions.map((version, index) => (
+                      <button
+                        key={version.id}
+                        type="button"
+                        title={version.filename}
+                        className={`version-chip${index === versionIndex ? " active" : ""}`}
+                        onClick={() => handleVersionSelect(index)}
+                      >
+                        <span>V{index + 1}</span>
+                        <span>{version.createdAt}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="panel-content">
+                  {compareVersions ? (
+                    <div className="compare-grid">
+                      {activeView.versions.map((version) => (
+                        <div key={version.id} className="compare-item">
+                          <div className="compare-meta">
+                            <span>{version.filename}</span>
+                            <span>{version.createdAt}</span>
+                          </div>
+                          <RenderSurface
+                            content={version.rendered}
+                            mode={rendererMode}
+                            title={activeView.name}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <RenderSurface
+                      content={selectedVersion.rendered}
+                      mode={rendererMode}
+                      title={activeView.name}
+                    />
+                  )}
+                </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+      </LayoutGroup>
     </div>
   );
 }

@@ -14,8 +14,8 @@ export function PrototypeGrid({ views, onOpen }: PrototypeGridProps) {
         <div className="empty">
           <h2>No prototypes yet</h2>
           <p>
-            Run <span className="mono">superloop-ui generate &lt;view&gt;</span> to seed
-            your first ASCII mockup.
+            Run <span className="mono">superloop-ui generate &lt;view&gt;</span> to seed your first
+            ASCII mockup.
           </p>
         </div>
       )}
@@ -24,10 +24,12 @@ export function PrototypeGrid({ views, onOpen }: PrototypeGridProps) {
         <motion.button
           key={view.name}
           className="card"
+          layoutId={`card-${view.name}`}
           layout
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
+          type="button"
           onClick={() => onOpen(view)}
         >
           <div className="card-head">

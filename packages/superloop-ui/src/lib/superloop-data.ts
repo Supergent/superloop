@@ -73,7 +73,7 @@ export async function resolveLoopId(repoRoot: string, preferred?: string): Promi
       const dirPath = path.join(loopsRoot, entry.name);
       const stats = await fs.stat(dirPath);
       return { name: entry.name, mtimeMs: stats.mtimeMs };
-    })
+    }),
   );
 
   withStats.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -92,12 +92,14 @@ export async function loadSuperloopData(params: {
   const loopDir = resolveLoopDir(params.repoRoot, loopId);
   const runSummary = await readJson<RunSummary>(path.join(loopDir, "run-summary.json"));
   const testStatus = await readJson<TestStatus>(path.join(loopDir, "test-status.json"));
-  const checklistStatus = await readJson<ChecklistStatus>(path.join(loopDir, "checklist-status.json"));
+  const checklistStatus = await readJson<ChecklistStatus>(
+    path.join(loopDir, "checklist-status.json"),
+  );
 
   const entry = runSummary?.entries?.[runSummary.entries.length - 1];
   const data: Record<string, string> = {
     loop_id: loopId,
-    updated_at: runSummary?.updated_at ?? new Date().toISOString()
+    updated_at: runSummary?.updated_at ?? new Date().toISOString(),
   };
 
   if (entry?.iteration !== undefined) {

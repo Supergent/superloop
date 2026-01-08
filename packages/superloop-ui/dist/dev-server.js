@@ -1,8 +1,51 @@
 // src/dev-server.ts
-import http from "http";
-import path6 from "path";
 import { spawn } from "child_process";
 import fs5 from "fs/promises";
+import http from "http";
+import path6 from "path";
+
+// src/lib/fs-utils.ts
+import fs from "fs/promises";
+async function fileExists(path7) {
+  try {
+    await fs.access(path7);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function readJson(path7) {
+  try {
+    const raw = await fs.readFile(path7, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// src/lib/package-root.ts
+import path from "path";
+import { fileURLToPath } from "url";
+function resolvePackageRoot(metaUrl) {
+  const filename = fileURLToPath(metaUrl);
+  const dir = path.dirname(filename);
+  return path.resolve(dir, "..");
+}
+
+// src/lib/paths.ts
+import path2 from "path";
+var SUPERLOOP_DIR = ".superloop";
+var UI_PROTOTYPES_DIR = path2.join(SUPERLOOP_DIR, "ui", "prototypes");
+var LOOPS_DIR = path2.join(SUPERLOOP_DIR, "loops");
+function resolvePrototypesRoot(repoRoot) {
+  return path2.join(repoRoot, UI_PROTOTYPES_DIR);
+}
+function resolveLoopsRoot(repoRoot) {
+  return path2.join(repoRoot, LOOPS_DIR);
+}
+function resolveLoopDir(repoRoot, loopId) {
+  return path2.join(resolveLoopsRoot(repoRoot), loopId);
+}
 
 // src/lib/bindings.ts
 function injectBindings(template, data) {
@@ -31,43 +74,7 @@ function resolvePath(data, key) {
 
 // src/lib/prototypes.ts
 import fs2 from "fs/promises";
-import path2 from "path";
-
-// src/lib/fs-utils.ts
-import fs from "fs/promises";
-async function fileExists(path7) {
-  try {
-    await fs.access(path7);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function readJson(path7) {
-  try {
-    const raw = await fs.readFile(path7, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-// src/lib/paths.ts
-import path from "path";
-var SUPERLOOP_DIR = ".superloop";
-var UI_PROTOTYPES_DIR = path.join(SUPERLOOP_DIR, "ui", "prototypes");
-var LOOPS_DIR = path.join(SUPERLOOP_DIR, "loops");
-function resolvePrototypesRoot(repoRoot) {
-  return path.join(repoRoot, UI_PROTOTYPES_DIR);
-}
-function resolveLoopsRoot(repoRoot) {
-  return path.join(repoRoot, LOOPS_DIR);
-}
-function resolveLoopDir(repoRoot, loopId) {
-  return path.join(resolveLoopsRoot(repoRoot), loopId);
-}
-
-// src/lib/prototypes.ts
+import path3 from "path";
 var VERSION_EXTENSION = ".txt";
 var META_FILENAME = "meta.json";
 var TIMESTAMP_PATTERN = /^(\d{8}-\d{6})/;
@@ -97,67 +104,54 @@ async function listPrototypes(repoRoot) {
     return [];
   }
   const entries = await fs2.readdir(root, { withFileTypes: true });
-  const views = [];
+  const viewsByName = /* @__PURE__ */ new Map();
   for (const entry of entries) {
     if (entry.isDirectory()) {
       const view = await readViewDirectory(root, entry.name);
       if (view) {
-        views.push(view);
-      }
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
-      const view = await readStandalonePrototype(root, entry.name);
-      if (view) {
-        views.push(view);
+        viewsByName.set(view.name, view);
       }
     }
   }
-  return views.sort((a, b) => a.name.localeCompare(b.name));
-}
-async function readStandalonePrototype(root, filename) {
-  const viewName = path2.basename(filename, VERSION_EXTENSION);
-  const filePath = path2.join(root, filename);
-  const stats = await fs2.stat(filePath);
-  const content = await fs2.readFile(filePath, "utf8");
-  const createdAt = formatTimestamp(stats.mtime);
-  const version = {
-    id: createTimestampId(stats.mtime),
-    filename,
-    path: filePath,
-    createdAt,
-    content
-  };
-  return {
-    name: viewName,
-    versions: [version],
-    latest: version
-  };
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(VERSION_EXTENSION)) {
+      continue;
+    }
+    const viewName = path3.basename(entry.name, VERSION_EXTENSION);
+    const filePath = path3.join(root, entry.name);
+    const version = await readVersionFile(filePath, entry.name);
+    const existing = viewsByName.get(viewName);
+    if (existing) {
+      if (!existing.versions.some((item) => item.filename === entry.name)) {
+        existing.versions.push(version);
+      }
+      existing.versions.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      existing.latest = existing.versions[existing.versions.length - 1];
+    } else {
+      viewsByName.set(viewName, {
+        name: viewName,
+        versions: [version],
+        latest: version
+      });
+    }
+  }
+  return Array.from(viewsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 async function readViewDirectory(root, viewName) {
-  const viewDir = path2.join(root, viewName);
+  const viewDir = path3.join(root, viewName);
   const entries = await fs2.readdir(viewDir, { withFileTypes: true });
   const versions = [];
   let description;
   for (const entry of entries) {
     if (entry.isFile() && entry.name === META_FILENAME) {
-      const meta = await readJson(path2.join(viewDir, entry.name));
+      const meta = await readJson(path3.join(viewDir, entry.name));
       description = meta?.description;
       continue;
     }
     if (entry.isFile() && entry.name.endsWith(VERSION_EXTENSION)) {
-      const filePath = path2.join(viewDir, entry.name);
-      const stats = await fs2.stat(filePath);
-      const content = await fs2.readFile(filePath, "utf8");
-      const createdAt = formatTimestamp(stats.mtime);
-      const versionId = readVersionId(entry.name, stats.mtime);
-      versions.push({
-        id: versionId,
-        filename: entry.name,
-        path: filePath,
-        createdAt,
-        content
-      });
+      const filePath = path3.join(viewDir, entry.name);
+      const version = await readVersionFile(filePath, entry.name);
+      versions.push(version);
     }
   }
   if (versions.length === 0) {
@@ -179,10 +173,45 @@ function readVersionId(filename, fallbackDate) {
   }
   return createTimestampId(fallbackDate);
 }
+async function readVersionFile(filePath, filename) {
+  const stats = await fs2.stat(filePath);
+  const content = await fs2.readFile(filePath, "utf8");
+  const versionId = readVersionId(filename, stats.mtime);
+  const createdAt = formatTimestamp(resolveTimestamp(versionId, stats.mtime));
+  return {
+    id: versionId,
+    filename,
+    path: filePath,
+    createdAt,
+    content
+  };
+}
+function resolveTimestamp(versionId, fallbackDate) {
+  const parsed = parseTimestampId(versionId);
+  return parsed ?? fallbackDate;
+}
+function parseTimestampId(versionId) {
+  const match = versionId.match(TIMESTAMP_PATTERN);
+  if (!match?.[1]) {
+    return null;
+  }
+  const id = match[1];
+  const year = Number(id.slice(0, 4));
+  const month = Number(id.slice(4, 6));
+  const day = Number(id.slice(6, 8));
+  const hours = Number(id.slice(9, 11));
+  const minutes = Number(id.slice(11, 13));
+  const seconds = Number(id.slice(13, 15));
+  const date = new Date(year, month - 1, day, hours, minutes, seconds);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
 
 // src/lib/superloop-data.ts
 import fs3 from "fs/promises";
-import path3 from "path";
+import path4 from "path";
 async function resolveLoopId(repoRoot, preferred) {
   const loopsRoot = resolveLoopsRoot(repoRoot);
   if (!await fileExists(loopsRoot)) {
@@ -207,7 +236,7 @@ async function resolveLoopId(repoRoot, preferred) {
   }
   const withStats = await Promise.all(
     loopDirs.map(async (entry) => {
-      const dirPath = path3.join(loopsRoot, entry.name);
+      const dirPath = path4.join(loopsRoot, entry.name);
       const stats = await fs3.stat(dirPath);
       return { name: entry.name, mtimeMs: stats.mtimeMs };
     })
@@ -221,9 +250,11 @@ async function loadSuperloopData(params) {
     return { data: {} };
   }
   const loopDir = resolveLoopDir(params.repoRoot, loopId);
-  const runSummary = await readJson(path3.join(loopDir, "run-summary.json"));
-  const testStatus = await readJson(path3.join(loopDir, "test-status.json"));
-  const checklistStatus = await readJson(path3.join(loopDir, "checklist-status.json"));
+  const runSummary = await readJson(path4.join(loopDir, "run-summary.json"));
+  const testStatus = await readJson(path4.join(loopDir, "test-status.json"));
+  const checklistStatus = await readJson(
+    path4.join(loopDir, "checklist-status.json")
+  );
   const entry = runSummary?.entries?.[runSummary.entries.length - 1];
   const data = {
     loop_id: loopId,
@@ -292,15 +323,6 @@ function renderView(view, data) {
     versions,
     latest
   };
-}
-
-// src/lib/package-root.ts
-import path4 from "path";
-import { fileURLToPath } from "url";
-function resolvePackageRoot(metaUrl) {
-  const filename = fileURLToPath(metaUrl);
-  const dir = path4.dirname(filename);
-  return path4.resolve(dir, "..");
 }
 
 // src/lib/watch.ts

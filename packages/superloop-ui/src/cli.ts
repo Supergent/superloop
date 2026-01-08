@@ -27,7 +27,7 @@ program
     await generatePrototype({
       repoRoot,
       viewName,
-      description: options.description
+      description: options.description,
     });
   });
 
@@ -41,7 +41,7 @@ program
     await refinePrototype({
       repoRoot,
       viewName,
-      description: options.description
+      description: options.description,
     });
   });
 
@@ -69,7 +69,7 @@ program
       versionId: options.version,
       renderer,
       loopId: program.opts().loop,
-      raw: Boolean(options.raw)
+      raw: Boolean(options.raw),
     });
   });
 
@@ -86,7 +86,7 @@ program
       viewName,
       versionId: options.version,
       loopId: program.opts().loop,
-      outDir: options.out
+      outDir: options.out,
     });
   });
 
@@ -104,7 +104,7 @@ program
       loopId: program.opts().loop,
       port: Number.isNaN(port) ? 5173 : port,
       host: options.host,
-      open: options.open
+      open: options.open,
     });
   });
 

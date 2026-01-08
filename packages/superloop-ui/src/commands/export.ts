@@ -3,7 +3,7 @@ import path from "node:path";
 import chalk from "chalk";
 
 import { injectBindings } from "../lib/bindings.js";
-import { readLatestPrototype, type PrototypeVersion } from "../lib/prototypes.js";
+import { type PrototypeVersion, readLatestPrototype } from "../lib/prototypes.js";
 import { loadSuperloopData } from "../lib/superloop-data.js";
 
 export async function exportPrototypeCommand(params: {
@@ -15,7 +15,7 @@ export async function exportPrototypeCommand(params: {
 }): Promise<void> {
   const view = await readLatestPrototype({
     repoRoot: params.repoRoot,
-    viewName: params.viewName
+    viewName: params.viewName,
   });
 
   if (!view) {
@@ -31,7 +31,7 @@ export async function exportPrototypeCommand(params: {
 
   const superloop = await loadSuperloopData({
     repoRoot: params.repoRoot,
-    loopId: params.loopId
+    loopId: params.loopId,
   });
   const rendered = injectBindings(version.content, superloop.data);
 
@@ -52,7 +52,10 @@ function selectVersion(versions: PrototypeVersion[], versionId?: string) {
   if (!versionId) {
     return versions[versions.length - 1];
   }
-  return versions.find((version) => version.id === versionId) ?? versions.find((version) => version.filename === versionId);
+  return (
+    versions.find((version) => version.id === versionId) ??
+    versions.find((version) => version.filename === versionId)
+  );
 }
 
 function buildHtml(title: string, content: string): string {

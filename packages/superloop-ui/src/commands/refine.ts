@@ -11,7 +11,7 @@ export async function refinePrototype(params: {
   const spinner = ora("Creating refinement...").start();
   const view = await readLatestPrototype({
     repoRoot: params.repoRoot,
-    viewName: params.viewName
+    viewName: params.viewName,
   });
 
   if (!view) {
@@ -27,7 +27,7 @@ export async function refinePrototype(params: {
     repoRoot: params.repoRoot,
     viewName: params.viewName,
     content: view.latest.content,
-    description
+    description,
   });
 
   spinner.succeed(`Refinement created at ${version.path}`);
