@@ -1,13 +1,16 @@
 #!/bin/bash
 # plan-session.sh - Runner-agnostic wrapper for spec planning
 #
-# Usage: ./scripts/plan-session.sh [target-repo-path]
+# Usage: ./scripts/plan-session.sh [--runner claude|codex] [target-repo-path]
 #
 # Launches an interactive planning session using the spec-planning skill.
 # The skill is read from superloop (where this script lives), and the
 # AI session runs in the target repo.
 #
-# Detects available AI runners (claude, codex) and uses the first found.
+# Options:
+#   --runner claude|codex  Force a specific runner (default: auto-detect)
+#
+# If no runner is specified, detects available AI runners and uses the first found.
 
 set -e
 
@@ -15,8 +18,37 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUPERLOOP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Target repo is the argument (or current directory)
-TARGET_REPO="${1:-.}"
+# Parse arguments
+FORCED_RUNNER=""
+TARGET_REPO=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --runner)
+      FORCED_RUNNER="$2"
+      shift 2
+      ;;
+    --runner=*)
+      FORCED_RUNNER="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--runner claude|codex] [target-repo-path]"
+      echo ""
+      echo "Options:"
+      echo "  --runner claude|codex  Force a specific runner (default: auto-detect)"
+      echo "  -h, --help             Show this help message"
+      exit 0
+      ;;
+    *)
+      TARGET_REPO="$1"
+      shift
+      ;;
+  esac
+done
+
+# Default to current directory if no target specified
+TARGET_REPO="${TARGET_REPO:-.}"
 TARGET_REPO=$(cd "$TARGET_REPO" && pwd)
 
 # Skill lives in superloop, not target repo
@@ -47,19 +79,47 @@ if [[ ! -f "$SKILL_FILE" ]]; then
   exit 1
 fi
 
-# Detect available runner
+# Determine runner (forced or auto-detect)
 RUNNER=""
 
-if command -v claude &>/dev/null; then
-  RUNNER="claude"
-  info "Detected runner: Claude Code"
-elif command -v codex &>/dev/null; then
-  RUNNER="codex"
-  info "Detected runner: OpenAI Codex"
+if [[ -n "$FORCED_RUNNER" ]]; then
+  # Validate forced runner
+  case "$FORCED_RUNNER" in
+    claude)
+      if ! command -v claude &>/dev/null; then
+        error "Claude Code (claude) is not installed"
+        exit 1
+      fi
+      RUNNER="claude"
+      info "Using runner: Claude Code (forced)"
+      ;;
+    codex)
+      if ! command -v codex &>/dev/null; then
+        error "OpenAI Codex (codex) is not installed"
+        exit 1
+      fi
+      RUNNER="codex"
+      info "Using runner: OpenAI Codex (forced)"
+      ;;
+    *)
+      error "Unknown runner: $FORCED_RUNNER"
+      error "Supported runners: claude, codex"
+      exit 1
+      ;;
+  esac
 else
-  error "No supported runner found"
-  error "Install one of: claude (Claude Code), codex (OpenAI Codex)"
-  exit 1
+  # Auto-detect runner
+  if command -v claude &>/dev/null; then
+    RUNNER="claude"
+    info "Detected runner: Claude Code"
+  elif command -v codex &>/dev/null; then
+    RUNNER="codex"
+    info "Detected runner: OpenAI Codex"
+  else
+    error "No supported runner found"
+    error "Install one of: claude (Claude Code), codex (OpenAI Codex)"
+    exit 1
+  fi
 fi
 
 info "Target repo: $TARGET_REPO"
