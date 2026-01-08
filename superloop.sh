@@ -4565,6 +4565,28 @@ run_cmd() {
         evidence_gate_ok=$evidence_ok
       fi
 
+      local progress_signature_prev=""
+      local progress_signature_current=""
+      local no_progress="false"
+      if [[ "$stuck_enabled" == "true" && "$checklist_status_text" != "ok" ]]; then
+        if [[ -f "$loop_dir/stuck.json" ]]; then
+          progress_signature_prev=$(jq -r '.signature // ""' "$loop_dir/stuck.json" 2>/dev/null || true)
+        fi
+        if [[ -n "$progress_signature_prev" ]]; then
+          local signature_rc=0
+          set +e
+          progress_signature_current=$(compute_signature "$repo" "${stuck_ignore[@]}")
+          signature_rc=$?
+          set -e
+          if [[ $signature_rc -ne 0 ]]; then
+            die "stuck signature computation failed for loop '$loop_id'"
+          fi
+          if [[ "$progress_signature_current" == "$progress_signature_prev" ]]; then
+            no_progress="true"
+          fi
+        fi
+      fi
+
       local candidate_ok=0
       if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
         candidate_ok=1
@@ -4586,10 +4608,36 @@ run_cmd() {
       local stuck_triggered="false"
       if [[ $completion_ok -eq 0 && "$stuck_enabled" == "true" && $candidate_ok -eq 0 ]]; then
         local stuck_result
+        local stuck_rc=0
+        set +e
         stuck_result=$(update_stuck_state "$repo" "$loop_dir" "$stuck_threshold" "${stuck_ignore[@]}")
-        local stuck_rc=$?
+        stuck_rc=$?
+        set -e
         if [[ $stuck_rc -eq 0 ]]; then
           stuck_streak="$stuck_result"
+          if [[ "$no_progress" == "true" ]]; then
+            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+            local stuck_value="n/a"
+            if [[ "$stuck_enabled" == "true" ]]; then
+              stuck_value="${stuck_streak}/${stuck_threshold}"
+            fi
+            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+            local no_progress_data
+            no_progress_data=$(jq -n \
+              --arg reason "checklist_remaining_no_change" \
+              --arg signature "$progress_signature_current" \
+              --argjson streak "$stuck_streak" \
+              --argjson threshold "$stuck_threshold" \
+              '{reason: $reason, signature: $signature, streak: $streak, threshold: $threshold}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "no_progress_stop" "$no_progress_data" "" "blocked"
+            local loop_stop_data
+            loop_stop_data=$(jq -n --arg reason "no_progress" --argjson streak "$stuck_streak" --argjson threshold "$stuck_threshold" '{reason: $reason, streak: $streak, threshold: $threshold}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_stop" "$loop_stop_data"
+            if [[ "${dry_run:-0}" -ne 1 ]]; then
+              write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+            fi
+            return 1
+          fi
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
           stuck_triggered="true"
