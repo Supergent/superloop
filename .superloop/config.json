@@ -58,7 +58,8 @@
         "enabled": true,
         "warn_threshold": 70,
         "block_threshold": 95,
-        "wait_on_limit": true
+        "wait_on_limit": true,
+        "max_wait_seconds": 21600
       },
       "roles": ["planner", "prose-author", "openprose", "tester", "reviewer"]
     },
@@ -131,7 +132,8 @@
         "enabled": true,
         "warn_threshold": 70,
         "block_threshold": 95,
-        "wait_on_limit": true
+        "wait_on_limit": true,
+        "max_wait_seconds": 21600
       },
       "roles": ["planner", "implementer", "tester", "reviewer"]
     }

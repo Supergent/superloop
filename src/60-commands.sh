@@ -359,6 +359,8 @@ run_cmd() {
     usage_block_threshold=$(jq -r '.usage_check.block_threshold // 95' <<<"$loop_json")
     local usage_wait_on_limit
     usage_wait_on_limit=$(jq -r '.usage_check.wait_on_limit // false' <<<"$loop_json")
+    local usage_wait_max_seconds
+    usage_wait_max_seconds=$(jq -r '.usage_check.max_wait_seconds // 7200' <<<"$loop_json")
 
     local reviewer_packet_enabled
     reviewer_packet_enabled=$(jq -r '.reviewer_packet.enabled // false' <<<"$loop_json")
@@ -697,24 +699,31 @@ run_cmd() {
 
               if [[ "${usage_wait_on_limit:-false}" == "true" ]]; then
                 echo "[superloop] Usage limit reached. Waiting for reset..." >&2
-                # Wait up to 2 hours, checking every 5 minutes
-                local wait_count=0
-                while [[ $wait_count -lt 24 ]]; do
-                  sleep 300
-                  ((wait_count++))
+                # Wait up to max_wait_seconds (default 2 hours), checking every 5 minutes
+                local wait_interval=300
+                local wait_elapsed=0
+                while true; do
+                  sleep "$wait_interval"
+                  wait_elapsed=$((wait_elapsed + wait_interval))
                   check_usage_limits "$runner_type_for_check" "${usage_warn_threshold:-70}" "${usage_block_threshold:-95}" || usage_check_result=$?
                   if [[ $usage_check_result -ne 2 ]]; then
                     echo "[superloop] Usage limits cleared. Resuming..." >&2
                     break
                   fi
-                  echo "[superloop] Still waiting for usage reset... (${wait_count}/24)" >&2
+                  if [[ "${usage_wait_max_seconds:-7200}" -gt 0 && $wait_elapsed -ge $usage_wait_max_seconds ]]; then
+                    echo "[superloop] Timed out waiting for usage reset. Stopping." >&2
+                    write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+                    return 1
+                  fi
+                  if [[ "${usage_wait_max_seconds:-7200}" -gt 0 ]]; then
+                    local remaining_wait=$((usage_wait_max_seconds - wait_elapsed))
+                    local remaining_text
+                    remaining_text=$(format_time_until_reset "$remaining_wait" 2>/dev/null || echo "${remaining_wait}s")
+                    echo "[superloop] Still waiting for usage reset... (${remaining_text} remaining)" >&2
+                  else
+                    echo "[superloop] Still waiting for usage reset..." >&2
+                  fi
                 done
-
-                if [[ $usage_check_result -eq 2 ]]; then
-                  echo "[superloop] Timed out waiting for usage reset. Stopping." >&2
-                  write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
-                  return 1
-                fi
               else
                 echo "[superloop] Usage limit reached. Stopping loop." >&2
                 write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
