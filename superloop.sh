@@ -3243,30 +3243,30 @@ append_run_summary() {
   local entry_json
   entry_json=$(jq -n \
     --arg run_id "$run_id" \
-    --argjson iteration "$iteration" \
+    --arg iteration "$iteration" \
     --arg started_at "$started_at" \
     --arg ended_at "$ended_at" \
     --arg promise_expected "$completion_promise" \
     --arg promise_text "$promise_text" \
-    --argjson promise_matched "$promise_matched_json" \
+    --arg promise_matched "$promise_matched_json" \
     --arg tests_mode "$tests_mode" \
     --arg tests_status "$tests_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
     --arg approval_status "$approval_status" \
-    --argjson stuck_streak "$stuck_streak" \
-    --argjson stuck_threshold "$stuck_threshold" \
-    --argjson completion_ok "$completion_json" \
-    --argjson artifacts "$artifacts_json" \
+    --arg stuck_streak "$stuck_streak" \
+    --arg stuck_threshold "$stuck_threshold" \
+    --arg completion_ok "$completion_json" \
+    --arg artifacts "$artifacts_json" \
     '{
       run_id: $run_id,
-      iteration: $iteration,
+      iteration: ($iteration | tonumber? // $iteration),
       started_at: $started_at,
       ended_at: $ended_at,
       promise: {
         expected: $promise_expected,
         text: ($promise_text | select(length>0)),
-        matched: $promise_matched
+        matched: ($promise_matched | fromjson? // false)
       },
       gates: {
         tests: $tests_status,
@@ -3275,9 +3275,12 @@ append_run_summary() {
         approval: $approval_status
       },
       tests_mode: $tests_mode,
-      stuck: { streak: $stuck_streak, threshold: $stuck_threshold },
-      completion_ok: $completion_ok,
-      artifacts: $artifacts
+      stuck: {
+        streak: ($stuck_streak | tonumber? // 0),
+        threshold: ($stuck_threshold | tonumber? // 0)
+      },
+      completion_ok: ($completion_ok | fromjson? // false),
+      artifacts: ($artifacts | fromjson? // {})
     } | with_entries(select(.value != null))')
   entry_json=$(json_or_default "$entry_json" "{}")
 
@@ -3389,7 +3392,6 @@ read_stuck_streak() {
   fi
   echo "$streak"
 }
-
 
 init_cmd() {
   local repo="$1"
