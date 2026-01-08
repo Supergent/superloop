@@ -30,11 +30,12 @@
       },
       "timeouts": {
         "enabled": true,
-        "default": 900,
-        "planner": 300,
-        "implementer": 900,
-        "tester": 300,
-        "reviewer": 1200
+        "default": 7200,
+        "planner": 1800,
+        "implementer": 7200,
+        "tester": 1800,
+        "reviewer": 3600,
+        "inactivity": 300
       },
       "stuck": {
         "enabled": true,
@@ -94,11 +95,12 @@
       },
       "timeouts": {
         "enabled": true,
-        "default": 900,
-        "planner": 300,
-        "implementer": 900,
-        "tester": 300,
-        "reviewer": 1200
+        "default": 7200,
+        "planner": 1800,
+        "implementer": 7200,
+        "tester": 1800,
+        "reviewer": 3600,
+        "inactivity": 300
       },
       "stuck": {
         "enabled": true,

@@ -1,0 +1,32 @@
+import blessed from "blessed";
+
+export async function renderTui(text: string, title?: string): Promise<void> {
+  return new Promise((resolve) => {
+    const screen = blessed.screen({
+      smartCSR: true,
+      title: title ?? "Superloop UI"
+    });
+
+    const box = blessed.box({
+      top: "center",
+      left: "center",
+      width: "90%",
+      height: "90%",
+      content: text,
+      border: { type: "line" },
+      tags: false,
+      scrollable: true,
+      alwaysScroll: true,
+      keys: true,
+      vi: true
+    });
+
+    screen.append(box);
+    screen.key(["q", "C-c", "escape"], () => {
+      screen.destroy();
+      resolve();
+    });
+
+    screen.render();
+  });
+}

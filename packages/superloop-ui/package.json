@@ -1,0 +1,35 @@
+{
+  "name": "superloop-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "superloop-ui": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup && node dist/build-assets.js",
+    "dev": "bun run src/cli.ts dev",
+    "start": "node dist/cli.js",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.2.0",
+    "blessed": "^0.1.81",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "framer-motion": "latest",
+    "ora": "^8.1.1",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/blessed": "^0.1.25",
+    "@types/node": "^20.16.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "tsup": "^8.2.4",
+    "typescript": "^5.6.0"
+  }
+}

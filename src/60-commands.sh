@@ -347,6 +347,8 @@ run_cmd() {
     timeout_tester=$(jq -r '.timeouts.tester // 0' <<<"$loop_json")
     local timeout_reviewer
     timeout_reviewer=$(jq -r '.timeouts.reviewer // 0' <<<"$loop_json")
+    local timeout_inactivity
+    timeout_inactivity=$(jq -r '.timeouts.inactivity // 0' <<<"$loop_json")
 
     local reviewer_packet_enabled
     reviewer_packet_enabled=$(jq -r '.reviewer_packet.enabled // false' <<<"$loop_json")
@@ -667,7 +669,7 @@ run_cmd() {
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         fi
         if [[ -n "$report_guard" ]]; then

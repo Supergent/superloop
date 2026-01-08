@@ -3,7 +3,8 @@ run_command_with_timeout() {
   local log_file="$2"
   local timeout_seconds="$3"
   local prompt_mode="$4"
-  shift 4
+  local inactivity_seconds="${5:-0}"
+  shift 5 2>/dev/null || shift 4
   local -a cmd=("$@")
 
   local python_bin=""
@@ -24,6 +25,7 @@ run_command_with_timeout() {
   RUNNER_PROMPT_FILE="$prompt_file" \
   RUNNER_LOG_FILE="$log_file" \
   RUNNER_TIMEOUT_SECONDS="$timeout_seconds" \
+  RUNNER_INACTIVITY_SECONDS="$inactivity_seconds" \
   RUNNER_PROMPT_MODE="$prompt_mode" \
   "$python_bin" - "${cmd[@]}" <<'PY'
 import os
@@ -35,11 +37,19 @@ import time
 
 
 def main():
+    # Max total timeout (safety ceiling)
     timeout_raw = os.environ.get("RUNNER_TIMEOUT_SECONDS", "0") or "0"
     try:
         timeout_seconds = int(timeout_raw)
     except ValueError:
         timeout_seconds = 0
+
+    # Inactivity timeout (kill if no output for this long)
+    inactivity_raw = os.environ.get("RUNNER_INACTIVITY_SECONDS", "0") or "0"
+    try:
+        inactivity_seconds = int(inactivity_raw)
+    except ValueError:
+        inactivity_seconds = 0
 
     prompt_path = os.environ.get("RUNNER_PROMPT_FILE")
     log_path = os.environ.get("RUNNER_LOG_FILE")
@@ -81,22 +91,47 @@ def main():
         thread = threading.Thread(target=reader, daemon=True)
         thread.start()
 
-        deadline = time.time() + timeout_seconds if timeout_seconds > 0 else None
+        # Calculate deadlines
+        now = time.time()
+        max_deadline = now + timeout_seconds if timeout_seconds > 0 else None
+        activity_deadline = now + inactivity_seconds if inactivity_seconds > 0 else None
+
         timed_out = False
+        timeout_reason = None
 
         while True:
-            if deadline and time.time() >= deadline and proc.poll() is None:
+            current_time = time.time()
+
+            # Check max timeout (safety ceiling)
+            if max_deadline and current_time >= max_deadline and proc.poll() is None:
                 timed_out = True
+                timeout_reason = "max_timeout"
+                sys.stderr.write(f"\n[superloop] Max timeout reached ({timeout_seconds}s). Terminating.\n")
                 proc.terminate()
                 break
+
+            # Check inactivity timeout
+            if activity_deadline and current_time >= activity_deadline and proc.poll() is None:
+                timed_out = True
+                timeout_reason = "inactivity"
+                sys.stderr.write(f"\n[superloop] Inactivity timeout ({inactivity_seconds}s without output). Terminating.\n")
+                proc.terminate()
+                break
+
             try:
                 line = q.get(timeout=0.1)
             except queue.Empty:
                 if proc.poll() is not None and q.empty():
                     break
                 continue
+
             if line is None:
                 break
+
+            # Got output - reset inactivity deadline
+            if inactivity_seconds > 0:
+                activity_deadline = time.time() + inactivity_seconds
+
             sys.stdout.write(line)
             sys.stdout.flush()
             log.write(line)
@@ -145,6 +180,8 @@ run_role() {
   local timeout_seconds="${1:-0}"
   shift
   local prompt_mode="${1:-stdin}"
+  shift
+  local inactivity_seconds="${1:-0}"
   shift
   # Optional: usage tracking parameters
   local usage_file="${1:-}"
@@ -196,8 +233,8 @@ run_role() {
   fi
 
   local status=0
-  if [[ "${timeout_seconds:-0}" -gt 0 ]]; then
-    run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "${cmd[@]}"
+  if [[ "${timeout_seconds:-0}" -gt 0 || "${inactivity_seconds:-0}" -gt 0 ]]; then
+    run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
     status=$?
   else
     set +e
