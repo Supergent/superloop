@@ -796,13 +796,226 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
+from datetime import timezone
+from email.utils import parsedate_to_datetime
+
+RESET_KEYS = (
+    "resets_at",
+    "reset_at",
+    "resets_in",
+    "resets_in_seconds",
+    "retry_after",
+    "retry_after_seconds",
+    "retry_after_ms",
+)
+
+
+def coerce_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
+
+
+def extract_json_from_line(line):
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            return json.loads(stripped)
+        except Exception:
+            return None
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        snippet = stripped[start : end + 1]
+        try:
+            return json.loads(snippet)
+        except Exception:
+            return None
+    return None
+
+
+def extract_error_details(obj):
+    if not isinstance(obj, dict):
+        return {}
+    err = None
+    if isinstance(obj.get("error"), dict):
+        err = obj["error"]
+    elif isinstance(obj.get("errors"), list):
+        for item in obj["errors"]:
+            if isinstance(item, dict):
+                err = item
+                break
+    if err is None:
+        err = obj
+    detail = {}
+    for key in ("type", "code", "status", "message", "param", "request_id", "requestId"):
+        if key in err:
+            detail[key] = err[key]
+    return detail
+
+
+def collect_reset_fields(obj, out):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in RESET_KEYS and key not in out and value is not None:
+                out[key] = value
+            if isinstance(value, (dict, list)):
+                collect_reset_fields(value, out)
+    elif isinstance(obj, list):
+        for item in obj:
+            collect_reset_fields(item, out)
+
+
+def apply_reset_fields(info, reset_fields):
+    if "resets_at" not in info:
+        for key in ("resets_at", "reset_at"):
+            value = coerce_int(reset_fields.get(key))
+            if value is not None:
+                info["resets_at"] = value
+                break
+    if "resets_in" not in info:
+        for key in ("resets_in", "resets_in_seconds", "retry_after_seconds", "retry_after"):
+            value = coerce_int(reset_fields.get(key))
+            if value is not None:
+                info["resets_in"] = value
+                break
+    if "resets_in" not in info:
+        value = coerce_int(reset_fields.get("retry_after_ms"))
+        if value is not None:
+            info["resets_in"] = int(round(value / 1000))
+
+
+def extract_rate_limit_info_from_json(obj):
+    info = {}
+    if not isinstance(obj, dict):
+        return info
+    error_detail = extract_error_details(obj)
+    if error_detail:
+        info["error"] = error_detail
+    reset_fields = {}
+    collect_reset_fields(obj, reset_fields)
+    if reset_fields:
+        apply_reset_fields(info, reset_fields)
+    return info
+
+
+def is_rate_limit_json(obj):
+    if not isinstance(obj, dict):
+        return False
+    error_detail = extract_error_details(obj)
+    text = " ".join(str(value) for value in error_detail.values()).lower()
+    if any(token in text for token in ("rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "too many requests")):
+        return True
+    status = error_detail.get("status") or error_detail.get("code")
+    try:
+        if int(status) == 429:
+            return True
+    except (TypeError, ValueError):
+        pass
+    obj_type = obj.get("type")
+    if isinstance(obj_type, str) and ("usage_limit" in obj_type or "rate_limit" in obj_type):
+        return True
+    return False
+
+
+def parse_http_date(value):
+    try:
+        parsed = parsedate_to_datetime(value)
+    except Exception:
+        return None
+    if not parsed:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+def parse_rate_limit_headers(lines):
+    headers = {}
+    for line in lines:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if not key:
+            continue
+        lower = key.lower()
+        if lower in ("retry-after", "x-request-id", "request-id") or lower.startswith("x-ratelimit-") or lower.startswith("ratelimit-"):
+            headers[lower] = value.strip()
+    return headers
+
+
+def apply_header_resets(info, headers):
+    retry_after = headers.get("retry-after")
+    if retry_after:
+        retry_seconds = coerce_int(retry_after)
+        if retry_seconds is not None:
+            info.setdefault("resets_in", retry_seconds)
+        else:
+            retry_at = parse_http_date(retry_after)
+            if retry_at is not None:
+                info.setdefault("resets_at", retry_at)
+    reset_header = headers.get("x-ratelimit-reset") or headers.get("ratelimit-reset")
+    if reset_header:
+        reset_value = coerce_int(reset_header)
+        if reset_value is not None:
+            if reset_value >= 1_000_000_000_000:
+                reset_value = int(reset_value / 1000)
+            if reset_value >= 1_000_000_000:
+                info.setdefault("resets_at", reset_value)
+            else:
+                info.setdefault("resets_in", reset_value)
+        else:
+            reset_at = parse_http_date(reset_header)
+            if reset_at is not None:
+                info.setdefault("resets_at", reset_at)
+
+
+def finalize_rate_limit_info(info, trigger_line, recent_lines):
+    final_info = dict(info or {})
+    if trigger_line:
+        final_info.setdefault("raw_line", trigger_line.rstrip("\n"))
+    if recent_lines:
+        context = [line.rstrip("\n") for line in recent_lines]
+        if context:
+            final_info.setdefault("raw_context", context)
+        headers = parse_rate_limit_headers(context)
+        if headers:
+            final_info.setdefault("headers", headers)
+            apply_header_resets(final_info, headers)
+    return final_info
 
 
 def detect_rate_limit(line):
     """Detect rate limit patterns in output. Returns (detected, info_dict)."""
+    parsed_json = extract_json_from_line(line)
+    parsed_info = extract_rate_limit_info_from_json(parsed_json) if parsed_json else {}
+    if parsed_json and is_rate_limit_json(parsed_json):
+        info = {"message": "Rate limit error detected", "type": "json"}
+        info.update(parsed_info)
+        error_type = ""
+        if isinstance(info.get("error"), dict):
+            error_type = str(info["error"].get("type", ""))
+        if error_type == "usage_limit_reached":
+            info["message"] = "Codex usage limit reached"
+            info["type"] = "codex"
+        return True, info
+
     # Pattern: Codex JSON error with usage_limit_reached
     if '"type"' in line and 'usage_limit_reached' in line:
         info = {"message": "Codex usage limit reached", "type": "codex"}
+        info.update(parsed_info)
         # Try to extract resets_at
         match = re.search(r'"resets_at":\s*(\d+)', line)
         if match:
@@ -811,13 +1024,16 @@ def detect_rate_limit(line):
 
     # Pattern: HTTP 429 or Too Many Requests
     if '429' in line or 'Too Many Requests' in line:
-        return True, {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info.update(parsed_info)
+        return True, info
 
     # Pattern: usage limit / rate limit errors
     lower = line.lower()
     if ('usage' in lower or 'rate' in lower) and 'limit' in lower:
         if any(word in lower for word in ['reached', 'exceeded', 'error', 'failed', 'hit']):
             info = {"message": "Rate limit error detected", "type": "generic"}
+            info.update(parsed_info)
             # Try to extract reset time
             match = re.search(r'resets?_?(at|in)["\s:]+(\d+)', line, re.IGNORECASE)
             if match:
@@ -892,6 +1108,9 @@ def main():
         timeout_reason = None
         rate_limited = False
         rate_limit_info = {}
+        rate_limit_trigger_line = None
+        rate_limit_deadline = None
+        recent_lines = deque(maxlen=40)
 
         while True:
             current_time = time.time()
@@ -915,6 +1134,8 @@ def main():
             try:
                 line = q.get(timeout=0.1)
             except queue.Empty:
+                if rate_limited and rate_limit_deadline and time.time() >= rate_limit_deadline:
+                    break
                 if proc.poll() is not None and q.empty():
                     break
                 continue
@@ -922,26 +1143,27 @@ def main():
             if line is None:
                 break
 
+            recent_lines.append(line)
+
             # Got output - reset inactivity deadline
             if inactivity_seconds > 0:
                 activity_deadline = time.time() + inactivity_seconds
 
             # Check for rate limit patterns
-            detected, info = detect_rate_limit(line)
-            if detected and not rate_limited:
-                rate_limited = True
-                rate_limit_info = info
-                sys.stderr.write(f"\n[superloop] Rate limit detected: {info.get('message', 'unknown')}\n")
-                # Write rate limit info to file if configured
-                if rate_limit_file:
-                    try:
-                        with open(rate_limit_file, "w") as f:
-                            json.dump(info, f)
-                    except Exception as e:
-                        sys.stderr.write(f"[superloop] Failed to write rate limit info: {e}\n")
-                # Terminate the process - we'll resume later
-                proc.terminate()
-                break
+            if not rate_limited:
+                detected, info = detect_rate_limit(line)
+                if detected:
+                    rate_limited = True
+                    rate_limit_info = info
+                    rate_limit_trigger_line = line
+                    rate_limit_deadline = time.time() + 1.0
+                    sys.stderr.write(f"\n[superloop] Rate limit detected: {info.get('message', 'unknown')}\n")
+                    # Terminate the process - we'll resume later
+                    proc.terminate()
+                    continue
+
+            if rate_limited:
+                continue
 
             sys.stdout.write(line)
             sys.stdout.flush()
@@ -959,6 +1181,17 @@ def main():
                 proc.kill()
 
         rc = proc.wait()
+        if rate_limited:
+            rate_limit_info = finalize_rate_limit_info(
+                rate_limit_info, rate_limit_trigger_line, list(recent_lines)
+            )
+            if rate_limit_file:
+                try:
+                    with open(rate_limit_file, "w") as f:
+                        json.dump(rate_limit_info, f)
+                except Exception as e:
+                    sys.stderr.write(f"[superloop] Failed to write rate limit info: {e}\n")
+
         if timed_out:
             return 124
         if rate_limited:
@@ -983,6 +1216,8 @@ expand_runner_arg() {
   arg=${arg//\{last_message_file\}/$last_message_file}
   printf '%s' "$arg"
 }
+
+LAST_RATE_LIMIT_INFO=""
 
 run_role() {
   local repo="$1"
@@ -1016,6 +1251,8 @@ run_role() {
     shift
   done
   local -a runner_args=("$@")
+
+  LAST_RATE_LIMIT_INFO=""
 
   mkdir -p "$(dirname "$last_message_file")" "$(dirname "$log_file")"
 
@@ -1165,6 +1402,14 @@ run_role() {
     break  # Success or other error, exit retry loop
   done
 
+  if [[ $status -eq 125 ]]; then
+    if [[ -n "$rate_limit_file" && -f "$rate_limit_file" ]]; then
+      LAST_RATE_LIMIT_INFO=$(cat "$rate_limit_file")
+    else
+      LAST_RATE_LIMIT_INFO=""
+    fi
+  fi
+
   # Clean up rate limit file
   if [[ -n "$rate_limit_file" && -f "$rate_limit_file" ]]; then
     rm -f "$rate_limit_file"
@@ -1179,7 +1424,7 @@ run_role() {
     return 124
   fi
   if [[ $status -eq 125 ]]; then
-    die "runner rate limited for role '$role' (max retries exceeded)"
+    return 125
   fi
   if [[ $status -ne 0 ]]; then
     die "runner command failed for role '$role' (exit $status)"
@@ -3265,7 +3510,7 @@ append_run_summary() {
       ended_at: $ended_at,
       promise: {
         expected: $promise_expected,
-        text: ($promise_text | select(length>0)),
+        text: (if ($promise_text | length) > 0 then $promise_text else null end),
         matched: ($promise_matched | fromjson? // false)
       },
       gates: {
@@ -4120,6 +4365,7 @@ run_cmd() {
         fi
 
         local role_status=0
+        set +e
         if [[ "$role" == "openprose" ]]; then
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
@@ -4127,12 +4373,34 @@ run_cmd() {
           run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         fi
+        set -e
         if [[ -n "$report_guard" ]]; then
           if [[ $role_status -eq 124 ]]; then
             rm -f "$report_snapshot"
           else
             restore_if_unchanged "$report_guard" "$report_snapshot"
           fi
+        fi
+        if [[ $role_status -eq 125 ]]; then
+          local rate_limit_info
+          rate_limit_info=$(json_or_default "$LAST_RATE_LIMIT_INFO" "{}")
+          local rate_limit_data
+          rate_limit_data=$(jq -n \
+            --arg loop_id "$loop_id" \
+            --arg run_id "$run_id" \
+            --argjson iteration "$iteration" \
+            --arg role "$role" \
+            --arg occurred_at "$(timestamp)" \
+            --argjson info "$rate_limit_info" \
+            '{loop_id: $loop_id, run_id: $run_id, iteration: $iteration, role: $role, occurred_at: $occurred_at, info: $info}')
+          local rate_limit_file="$loop_dir/rate-limit.json"
+          printf '%s\n' "$rate_limit_data" > "$rate_limit_file"
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "rate_limit_stop" "$rate_limit_data" "$role" "rate_limited"
+          echo "[superloop] Rate limit hit for role '$role'. State saved; resume with: superloop.sh run --repo $repo" >&2
+          if [[ "${dry_run:-0}" -ne 1 ]]; then
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "true"
+          fi
+          return 1
         fi
         if [[ $role_status -eq 124 ]]; then
           local timeout_data
@@ -4146,6 +4414,9 @@ run_cmd() {
             write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
           fi
           return 1
+        fi
+        if [[ $role_status -ne 0 ]]; then
+          die "role '$role' failed (exit $role_status)"
         fi
         local role_end_data
         role_end_data=$(jq -n \

@@ -242,7 +242,7 @@ append_run_summary() {
       ended_at: $ended_at,
       promise: {
         expected: $promise_expected,
-        text: ($promise_text | select(length>0)),
+        text: (if ($promise_text | length) > 0 then $promise_text else null end),
         matched: ($promise_matched | fromjson? // false)
       },
       gates: {

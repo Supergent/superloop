@@ -725,6 +725,7 @@ run_cmd() {
         fi
 
         local role_status=0
+        set +e
         if [[ "$role" == "openprose" ]]; then
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
@@ -732,12 +733,34 @@ run_cmd() {
           run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         fi
+        set -e
         if [[ -n "$report_guard" ]]; then
           if [[ $role_status -eq 124 ]]; then
             rm -f "$report_snapshot"
           else
             restore_if_unchanged "$report_guard" "$report_snapshot"
           fi
+        fi
+        if [[ $role_status -eq 125 ]]; then
+          local rate_limit_info
+          rate_limit_info=$(json_or_default "$LAST_RATE_LIMIT_INFO" "{}")
+          local rate_limit_data
+          rate_limit_data=$(jq -n \
+            --arg loop_id "$loop_id" \
+            --arg run_id "$run_id" \
+            --argjson iteration "$iteration" \
+            --arg role "$role" \
+            --arg occurred_at "$(timestamp)" \
+            --argjson info "$rate_limit_info" \
+            '{loop_id: $loop_id, run_id: $run_id, iteration: $iteration, role: $role, occurred_at: $occurred_at, info: $info}')
+          local rate_limit_file="$loop_dir/rate-limit.json"
+          printf '%s\n' "$rate_limit_data" > "$rate_limit_file"
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "rate_limit_stop" "$rate_limit_data" "$role" "rate_limited"
+          echo "[superloop] Rate limit hit for role '$role'. State saved; resume with: superloop.sh run --repo $repo" >&2
+          if [[ "${dry_run:-0}" -ne 1 ]]; then
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "true"
+          fi
+          return 1
         fi
         if [[ $role_status -eq 124 ]]; then
           local timeout_data
@@ -751,6 +774,9 @@ run_cmd() {
             write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
           fi
           return 1
+        fi
+        if [[ $role_status -ne 0 ]]; then
+          die "role '$role' failed (exit $role_status)"
         fi
         local role_end_data
         role_end_data=$(jq -n \
