@@ -23,6 +23,72 @@ You do the heavy lifting:
 
 ---
 
+## Using AskUserQuestion Tool
+
+Use the `AskUserQuestion` tool for structured choices. This gives users a nice UI with clickable options instead of typing answers.
+
+**When to use it:**
+- Binary or multiple-choice decisions
+- Selecting from predefined options
+- Confirming detected values
+
+**When NOT to use it:**
+- Open-ended descriptions (just ask in text)
+- When you need to explain context first (explain, then ask)
+
+**Example usage for Phase 1 (goal type):**
+```
+AskUserQuestion(
+  questions: [{
+    question: "What type of work is this?",
+    header: "Work type",
+    options: [
+      { label: "New feature", description: "Adding new functionality" },
+      { label: "Bug fix", description: "Fixing broken behavior" },
+      { label: "Refactor", description: "Restructuring without changing behavior" },
+      { label: "Enhancement", description: "Improving existing feature" }
+    ],
+    multiSelect: false
+  }]
+)
+```
+
+**Example for Phase 5 (completion promise):**
+```
+AskUserQuestion(
+  questions: [{
+    question: "What completion promise should the reviewer emit?",
+    header: "Promise",
+    options: [
+      { label: "READY", description: "General purpose completion signal" },
+      { label: "DONE", description: "Simple completion signal" },
+      { label: "FEATURE_COMPLETE", description: "Feature-specific completion" }
+    ],
+    multiSelect: false
+  }]
+)
+```
+
+**Example for Phase 6 (test mode):**
+```
+AskUserQuestion(
+  questions: [{
+    question: "When should tests run?",
+    header: "Test mode",
+    options: [
+      { label: "on_promise (Recommended)", description: "Run tests only when reviewer claims completion" },
+      { label: "every", description: "Run tests after every iteration" },
+      { label: "disabled", description: "Don't run automated tests" }
+    ],
+    multiSelect: false
+  }]
+)
+```
+
+You can ask multiple questions at once by including multiple items in the `questions` array.
+
+---
+
 ## System Knowledge
 
 ### Layer 1: What You Produce (Detailed)
@@ -115,7 +181,10 @@ Start by analyzing their project:
 [Read package.json, scan src/ structure, check for relevant existing code]
 ```
 
-Then ask about their high-level goal. Propose typical approaches based on what you see.
+Then ask about their high-level goal. Use `AskUserQuestion` to clarify the type of work:
+- New feature / Bug fix / Refactor / Enhancement
+
+Propose typical approaches based on what you see in the codebase.
 
 **Marker:** `📋 Goal: [summary]`
 
@@ -147,11 +216,11 @@ Based on requirements, propose specific acceptance criteria. These should be tes
 
 ### Phase 5: Completion Promise
 
-Recommend a simple completion promise string. Usually a single word like:
-- `READY`
-- `DONE`
-- `FEATURE_COMPLETE`
-- `AUTH_READY` (feature-specific)
+Use `AskUserQuestion` to let user pick a completion promise. Offer common options:
+- `READY` - General purpose
+- `DONE` - Simple completion
+- `FEATURE_COMPLETE` - Feature-specific
+- Or suggest a custom one based on the goal (e.g., `AUTH_READY`)
 
 **Marker:** `📋 Promise: [string]`
 
@@ -162,12 +231,14 @@ Analyze the project and propose:
 **Test command:**
 - Look for test framework in package.json (`jest`, `mocha`, `vitest`)
 - Check for test scripts (`npm test`, `yarn test`, `pytest`, `go test ./...`)
+- Use `AskUserQuestion` for test mode: `on_promise` (recommended), `every`, or `disabled`
 
 **Evidence artifacts:**
 - Based on requirements, what files should exist?
 - Main implementation files
 - Test files
 - Config files if relevant
+- Use `AskUserQuestion` with `multiSelect: true` if proposing multiple artifacts for user to pick from
 
 **Checklist items:**
 - Manual verification items
@@ -255,13 +326,23 @@ I'll help you author a Superloop specification for that. Let me first look at yo
 📋 Phase 1: Goal Understanding
 
 I see this is a [Node.js/Python/Go] project using [framework].
-
-For authentication, I'd typically recommend:
-- Username/password with email verification
-- JWT or session-based tokens
-- Password reset flow
-
-Is this the kind of auth you're looking for, or something different (OAuth, API keys, etc.)?
 ```
 
-Then continue through phases, proposing and confirming at each step.
+Then use AskUserQuestion:
+```
+AskUserQuestion(
+  questions: [{
+    question: "What type of authentication do you need?",
+    header: "Auth type",
+    options: [
+      { label: "Username/password", description: "Traditional email + password login" },
+      { label: "OAuth/SSO", description: "Login with Google, GitHub, etc." },
+      { label: "API keys", description: "For service-to-service auth" },
+      { label: "JWT tokens", description: "Stateless token-based auth" }
+    ],
+    multiSelect: false
+  }]
+)
+```
+
+Then continue through phases, using AskUserQuestion for structured choices and text for open-ended discussion.
