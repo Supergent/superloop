@@ -91,6 +91,7 @@ Responsibilities:
 - Read the spec and iteration notes.
 - Maintain a concise, ordered plan (3-7 steps) aligned with the spec and current status.
 - Note blockers or unclear requirements in the plan.
+- If you identify files that will need to be created or modified, list them in a "Target Files" section.
 
 Rules:
 - Do not modify code or run tests.
@@ -116,6 +117,11 @@ Rules:
 - Minimize report churn: if the report already reflects the current state and no changes were made, do not edit it.
 - If updates are required, change only the minimum necessary (avoid rephrasing or reordering unchanged bullets).
 - Write your summary to the implementer report file path listed in context.
+- Always include a "Files Touched" section in your report listing every file you created, modified, or deleted. Use this format:
+  ## Files Touched
+  - CREATED: path/to/new/file.ts
+  - MODIFIED: path/to/changed/file.ts
+  - DELETED: path/to/removed/file.ts
 EOF
 
   cat > "$ralph_dir/roles/tester.md" <<'EOF'
@@ -283,6 +289,9 @@ run_cmd() {
     local approval_file="$loop_dir/approval.json"
     local decisions_jsonl="$loop_dir/decisions.jsonl"
     local decisions_md="$loop_dir/decisions.md"
+    local changed_files_planner="$loop_dir/changed-files-planner.txt"
+    local changed_files_implementer="$loop_dir/changed-files-implementer.txt"
+    local changed_files_all="$loop_dir/changed-files-all.txt"
 
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
@@ -577,7 +586,10 @@ run_cmd() {
           "$checklist_status" \
           "$checklist_remaining" \
           "$evidence_file" \
-          "$reviewer_packet"
+          "$reviewer_packet" \
+          "$changed_files_planner" \
+          "$changed_files_implementer" \
+          "$changed_files_all"
 
         if [[ "$role" == "reviewer" && "$reviewer_packet_enabled" == "true" && -n "$reviewer_packet" ]]; then
           write_reviewer_packet \
@@ -683,6 +695,27 @@ run_cmd() {
           --arg last_message_file "$last_message_file" \
           '{log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_end" "$role_end_data" "$role"
+
+        # Capture git changes after role completes (file tracking)
+        if [[ "$role" == "planner" || "$role" == "implementer" ]]; then
+          local changed_file="$loop_dir/changed-files-${role}.txt"
+          if git -C "$repo" rev-parse --git-dir &>/dev/null; then
+            # Capture staged and unstaged changes
+            git -C "$repo" diff --name-only > "$changed_file" 2>/dev/null || true
+            git -C "$repo" diff --cached --name-only >> "$changed_file" 2>/dev/null || true
+            git -C "$repo" status --porcelain | awk '{print $2}' >> "$changed_file" 2>/dev/null || true
+            # Deduplicate
+            if [[ -f "$changed_file" ]]; then
+              sort -u "$changed_file" -o "$changed_file"
+            fi
+            # Update cumulative file
+            if [[ -f "$changed_file" ]]; then
+              cat "$changed_file" >> "$changed_files_all" 2>/dev/null || true
+              sort -u "$changed_files_all" -o "$changed_files_all" 2>/dev/null || true
+            fi
+          fi
+        fi
+
         last_role="$role"
       done
 

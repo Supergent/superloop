@@ -14,6 +14,9 @@ build_role_prompt() {
   local checklist_remaining="${13}"
   local evidence_file="${14}"
   local reviewer_packet="${15:-}"
+  local changed_files_planner="${16:-}"
+  local changed_files_implementer="${17:-}"
+  local changed_files_all="${18:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -34,6 +37,17 @@ EOF
 
   if [[ -n "$reviewer_packet" ]]; then
     echo "- Reviewer packet: $reviewer_packet" >> "$prompt_file"
+  fi
+
+  # Add changed files context if available
+  if [[ -n "$changed_files_planner" && -f "$changed_files_planner" ]]; then
+    echo "- Files changed by planner: $changed_files_planner" >> "$prompt_file"
+  fi
+  if [[ -n "$changed_files_implementer" && -f "$changed_files_implementer" ]]; then
+    echo "- Files changed by implementer: $changed_files_implementer" >> "$prompt_file"
+  fi
+  if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
+    echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
   fi
 }
 
