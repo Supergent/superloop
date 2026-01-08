@@ -7,7 +7,7 @@ This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implem
 1) Initialize `.superloop` in your repo:
 
 ```bash
-/Users/multiplicity/Work/ralph-codex/superloop.sh init --repo /path/to/repo
+./superloop.sh init --repo /path/to/repo
 ```
 
 2) Edit the spec:
@@ -25,12 +25,12 @@ This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implem
 4) Run the loop:
 
 ```bash
-/Users/multiplicity/Work/ralph-codex/superloop.sh run --repo /path/to/repo
+./superloop.sh run --repo /path/to/repo
 ```
 
 For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
 
-Note: the legacy `.ralph/` workspace is deprecated. Use `.superloop/` only; if you still have `.ralph/`, migrate manually by re-initializing and copying the spec/config, then remove `.ralph/` once verified.
+Note: the legacy `.superloop/` workspace is deprecated. Use `.superloop/` only; if you still have `.superloop/`, migrate manually by re-initializing and copying the spec/config, then remove `.superloop/` once verified.
 
 ## Config overview
 

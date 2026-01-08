@@ -2152,15 +2152,15 @@ read_stuck_streak() {
 init_cmd() {
   local repo="$1"
   local force="$2"
-  local ralph_dir="$repo/.superloop"
+  local superloop_dir="$repo/.superloop"
 
-  mkdir -p "$ralph_dir/roles" "$ralph_dir/loops" "$ralph_dir/logs"
+  mkdir -p "$superloop_dir/roles" "$superloop_dir/loops" "$superloop_dir/logs"
 
-  if [[ -f "$ralph_dir/config.json" && $force -ne 1 ]]; then
-    die "found existing $ralph_dir/config.json (use --force to overwrite)"
+  if [[ -f "$superloop_dir/config.json" && $force -ne 1 ]]; then
+    die "found existing $superloop_dir/config.json (use --force to overwrite)"
   fi
 
-  cat > "$ralph_dir/config.json" <<'EOF'
+  cat > "$superloop_dir/config.json" <<'EOF'
 {
   "runner": {
     "command": ["codex", "exec"],
@@ -2222,7 +2222,7 @@ init_cmd() {
 }
 EOF
 
-  cat > "$ralph_dir/spec.md" <<'EOF'
+  cat > "$superloop_dir/spec.md" <<'EOF'
 # Supergent Loop Spec
 
 Replace this file with the actual task specification.
@@ -2235,7 +2235,7 @@ Include:
 - Promise tag usage
 EOF
 
-  cat > "$ralph_dir/roles/planner.md" <<'EOF'
+  cat > "$superloop_dir/roles/planner.md" <<'EOF'
 You are the Planner.
 
 Responsibilities:
@@ -2253,7 +2253,7 @@ Rules:
 - Write only to the plan file path listed in context.
 EOF
 
-  cat > "$ralph_dir/roles/implementer.md" <<'EOF'
+  cat > "$superloop_dir/roles/implementer.md" <<'EOF'
 You are the Implementer.
 
 Responsibilities:
@@ -2275,7 +2275,7 @@ Rules:
   - DELETED: path/to/removed/file.ts
 EOF
 
-  cat > "$ralph_dir/roles/tester.md" <<'EOF'
+  cat > "$superloop_dir/roles/tester.md" <<'EOF'
 You are the Tester.
 
 Responsibilities:
@@ -2291,7 +2291,7 @@ Rules:
 - Write your report to the test report file path listed in context.
 EOF
 
-  cat > "$ralph_dir/roles/reviewer.md" <<'EOF'
+  cat > "$superloop_dir/roles/reviewer.md" <<'EOF'
 You are the Reviewer.
 
 Responsibilities:
@@ -2308,7 +2308,7 @@ Rules:
 - Write your review to the reviewer report file path listed in context.
 EOF
 
-  echo "Initialized .superloop in $ralph_dir"
+  echo "Initialized .superloop in $superloop_dir"
 }
 
 run_cmd() {
@@ -2320,8 +2320,8 @@ run_cmd() {
 
   need_cmd jq
 
-  local ralph_dir="$repo/.superloop"
-  local state_file="$ralph_dir/state.json"
+  local superloop_dir="$repo/.superloop"
+  local state_file="$superloop_dir/state.json"
 
   if [[ ! -f "$config_path" ]]; then
     die "config not found: $config_path"
@@ -2416,8 +2416,8 @@ run_cmd() {
       die "spec file not found: $spec_file"
     fi
 
-    local loop_dir="$ralph_dir/loops/$loop_id"
-    local role_dir="$ralph_dir/roles"
+    local loop_dir="$superloop_dir/loops/$loop_id"
+    local role_dir="$superloop_dir/roles"
     local prompt_dir="$loop_dir/prompts"
     local log_dir="$loop_dir/logs/iter-$iteration"
     local last_messages_dir="$loop_dir/last_messages"

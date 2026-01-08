@@ -4,23 +4,23 @@
 # Usage: ./scripts/plan-session.sh [target-repo-path]
 #
 # Launches an interactive planning session using the spec-planning skill.
-# The skill is read from ralph-codex (where this script lives), and the
+# The skill is read from superloop (where this script lives), and the
 # AI session runs in the target repo.
 #
 # Detects available AI runners (claude, codex) and uses the first found.
 
 set -e
 
-# Get the directory where this script lives (ralph-codex/scripts/)
+# Get the directory where this script lives (superloop/scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SUPERLOOP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Target repo is the argument (or current directory)
 TARGET_REPO="${1:-.}"
 TARGET_REPO=$(cd "$TARGET_REPO" && pwd)
 
-# Skill lives in ralph-codex, not target repo
-SKILL_FILE="$RALPH_DIR/.superloop/skills/spec-planning.md"
+# Skill lives in superloop, not target repo
+SKILL_FILE="$SUPERLOOP_DIR/.superloop/skills/spec-planning.md"
 
 # Colors for output
 RED='\033[0;31m'
@@ -40,10 +40,10 @@ error() {
   echo -e "${RED}[plan]${NC} $1" >&2
 }
 
-# Check that skill file exists (in ralph-codex)
+# Check that skill file exists (in superloop)
 if [[ ! -f "$SKILL_FILE" ]]; then
   error "Skill file not found: $SKILL_FILE"
-  error "Is ralph-codex properly installed?"
+  error "Is superloop properly installed?"
   exit 1
 fi
 
@@ -108,7 +108,7 @@ if [[ -f "$TARGET_REPO/.superloop/spec.md" ]]; then
 
   echo ""
   info "To start the implementation loop, run:"
-  echo "  $RALPH_DIR/superloop.sh run --repo $TARGET_REPO"
+  echo "  $SUPERLOOP_DIR/superloop.sh run --repo $TARGET_REPO"
 else
   warn "No spec.md found in $TARGET_REPO/.superloop/"
   warn "Planning may not have completed. Run this script again or use 'save' command."

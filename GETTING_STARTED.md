@@ -2,7 +2,7 @@
 
 Supergent is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with hard gates. The goal is not "more automation" but "reliable completion": every iteration leaves behind a trail of artifacts that prove the work is done (or show exactly why it is not).
 The runner is configured in `.superloop/config.json` and can be any CLI that accepts a prompt and writes a last message file.
-The legacy `.ralph/` workspace is deprecated; use `.superloop/` only.
+The legacy `.superloop/` workspace is deprecated; use `.superloop/` only.
 
 ## Philosophy
 
@@ -93,15 +93,15 @@ This tutorial builds a small but real feature: a CLI that summarizes a log file,
 ### 1) Create a scratch repo
 
 ```bash
-mkdir ralph-demo
-cd ralph-demo
+mkdir superloop-demo
+cd superloop-demo
 git init
 ```
 
 ### 2) Initialize Supergent
 
 ```bash
-/path/to/ralph-codex/superloop.sh init --repo .
+./superloop.sh init --repo .
 ```
 
 ### 3) Write the spec
@@ -209,13 +209,13 @@ Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeho
 ### 6) Run the loop
 
 ```bash
-/path/to/ralph-codex/superloop.sh run --repo . --loop logsum
+./superloop.sh run --repo . --loop logsum
 ```
 
 If it pauses for approval:
 
 ```bash
-/path/to/ralph-codex/superloop.sh approve --repo . --loop logsum
+./superloop.sh approve --repo . --loop logsum
 ```
 
 ### 7) Inspect results
