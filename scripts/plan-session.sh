@@ -1,7 +1,7 @@
 #!/bin/bash
 # plan-session.sh - Runner-agnostic wrapper for spec planning
 #
-# Usage: ./scripts/plan-session.sh [--runner claude|codex] [target-repo-path]
+# Usage: ./scripts/plan-session.sh [options] [target-repo-path]
 #
 # Launches an interactive planning session using the spec-planning skill.
 # The skill is read from superloop (where this script lives), and the
@@ -9,6 +9,7 @@
 #
 # Options:
 #   --runner claude|codex  Force a specific runner (default: auto-detect)
+#   -y, --yes              Bypass permission prompts (auto-approve tool use)
 #
 # If no runner is specified, detects available AI runners and uses the first found.
 
@@ -21,6 +22,7 @@ SUPERLOOP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Parse arguments
 FORCED_RUNNER=""
 TARGET_REPO=""
+BYPASS_PERMISSIONS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,11 +34,16 @@ while [[ $# -gt 0 ]]; do
       FORCED_RUNNER="${1#*=}"
       shift
       ;;
+    -y|--yes)
+      BYPASS_PERMISSIONS=true
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 [--runner claude|codex] [target-repo-path]"
+      echo "Usage: $0 [options] [target-repo-path]"
       echo ""
       echo "Options:"
       echo "  --runner claude|codex  Force a specific runner (default: auto-detect)"
+      echo "  -y, --yes              Bypass permission prompts (auto-approve tool use)"
       echo "  -h, --help             Show this help message"
       exit 0
       ;;
@@ -134,16 +141,24 @@ echo "  The AI will guide you through creating a spec for your project."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
+# Build runner arguments
+CLAUDE_ARGS=(--append-system-prompt "$(cat "$SKILL_FILE")")
+CODEX_ARGS=(--config developer_instructions="$(cat "$SKILL_FILE")")
+
+if [[ "$BYPASS_PERMISSIONS" == "true" ]]; then
+  CLAUDE_ARGS+=(--dangerously-skip-permissions)
+  CODEX_ARGS+=(--full-auto)
+  info "Permission bypass enabled"
+fi
+
 # Launch the appropriate runner with skill injected via CLI flags
 case "$RUNNER" in
   claude)
-    # --append-system-prompt adds skill to system prompt without modifying files
-    cd "$TARGET_REPO" && claude --append-system-prompt "$(cat "$SKILL_FILE")"
+    cd "$TARGET_REPO" && claude "${CLAUDE_ARGS[@]}"
     ;;
 
   codex)
-    # --config developer_instructions adds skill as developer role message
-    cd "$TARGET_REPO" && codex --config developer_instructions="$(cat "$SKILL_FILE")"
+    cd "$TARGET_REPO" && codex "${CODEX_ARGS[@]}"
     ;;
 esac
 
