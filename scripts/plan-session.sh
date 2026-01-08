@@ -82,8 +82,8 @@ case "$RUNNER" in
     ;;
 
   codex)
-    # Pass skill as initial prompt argument
-    cd "$TARGET_REPO" && codex "$(cat "$SKILL_FILE")"
+    # --config developer_instructions adds skill as developer role message
+    cd "$TARGET_REPO" && codex --config developer_instructions="$(cat "$SKILL_FILE")"
     ;;
 esac
 
