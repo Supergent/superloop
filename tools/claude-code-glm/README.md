@@ -1,100 +1,145 @@
-# Quick Start - Claude Code GLM Multi-Provider Setup
+# Quick Start - Claude Code GLM Dual-VM Setup
 
-Run Claude Code CLI with **GLM-4.7** via **Cerebras** (high-speed) or **Z.ai** (best pricing)!
+Run Claude Code CLI with **GLM-4.7** via **two specialized VMs**:
+- 🚀 **Cerebras** (high-speed: 1000-1700 TPS)
+- 💰 **Z.ai** (best pricing: ~$1-2/1M tokens)
 
 ⚠️ **Security**: All API keys in this documentation are placeholders. See [SECURITY_NOTE.md](SECURITY_NOTE.md) for key management.
 
-## One-Liner Launch (From Mac)
+📖 **Complete Guide**: See [DUAL_VM_SETUP.md](DUAL_VM_SETUP.md) for detailed dual-VM documentation.
+
+## Quick Launch
+
+### Cerebras VM (High-Speed Development)
 
 ```bash
-orb shell claude-code-glm
+# From Mac
+orb shell claude-code-glm-cerebras
+
+# Inside VM
+source ~/.bashrc && ccr start &
+sleep 3 && eval "$(ccr activate)"
+cd ~/superloop && claude
 ```
 
-Then inside VM:
-```bash
-export CEREBRAS_API_KEY="csk-your-cerebras-api-key-here"
-ccr start &
-sleep 3
-eval "$(ccr activate)"
-cd ~/superloop
-claude
-```
+**Best for:** Complex tasks, large refactors, debugging
 
-## Super Quick Version
+### Z.ai VM (Cost-Effective Coding)
 
 ```bash
-# From Mac - all in one:
-orb -m claude-code-glm -s '
-  export CEREBRAS_API_KEY="csk-your-cerebras-api-key-here"
-  ccr start &
-  sleep 3
-  eval "$(ccr activate)"
-  cd ~/superloop
-  claude
-'
+# From Mac
+orb shell claude-code-glm-zai
+
+# Inside VM
+cd ~/superloop && claude
 ```
+
+**Best for:** Daily coding, learning, routine development
+**Note:** Requires Z.ai API key configuration (see [DUAL_VM_SETUP.md](DUAL_VM_SETUP.md))
+
+## Architecture Overview
+
+**Two Independent VMs:**
+
+| VM | Provider | Method | Speed | Cost |
+|----|----------|--------|-------|------|
+| `claude-code-glm-cerebras` | Cerebras | Router + Transformer | 1000-1700 TPS | $2.25-2.75/1M |
+| `claude-code-glm-zai` | Z.ai | Direct (official) | TBD | ~$1-2/1M |
+
+**Why Separate VMs?**
+- Z.ai uses direct integration (no router) per official docs
+- Cerebras requires custom transformer via router
+- Each VM optimized for its provider's integration method
+- Easy switching, no compatibility issues
 
 ## Useful Commands
 
 ```bash
 # VM management
-orbctl list                  # Check VM status
-orbctl stop claude-code-glm  # Stop VM
-orbctl start claude-code-glm # Start VM
+orbctl list                           # List all VMs
+orbctl start claude-code-glm-cerebras # Start Cerebras VM
+orbctl start claude-code-glm-zai      # Start Z.ai VM
+orbctl stop --all                     # Stop all VMs
 
-# Inside VM
-ccr status                   # Router status
-ccr restart                  # Restart router
+# Inside Cerebras VM
+ccr status                            # Router status
+ccr restart                           # Restart router
 tail -f ~/.claude-code-router/logs/ccr-*.log  # View logs
 
-# Access your code
+# Inside Z.ai VM
+cat ~/.claude/settings.json           # View Claude Code config
+# No router needed for Z.ai!
+
+# Access your code (both VMs)
 cd ~/superloop  # Your project
 cd ~/work       # All projects
 ```
 
 ## What's Running
 
-- **VM**: `claude-code-glm` (Ubuntu ARM64)
-- **Router**: Port 3456 (localhost)
-- **Providers**:
-  - Cerebras GLM-4.7 (high-speed: 1000-1700 TPS)
-  - Z.ai GLM-4.7 (best pricing: ~$1-2/1M tokens)
+### Cerebras VM
+- **Router**: Port 3456 (Claude Code Router)
+- **Transformer**: Custom Anthropic ↔ OpenAI converter
+- **Model**: Cerebras GLM-4.7 (zai-glm-4.7)
+- **Speed**: 1000-1700 TPS
+- **Tool Calling**: #1 ranked
+
+### Z.ai VM
+- **Direct Integration**: No router, Claude Code → Z.ai API
+- **Models**: GLM-4.7 (Sonnet/Opus), GLM-4.5-Air (Haiku)
+- **Config**: `~/.claude/settings.json`
+- **Method**: Official Z.ai integration per their docs
+
+**Both VMs:**
 - **Code Access**: Direct mount of `/Users/multiplicity/Work`
+- **Ubuntu**: ARM64, OrbStack VMs
+- **Isolated**: Independent configurations
 
-## Switching Providers
+## Switching Between VMs
 
-Inside Claude Code session:
+**Method 1: Different Terminals**
 ```bash
-# Check current model
-/status
+# Terminal 1 - Cerebras
+orb shell claude-code-glm-cerebras
 
-# Use Z.ai (cheaper, recommended for daily work)
-/model zai,glm-4.7
-
-# Use Cerebras (faster, for complex tasks)
-/model cerebras,zai-glm-4.7
-
-# Use Z.ai's lighter model
-/model zai,glm-4.5-air
+# Terminal 2 - Z.ai
+orb shell claude-code-glm-zai
 ```
 
-**Default routing**:
-- Most tasks → Z.ai (best pricing)
-- Thinking/long context → Cerebras (high speed)
+**Method 2: Exit and Switch**
+```bash
+# In VM
+exit
 
-## Setting Up Z.ai Provider
+# Switch to other VM
+orb shell claude-code-glm-cerebras
+# or
+orb shell claude-code-glm-zai
+```
 
-To enable Z.ai provider (optional but recommended):
+**Method 3: Mac Aliases (add to ~/.zshrc)**
+```bash
+alias claude-fast='orb shell claude-code-glm-cerebras'
+alias claude-cheap='orb shell claude-code-glm-zai'
+```
+
+## Setting Up Z.ai (Required for Z.ai VM)
 
 1. Get API key from https://z.ai/model-api
-2. In VM, edit `~/.bashrc`:
+2. Fund account at https://z.ai/manage-apikey/apikey-list
+3. Configure in VM:
    ```bash
-   export ZAI_API_KEY="your-zai-api-key-here"
+   orb shell claude-code-glm-zai
+   nano ~/.claude/settings.json
+   # Replace "your-zai-api-key-here" with actual key
    ```
-3. Reload: `source ~/.bashrc`
-4. Restart router: `pkill -f ccr && ~/start-claude-router.sh`
+4. Test:
+   ```bash
+   cd ~/superloop
+   claude
+   ```
 
-**Current setup**: Cerebras only (Z.ai key not configured yet)
+**Status**: Cerebras VM ready. Z.ai VM needs API key funding.
 
 ## Quick Tests
 
@@ -120,17 +165,23 @@ echo "What is the git status?" | claude
 
 **On Mac (in `tools/claude-code-glm/`):**
 - `README.md` - This quick start file
-- `SETUP_GUIDE.md` - Complete setup guide
-- `MULTI_PROVIDER_SETUP.md` - Multi-provider configuration guide
+- `DUAL_VM_SETUP.md` - Complete dual-VM setup guide ⭐ NEW
+- `SETUP_GUIDE.md` - Original single-VM setup (Cerebras)
+- `MULTI_PROVIDER_SETUP.md` - Router-based multi-provider config
 - `TECHNICAL_DOCS.md` - Full technical documentation
 - `TEST_RESULTS.md` - API test results
 - `SETUP_STATUS.md` - Current status and troubleshooting
 - `SECURITY_NOTE.md` - API key security best practices
+- `test-cerebras-api.sh` - API testing script
 
-## Status: ✅ DOCUMENTATION READY
+## Status: ✅ DUAL-VM SETUP COMPLETE
+
+**Ready to Use:**
+- ✅ Cerebras VM: Configured and tested
+- ⏳ Z.ai VM: Configured, needs API key funding
 
 **Next Steps:**
-1. Get API keys (Cerebras and/or Z.ai)
-2. Create VM with setup instructions
-3. Replace placeholder keys with your own
-4. Start coding with Claude Code + GLM-4.7!
+1. Fund Z.ai account: https://z.ai/manage-apikey/apikey-list
+2. Add Z.ai API key to `claude-code-glm-zai` VM
+3. Test both VMs with your projects
+4. Develop workflow leveraging both providers!
