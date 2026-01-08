@@ -186,7 +186,7 @@ write_usage_event() {
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Build the event JSON
+  # Build the event JSON - include session/thread IDs from globals
   jq -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
@@ -195,15 +195,70 @@ write_usage_event() {
     --argjson usage "$usage_json" \
     --arg runner "$runner_type" \
     --arg session "$session_file" \
+    --arg session_id "${USAGE_SESSION_ID:-}" \
+    --arg thread_id "${USAGE_THREAD_ID:-}" \
     '{
       "timestamp": $ts,
       "iteration": $iter,
       "role": $role,
       "duration_ms": $duration,
       "runner": $runner,
+      "session_id": (if $session_id == "" then null else $session_id end),
+      "thread_id": (if $thread_id == "" then null else $thread_id end),
       "usage": $usage,
       "session_file": (if $session == "" then null else $session end)
     }' >> "$usage_file"
+}
+
+# Write session entry to sessions manifest
+# Args: $1 = sessions_file, $2 = iteration, $3 = role, $4 = runner_type, $5 = status, $6 = started_at, $7 = ended_at
+write_session_entry() {
+  local sessions_file="$1"
+  local iteration="$2"
+  local role="$3"
+  local runner_type="$4"
+  local status="$5"
+  local started_at="$6"
+  local ended_at="${7:-}"
+
+  if [[ -z "$sessions_file" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$sessions_file")"
+
+  jq -c -n \
+    --argjson iter "$iteration" \
+    --arg role "$role" \
+    --arg runner "$runner_type" \
+    --arg session_id "${USAGE_SESSION_ID:-}" \
+    --arg thread_id "${USAGE_THREAD_ID:-}" \
+    --arg status "$status" \
+    --arg started_at "$started_at" \
+    --arg ended_at "$ended_at" \
+    '{
+      iteration: $iter,
+      role: $role,
+      runner: $runner,
+      session_id: (if $session_id == "" then null else $session_id end),
+      thread_id: (if $thread_id == "" then null else $thread_id end),
+      status: $status,
+      started_at: $started_at,
+      ended_at: (if $ended_at == "" then null else $ended_at end)
+    }' >> "$sessions_file"
+}
+
+# Get the current session info as JSON (for state tracking)
+get_current_session_json() {
+  jq -c -n \
+    --arg session_id "${USAGE_SESSION_ID:-}" \
+    --arg thread_id "${USAGE_THREAD_ID:-}" \
+    --arg runner "${CURRENT_RUNNER_TYPE:-unknown}" \
+    '{
+      session_id: (if $session_id == "" then null else $session_id end),
+      thread_id: (if $thread_id == "" then null else $thread_id end),
+      runner: $runner
+    }'
 }
 
 # Prepare command with session tracking args

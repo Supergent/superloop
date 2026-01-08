@@ -27,13 +27,45 @@ run_command_with_timeout() {
   RUNNER_TIMEOUT_SECONDS="$timeout_seconds" \
   RUNNER_INACTIVITY_SECONDS="$inactivity_seconds" \
   RUNNER_PROMPT_MODE="$prompt_mode" \
+  RUNNER_RATE_LIMIT_FILE="${RUNNER_RATE_LIMIT_FILE:-}" \
   "$python_bin" - "${cmd[@]}" <<'PY'
+import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
 import time
+
+
+def detect_rate_limit(line):
+    """Detect rate limit patterns in output. Returns (detected, info_dict)."""
+    # Pattern: Codex JSON error with usage_limit_reached
+    if '"type"' in line and 'usage_limit_reached' in line:
+        info = {"message": "Codex usage limit reached", "type": "codex"}
+        # Try to extract resets_at
+        match = re.search(r'"resets_at":\s*(\d+)', line)
+        if match:
+            info["resets_at"] = int(match.group(1))
+        return True, info
+
+    # Pattern: HTTP 429 or Too Many Requests
+    if '429' in line or 'Too Many Requests' in line:
+        return True, {"message": "HTTP 429 Too Many Requests", "type": "http"}
+
+    # Pattern: usage limit / rate limit errors
+    lower = line.lower()
+    if ('usage' in lower or 'rate' in lower) and 'limit' in lower:
+        if any(word in lower for word in ['reached', 'exceeded', 'error', 'failed', 'hit']):
+            info = {"message": "Rate limit error detected", "type": "generic"}
+            # Try to extract reset time
+            match = re.search(r'resets?_?(at|in)["\s:]+(\d+)', line, re.IGNORECASE)
+            if match:
+                info["resets_at" if match.group(1).lower() == "at" else "resets_in"] = int(match.group(2))
+            return True, info
+
+    return False, {}
 
 
 def main():
@@ -54,6 +86,7 @@ def main():
     prompt_path = os.environ.get("RUNNER_PROMPT_FILE")
     log_path = os.environ.get("RUNNER_LOG_FILE")
     prompt_mode = os.environ.get("RUNNER_PROMPT_MODE", "stdin") or "stdin"
+    rate_limit_file = os.environ.get("RUNNER_RATE_LIMIT_FILE", "")
     cmd = sys.argv[1:]
     if not log_path:
         sys.stderr.write("missing RUNNER_LOG_FILE\n")
@@ -98,6 +131,8 @@ def main():
 
         timed_out = False
         timeout_reason = None
+        rate_limited = False
+        rate_limit_info = {}
 
         while True:
             current_time = time.time()
@@ -132,6 +167,23 @@ def main():
             if inactivity_seconds > 0:
                 activity_deadline = time.time() + inactivity_seconds
 
+            # Check for rate limit patterns
+            detected, info = detect_rate_limit(line)
+            if detected and not rate_limited:
+                rate_limited = True
+                rate_limit_info = info
+                sys.stderr.write(f"\n[superloop] Rate limit detected: {info.get('message', 'unknown')}\n")
+                # Write rate limit info to file if configured
+                if rate_limit_file:
+                    try:
+                        with open(rate_limit_file, "w") as f:
+                            json.dump(info, f)
+                    except Exception as e:
+                        sys.stderr.write(f"[superloop] Failed to write rate limit info: {e}\n")
+                # Terminate the process - we'll resume later
+                proc.terminate()
+                break
+
             sys.stdout.write(line)
             sys.stdout.flush()
             log.write(line)
@@ -142,9 +194,16 @@ def main():
             if proc.poll() is None:
                 proc.kill()
 
+        if rate_limited and proc.poll() is None:
+            time.sleep(2)
+            if proc.poll() is None:
+                proc.kill()
+
         rc = proc.wait()
         if timed_out:
             return 124
+        if rate_limited:
+            return 125  # Special exit code for rate limit
         return rc
 
 
@@ -216,35 +275,140 @@ run_role() {
 
   # Detect runner type and prepare tracked command
   local runner_type="unknown"
+  USAGE_SESSION_ID=""  # Reset global - will be set by prepare_tracked_command for Claude
+  USAGE_THREAD_ID=""   # Reset global - will be extracted from output for Codex
+  CURRENT_RUNNER_TYPE="unknown"
+
   if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type detect_runner_type &>/dev/null; then
     runner_type=$(detect_runner_type "${cmd[@]}")
+    CURRENT_RUNNER_TYPE="$runner_type"
 
     if [[ "$runner_type" == "claude" ]]; then
-      # Inject --session-id for Claude
+      # prepare_tracked_command generates USAGE_SESSION_ID and injects --session-id
       local -a tracked_cmd=()
       while IFS= read -r line; do
         tracked_cmd+=("$line")
       done < <(prepare_tracked_command "$runner_type" "${cmd[@]}")
       cmd=("${tracked_cmd[@]}")
+      # USAGE_SESSION_ID is now set globally by prepare_tracked_command
     fi
 
     # Start usage tracking
     track_usage "start" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
   fi
 
+  # Set up rate limit detection
+  local rate_limit_file=""
+  if type wait_for_rate_limit_reset &>/dev/null; then
+    rate_limit_file=$(mktemp -t "superloop-rate-limit.XXXXXX" 2>/dev/null || echo "")
+  fi
+
   local status=0
-  if [[ "${timeout_seconds:-0}" -gt 0 || "${inactivity_seconds:-0}" -gt 0 ]]; then
-    run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
-    status=$?
-  else
-    set +e
-    if [[ "$prompt_mode" == "stdin" ]]; then
-      "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+  local max_retries="${SUPERLOOP_RATE_LIMIT_MAX_RETRIES:-3}"
+  local retry_count=0
+
+  while true; do
+    status=0
+    if [[ "${timeout_seconds:-0}" -gt 0 || "${inactivity_seconds:-0}" -gt 0 ]]; then
+      RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+        run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      status=$?
     else
-      "${cmd[@]}" | tee "$log_file"
+      set +e
+      if [[ "$prompt_mode" == "stdin" ]]; then
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+      else
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" | tee "$log_file"
+      fi
+      status=${PIPESTATUS[0]}
+      set -e
     fi
-    status=${PIPESTATUS[0]}
-    set -e
+
+    # Handle rate limit (exit code 125)
+    if [[ $status -eq 125 ]]; then
+      retry_count=$((retry_count + 1))
+      if [[ $retry_count -gt $max_retries ]]; then
+        echo "[superloop] Rate limit: max retries ($max_retries) exceeded, aborting" >&2
+        break
+      fi
+
+      echo "[superloop] Rate limit hit (attempt $retry_count/$max_retries), will wait and resume" >&2
+
+      # Read rate limit info from file
+      local resets_at=""
+      if [[ -n "$rate_limit_file" && -f "$rate_limit_file" ]]; then
+        resets_at=$(jq -r '.resets_at // empty' "$rate_limit_file" 2>/dev/null || true)
+        local resets_in
+        resets_in=$(jq -r '.resets_in // empty' "$rate_limit_file" 2>/dev/null || true)
+        if [[ -z "$resets_at" && -n "$resets_in" ]]; then
+          resets_at=$(($(date +%s) + resets_in))
+        fi
+      fi
+
+      # Wait for rate limit to reset
+      if type wait_for_rate_limit_reset &>/dev/null; then
+        if ! wait_for_rate_limit_reset "$resets_at" "${SUPERLOOP_RATE_LIMIT_MAX_WAIT:-7200}"; then
+          echo "[superloop] Rate limit: wait exceeded max time, aborting" >&2
+          break
+        fi
+      else
+        # Fallback: wait 5 minutes
+        echo "[superloop] Waiting 5 minutes before retry..." >&2
+        sleep 300
+      fi
+
+      # Build resume command based on runner type
+      if [[ "$runner_type" == "claude" && -n "$USAGE_SESSION_ID" ]]; then
+        # Resume Claude session using the actual session ID that was passed to Claude
+        echo "[superloop] Resuming Claude session: $USAGE_SESSION_ID" >&2
+        cmd=("claude" "--resume" "$USAGE_SESSION_ID" "-p" "continue from where you left off")
+        prompt_mode="arg"  # Resume uses prompt as argument
+      elif [[ "$runner_type" == "codex" ]]; then
+        # For Codex, try to extract thread_id from log (if not already captured)
+        if [[ -z "$USAGE_THREAD_ID" && -f "$log_file" ]]; then
+          USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+        fi
+        if [[ -n "$USAGE_THREAD_ID" ]]; then
+          echo "[superloop] Resuming Codex thread: $USAGE_THREAD_ID" >&2
+          cmd=("codex" "exec" "resume" "$USAGE_THREAD_ID" "continue from where you left off")
+          prompt_mode="arg"  # Resume uses prompt as argument
+        else
+          echo "[superloop] No Codex thread_id found, retrying from scratch" >&2
+          # Rebuild original command
+          cmd=()
+          for part in "${runner_command[@]}"; do
+            cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+          done
+          for part in "${runner_args[@]}"; do
+            cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+          done
+        fi
+      else
+        echo "[superloop] Retrying from scratch" >&2
+        # Rebuild original command
+        cmd=()
+        for part in "${runner_command[@]}"; do
+          cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+        done
+        for part in "${runner_args[@]}"; do
+          cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+        done
+      fi
+
+      # Clear rate limit file for next attempt
+      if [[ -n "$rate_limit_file" && -f "$rate_limit_file" ]]; then
+        : > "$rate_limit_file"
+      fi
+
+      continue  # Retry the loop
+    fi
+
+    break  # Success or other error, exit retry loop
+  done
+
+  # Clean up rate limit file
+  if [[ -n "$rate_limit_file" && -f "$rate_limit_file" ]]; then
+    rm -f "$rate_limit_file"
   fi
 
   # End usage tracking
@@ -254,6 +418,9 @@ run_role() {
 
   if [[ $status -eq 124 ]]; then
     return 124
+  fi
+  if [[ $status -eq 125 ]]; then
+    die "runner rate limited for role '$role' (max retries exceeded)"
   fi
   if [[ $status -ne 0 ]]; then
     die "runner command failed for role '$role' (exit $status)"

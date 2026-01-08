@@ -11,6 +11,7 @@ PARTS=(
   "20-prompts.sh"
   "30-runner.sh"
   "35-usage.sh"
+  "36-usage-limits.sh"
   "40-gates.sh"
   "50-events.sh"
   "60-commands.sh"
