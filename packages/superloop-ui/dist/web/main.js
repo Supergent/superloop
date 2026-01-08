@@ -2,7 +2,7 @@
 import { createRoot } from "react-dom/client";
 
 // src/web/App.tsx
-import { AnimatePresence, motion as motion2 } from "framer-motion";
+import { AnimatePresence, LayoutGroup, motion as motion2 } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 
 // src/components/PrototypeGrid.tsx
@@ -22,6 +22,7 @@ function PrototypeGrid({ views, onOpen }) {
       motion.button,
       {
         className: "card",
+        layoutId: `card-${view.name}`,
         layout: true,
         initial: { opacity: 0, y: 18 },
         animate: { opacity: 1, y: 0 },
@@ -171,6 +172,12 @@ function App() {
     const updated = payload.views.find((view) => view.name === activeView.name);
     if (updated) {
       setActiveView(updated);
+      setVersionIndex((previous) => {
+        const previousLast = activeView.versions.length - 1;
+        const nextLast = updated.versions.length - 1;
+        const wasOnLatest = previous >= previousLast;
+        return wasOnLatest ? nextLast : Math.min(previous, nextLast);
+      });
     } else {
       setActiveView(null);
     }
@@ -193,6 +200,9 @@ function App() {
   };
   const handleVersionChange = (event) => {
     setVersionIndex(Number(event.currentTarget.value));
+  };
+  const handleVersionSelect = (index) => {
+    setVersionIndex(index);
   };
   return /* @__PURE__ */ jsxs3("div", { className: "app", children: [
     /* @__PURE__ */ jsxs3("header", { className: "hero", children: [
@@ -219,98 +229,118 @@ function App() {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsx3(PrototypeGrid, { views: cards, onOpen: handleOpen }),
-    /* @__PURE__ */ jsx3(AnimatePresence, { children: activeView && selectedVersion && /* @__PURE__ */ jsx3(
-      motion2.div,
-      {
-        className: "overlay",
-        initial: { opacity: 0 },
-        animate: { opacity: 1 },
-        exit: { opacity: 0 },
-        children: /* @__PURE__ */ jsxs3(
-          motion2.div,
-          {
-            className: "panel",
-            layout: true,
-            initial: { y: 20, opacity: 0 },
-            animate: { y: 0, opacity: 1 },
-            exit: { y: 20, opacity: 0 },
-            children: [
-              /* @__PURE__ */ jsxs3("div", { className: "panel-header", children: [
-                /* @__PURE__ */ jsxs3("div", { children: [
-                  /* @__PURE__ */ jsx3("h2", { children: activeView.name }),
-                  /* @__PURE__ */ jsx3("p", { children: activeView.description ?? "No description" })
+    /* @__PURE__ */ jsxs3(LayoutGroup, { children: [
+      /* @__PURE__ */ jsx3(PrototypeGrid, { views: cards, onOpen: handleOpen }),
+      /* @__PURE__ */ jsx3(AnimatePresence, { children: activeView && selectedVersion && /* @__PURE__ */ jsx3(
+        motion2.div,
+        {
+          className: "overlay",
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          exit: { opacity: 0 },
+          children: /* @__PURE__ */ jsxs3(
+            motion2.div,
+            {
+              className: "panel",
+              layoutId: `card-${activeView.name}`,
+              layout: true,
+              initial: { y: 20, opacity: 0 },
+              animate: { y: 0, opacity: 1 },
+              exit: { y: 20, opacity: 0 },
+              children: [
+                /* @__PURE__ */ jsxs3("div", { className: "panel-header", children: [
+                  /* @__PURE__ */ jsxs3("div", { children: [
+                    /* @__PURE__ */ jsx3("h2", { children: activeView.name }),
+                    /* @__PURE__ */ jsx3("p", { children: activeView.description ?? "No description" })
+                  ] }),
+                  /* @__PURE__ */ jsx3("button", { type: "button", className: "ghost", onClick: () => setActiveView(null), children: "Close" })
                 ] }),
-                /* @__PURE__ */ jsx3("button", { type: "button", className: "ghost", onClick: () => setActiveView(null), children: "Close" })
-              ] }),
-              /* @__PURE__ */ jsxs3("div", { className: "panel-controls", children: [
-                /* @__PURE__ */ jsx3("div", { className: "toggle-group", children: ["web", "cli", "tui", "all"].map((mode) => /* @__PURE__ */ jsx3(
-                  "button",
-                  {
-                    type: "button",
-                    className: rendererMode === mode ? "active" : "",
-                    onClick: () => setRendererMode(mode),
-                    children: mode.toUpperCase()
-                  },
-                  mode
-                )) }),
-                activeView.versions.length > 1 && /* @__PURE__ */ jsxs3("label", { className: "toggle", children: [
+                /* @__PURE__ */ jsxs3("div", { className: "panel-controls", children: [
+                  /* @__PURE__ */ jsx3("div", { className: "toggle-group", children: ["web", "cli", "tui", "all"].map((mode) => /* @__PURE__ */ jsx3(
+                    "button",
+                    {
+                      type: "button",
+                      className: rendererMode === mode ? "active" : "",
+                      onClick: () => setRendererMode(mode),
+                      children: mode.toUpperCase()
+                    },
+                    mode
+                  )) }),
+                  activeView.versions.length > 1 && /* @__PURE__ */ jsxs3("label", { className: "toggle", children: [
+                    /* @__PURE__ */ jsx3(
+                      "input",
+                      {
+                        type: "checkbox",
+                        checked: compareVersions,
+                        onChange: handleCompareToggle
+                      }
+                    ),
+                    "Compare versions"
+                  ] })
+                ] }),
+                !compareVersions && /* @__PURE__ */ jsxs3("div", { className: "version-controls", children: [
+                  /* @__PURE__ */ jsxs3("span", { children: [
+                    "Version ",
+                    versionIndex + 1,
+                    " of ",
+                    activeView.versions.length
+                  ] }),
                   /* @__PURE__ */ jsx3(
                     "input",
                     {
-                      type: "checkbox",
-                      checked: compareVersions,
-                      onChange: handleCompareToggle
+                      type: "range",
+                      min: 0,
+                      max: activeView.versions.length - 1,
+                      value: versionIndex,
+                      onChange: handleVersionChange
                     }
                   ),
-                  "Compare versions"
-                ] })
-              ] }),
-              !compareVersions && /* @__PURE__ */ jsxs3("div", { className: "version-controls", children: [
-                /* @__PURE__ */ jsxs3("span", { children: [
-                  "Version ",
-                  versionIndex + 1,
-                  " of ",
-                  activeView.versions.length
+                  /* @__PURE__ */ jsx3("span", { children: selectedVersion.createdAt })
                 ] }),
-                /* @__PURE__ */ jsx3(
-                  "input",
+                !compareVersions && activeView.versions.length > 1 && /* @__PURE__ */ jsx3("div", { className: "version-timeline", children: activeView.versions.map((version, index) => /* @__PURE__ */ jsxs3(
+                  "button",
                   {
-                    type: "range",
-                    min: 0,
-                    max: activeView.versions.length - 1,
-                    value: versionIndex,
-                    onChange: handleVersionChange
-                  }
-                ),
-                /* @__PURE__ */ jsx3("span", { children: selectedVersion.createdAt })
-              ] }),
-              /* @__PURE__ */ jsx3("div", { className: "panel-content", children: compareVersions ? /* @__PURE__ */ jsx3("div", { className: "compare-grid", children: activeView.versions.map((version) => /* @__PURE__ */ jsxs3("div", { className: "compare-item", children: [
-                /* @__PURE__ */ jsxs3("div", { className: "compare-meta", children: [
-                  /* @__PURE__ */ jsx3("span", { children: version.filename }),
-                  /* @__PURE__ */ jsx3("span", { children: version.createdAt })
-                ] }),
-                /* @__PURE__ */ jsx3(
+                    type: "button",
+                    title: version.filename,
+                    className: `version-chip${index === versionIndex ? " active" : ""}`,
+                    onClick: () => handleVersionSelect(index),
+                    children: [
+                      /* @__PURE__ */ jsxs3("span", { children: [
+                        "V",
+                        index + 1
+                      ] }),
+                      /* @__PURE__ */ jsx3("span", { children: version.createdAt })
+                    ]
+                  },
+                  version.id
+                )) }),
+                /* @__PURE__ */ jsx3("div", { className: "panel-content", children: compareVersions ? /* @__PURE__ */ jsx3("div", { className: "compare-grid", children: activeView.versions.map((version) => /* @__PURE__ */ jsxs3("div", { className: "compare-item", children: [
+                  /* @__PURE__ */ jsxs3("div", { className: "compare-meta", children: [
+                    /* @__PURE__ */ jsx3("span", { children: version.filename }),
+                    /* @__PURE__ */ jsx3("span", { children: version.createdAt })
+                  ] }),
+                  /* @__PURE__ */ jsx3(
+                    RenderSurface,
+                    {
+                      content: version.rendered,
+                      mode: rendererMode,
+                      title: activeView.name
+                    }
+                  )
+                ] }, version.id)) }) : /* @__PURE__ */ jsx3(
                   RenderSurface,
                   {
-                    content: version.rendered,
+                    content: selectedVersion.rendered,
                     mode: rendererMode,
                     title: activeView.name
                   }
-                )
-              ] }, version.id)) }) : /* @__PURE__ */ jsx3(
-                RenderSurface,
-                {
-                  content: selectedVersion.rendered,
-                  mode: rendererMode,
-                  title: activeView.name
-                }
-              ) })
-            ]
-          }
-        )
-      }
-    ) })
+                ) })
+              ]
+            }
+          )
+        }
+      ) })
+    ] })
   ] });
 }
 
@@ -481,6 +511,8 @@ body::before {
   font-size: 11px;
   line-height: 1.45;
   color: #cbd5f5;
+  position: relative;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.12);
 }
 
 .card-foot {
@@ -613,6 +645,39 @@ body::before {
   flex: 1;
 }
 
+.version-timeline {
+  display: flex;
+  gap: 8px;
+  padding: 0 28px 16px;
+  overflow-x: auto;
+}
+
+.version-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(15, 23, 42, 0.7);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.version-chip span:first-child {
+  color: var(--accent-3);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.version-chip.active {
+  color: var(--text);
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: var(--glow);
+}
+
 .panel-content {
   padding: 0 28px 28px;
   overflow-y: auto;
@@ -633,6 +698,21 @@ body::before {
   overflow: auto;
 }
 
+.surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(148, 163, 184, 0.08),
+    rgba(148, 163, 184, 0.08) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.18;
+  pointer-events: none;
+}
+
 .surface-label {
   position: absolute;
   top: -10px;
@@ -651,6 +731,9 @@ body::before {
   line-height: 1.4;
   color: #e2e8f0;
   white-space: pre;
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.18);
 }
 
 .surface.web {

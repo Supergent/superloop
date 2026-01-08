@@ -313,6 +313,7 @@ async function loadSuperloopData(params) {
   const checklistStatus = await readJson(
     path4.join(loopDir, "checklist-status.json")
   );
+  const eventFallback = await loadEventFallback(loopDir);
   const entry = runSummary?.entries?.[runSummary.entries.length - 1];
   const data = {
     loop_id: loopId,
@@ -352,7 +353,173 @@ async function loadSuperloopData(params) {
   if (entry?.ended_at) {
     data.ended_at = entry.ended_at;
   }
+  applyEventFallback(data, eventFallback);
   return { loopId, data };
+}
+function applyEventFallback(data, fallback) {
+  const assignIfMissing = (key) => {
+    const value = fallback[key];
+    if (value !== void 0 && data[key] === void 0) {
+      data[key] = value;
+    }
+  };
+  assignIfMissing("iteration");
+  assignIfMissing("promise");
+  assignIfMissing("promise_matched");
+  assignIfMissing("test_status");
+  assignIfMissing("checklist_status");
+  assignIfMissing("evidence_status");
+  assignIfMissing("approval_status");
+  assignIfMissing("completion_ok");
+  assignIfMissing("started_at");
+  assignIfMissing("ended_at");
+}
+async function loadEventFallback(loopDir) {
+  const eventsPath = path4.join(loopDir, "events.jsonl");
+  if (!await fileExists(eventsPath)) {
+    return {};
+  }
+  let raw;
+  try {
+    raw = await fs3.readFile(eventsPath, "utf8");
+  } catch {
+    return {};
+  }
+  const lines = raw.trim().split("\n");
+  const fallback = {};
+  const pending = /* @__PURE__ */ new Set([
+    "iteration",
+    "promise",
+    "promise_matched",
+    "test_status",
+    "checklist_status",
+    "evidence_status",
+    "approval_status",
+    "completion_ok",
+    "started_at",
+    "ended_at"
+  ]);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (!line) {
+      continue;
+    }
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (pending.has("iteration") && typeof event.iteration === "number") {
+      fallback.iteration = String(event.iteration);
+      pending.delete("iteration");
+    }
+    const data = isRecord(event.data) ? event.data : {};
+    if (event.event === "promise_checked") {
+      if (pending.has("promise")) {
+        const text = readString(data.text);
+        const expected = readString(data.expected);
+        if (text || expected) {
+          fallback.promise = text ?? expected;
+          pending.delete("promise");
+        }
+      }
+      if (pending.has("promise_matched")) {
+        const matched = readBoolean(data.matched);
+        if (matched !== void 0) {
+          fallback.promise_matched = matched ? "true" : "false";
+          pending.delete("promise_matched");
+        }
+      }
+    }
+    if (event.event === "tests_end" && pending.has("test_status")) {
+      const status = readString(data.status);
+      if (status) {
+        fallback.test_status = status;
+        pending.delete("test_status");
+      }
+    }
+    if (event.event === "checklist_end" && pending.has("checklist_status")) {
+      const status = readString(data.status);
+      if (status) {
+        fallback.checklist_status = status;
+        pending.delete("checklist_status");
+      }
+    }
+    if (event.event === "evidence_end" && pending.has("evidence_status")) {
+      const status = readString(data.status);
+      if (status) {
+        fallback.evidence_status = status;
+        pending.delete("evidence_status");
+      }
+    }
+    if (event.event === "gates_evaluated") {
+      if (pending.has("test_status")) {
+        const status = readString(data.tests);
+        if (status) {
+          fallback.test_status = status;
+          pending.delete("test_status");
+        }
+      }
+      if (pending.has("checklist_status")) {
+        const status = readString(data.checklist);
+        if (status) {
+          fallback.checklist_status = status;
+          pending.delete("checklist_status");
+        }
+      }
+      if (pending.has("evidence_status")) {
+        const status = readString(data.evidence);
+        if (status) {
+          fallback.evidence_status = status;
+          pending.delete("evidence_status");
+        }
+      }
+      if (pending.has("approval_status")) {
+        const status = readString(data.approval);
+        if (status) {
+          fallback.approval_status = status;
+          pending.delete("approval_status");
+        }
+      }
+    }
+    if (event.event === "iteration_start" && pending.has("started_at")) {
+      const startedAt = readString(data.started_at) ?? readString(event.timestamp);
+      if (startedAt) {
+        fallback.started_at = startedAt;
+        pending.delete("started_at");
+      }
+    }
+    if (event.event === "iteration_end") {
+      if (pending.has("ended_at")) {
+        const endedAt = readString(data.ended_at) ?? readString(event.timestamp);
+        if (endedAt) {
+          fallback.ended_at = endedAt;
+          pending.delete("ended_at");
+        }
+      }
+      if (pending.has("completion_ok")) {
+        const completion = readBoolean(data.completion);
+        if (completion !== void 0) {
+          fallback.completion_ok = completion ? "true" : "false";
+          pending.delete("completion_ok");
+        }
+      }
+    }
+    if (pending.size === 0) {
+      break;
+    }
+  }
+  return fallback;
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function readString(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function readBoolean(value) {
+  return typeof value === "boolean" ? value : void 0;
 }
 
 // src/lib/payload.ts
