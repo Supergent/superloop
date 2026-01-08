@@ -5386,6 +5386,7 @@ main() {
     esac
   done
 
+  : "${repo:=.}"
   repo=$(cd "$repo" && pwd)
 
   if [[ -z "$config_path" ]]; then

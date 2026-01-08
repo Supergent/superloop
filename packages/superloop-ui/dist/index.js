@@ -24,7 +24,7 @@ function resolvePath(data, key) {
 }
 
 // src/lib/prototypes.ts
-import fs2 from "fs/promises";
+import fs3 from "fs/promises";
 import path2 from "path";
 
 // src/lib/fs-utils.ts
@@ -47,6 +47,7 @@ async function readJson(path7) {
 }
 
 // src/lib/paths.ts
+import fs2 from "fs";
 import path from "path";
 var SUPERLOOP_DIR = ".superloop";
 var UI_PROTOTYPES_DIR = path.join(SUPERLOOP_DIR, "ui", "prototypes");
@@ -90,7 +91,7 @@ async function listPrototypes(repoRoot) {
   if (!await fileExists(root)) {
     return [];
   }
-  const entries = await fs2.readdir(root, { withFileTypes: true });
+  const entries = await fs3.readdir(root, { withFileTypes: true });
   const viewsByName = /* @__PURE__ */ new Map();
   for (const entry of entries) {
     if (entry.isDirectory()) {
@@ -127,11 +128,11 @@ async function listPrototypes(repoRoot) {
 async function createPrototypeVersion(params) {
   const root = resolvePrototypesRoot(params.repoRoot);
   const viewDir = path2.join(root, params.viewName);
-  await fs2.mkdir(viewDir, { recursive: true });
+  await fs3.mkdir(viewDir, { recursive: true });
   const timestampId = createTimestampId();
   const filename = `${timestampId}${VERSION_EXTENSION}`;
   const filePath = path2.join(viewDir, filename);
-  await fs2.writeFile(filePath, params.content, "utf8");
+  await fs3.writeFile(filePath, params.content, "utf8");
   const metaPath = path2.join(viewDir, META_FILENAME);
   const meta = await readJson(metaPath) ?? {};
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -141,7 +142,7 @@ async function createPrototypeVersion(params) {
     createdAt: meta.createdAt ?? now,
     updatedAt: now
   };
-  await fs2.writeFile(metaPath, JSON.stringify(nextMeta, null, 2), "utf8");
+  await fs3.writeFile(metaPath, JSON.stringify(nextMeta, null, 2), "utf8");
   return {
     id: timestampId,
     filename,
@@ -176,7 +177,7 @@ async function readLatestPrototype(params) {
 }
 async function readViewDirectory(root, viewName) {
   const viewDir = path2.join(root, viewName);
-  const entries = await fs2.readdir(viewDir, { withFileTypes: true });
+  const entries = await fs3.readdir(viewDir, { withFileTypes: true });
   const versions = [];
   let description;
   for (const entry of entries) {
@@ -211,8 +212,8 @@ function readVersionId(filename, fallbackDate) {
   return createTimestampId(fallbackDate);
 }
 async function readVersionFile(filePath, filename) {
-  const stats = await fs2.stat(filePath);
-  const content = await fs2.readFile(filePath, "utf8");
+  const stats = await fs3.stat(filePath);
+  const content = await fs3.readFile(filePath, "utf8");
   const versionId = readVersionId(filename, stats.mtime);
   const createdAt = formatTimestamp(resolveTimestamp(versionId, stats.mtime));
   return {
@@ -247,7 +248,7 @@ function parseTimestampId(versionId) {
 }
 
 // src/lib/superloop-data.ts
-import fs3 from "fs/promises";
+import fs4 from "fs/promises";
 import path3 from "path";
 async function resolveLoopId(repoRoot, preferred) {
   const loopsRoot = resolveLoopsRoot(repoRoot);
@@ -266,7 +267,7 @@ async function resolveLoopId(repoRoot, preferred) {
       return envId;
     }
   }
-  const entries = await fs3.readdir(loopsRoot, { withFileTypes: true });
+  const entries = await fs4.readdir(loopsRoot, { withFileTypes: true });
   const loopDirs = entries.filter((entry) => entry.isDirectory());
   if (loopDirs.length === 0) {
     return null;
@@ -274,7 +275,7 @@ async function resolveLoopId(repoRoot, preferred) {
   const withStats = await Promise.all(
     loopDirs.map(async (entry) => {
       const dirPath = path3.join(loopsRoot, entry.name);
-      const stats = await fs3.stat(dirPath);
+      const stats = await fs4.stat(dirPath);
       return { name: entry.name, mtimeMs: stats.mtimeMs };
     })
   );
@@ -360,7 +361,7 @@ async function loadEventFallback(loopDir) {
   }
   let raw;
   try {
-    raw = await fs3.readFile(eventsPath, "utf8");
+    raw = await fs4.readFile(eventsPath, "utf8");
   } catch {
     return {};
   }
@@ -605,7 +606,7 @@ async function renderTui(text, title) {
 
 // src/dev-server.ts
 import { spawn } from "child_process";
-import fs5 from "fs/promises";
+import fs6 from "fs/promises";
 import http from "http";
 import path6 from "path";
 
@@ -619,7 +620,7 @@ function resolvePackageRoot(metaUrl) {
 }
 
 // src/lib/watch.ts
-import fs4 from "fs";
+import fs5 from "fs";
 import path5 from "path";
 function watchPaths(paths, onChange) {
   const watchers = [];
@@ -639,18 +640,18 @@ function watchPaths(paths, onChange) {
       return;
     }
     try {
-      if (fs4.existsSync(fullPath) && fs4.statSync(fullPath).isDirectory()) {
+      if (fs5.existsSync(fullPath) && fs5.statSync(fullPath).isDirectory()) {
         scanDirs(fullPath);
       }
     } catch {
     }
   }
   function watchDir(dir) {
-    if (watchedDirs.has(dir) || !fs4.existsSync(dir)) {
+    if (watchedDirs.has(dir) || !fs5.existsSync(dir)) {
       return;
     }
     try {
-      const watcher = fs4.watch(dir, (_event, filename) => {
+      const watcher = fs5.watch(dir, (_event, filename) => {
         handleChange(dir, filename);
       });
       watchers.push(watcher);
@@ -659,12 +660,12 @@ function watchPaths(paths, onChange) {
     }
   }
   function scanDirs(root) {
-    if (!fs4.existsSync(root)) {
+    if (!fs5.existsSync(root)) {
       return;
     }
     watchDir(root);
     try {
-      const entries = fs4.readdirSync(root, { withFileTypes: true });
+      const entries = fs5.readdirSync(root, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory()) {
           scanDirs(path5.join(root, entry.name));
@@ -674,11 +675,11 @@ function watchPaths(paths, onChange) {
     }
   }
   for (const watchPath of paths) {
-    if (!fs4.existsSync(watchPath)) {
+    if (!fs5.existsSync(watchPath)) {
       continue;
     }
     try {
-      const watcher = fs4.watch(watchPath, { recursive: true }, () => {
+      const watcher = fs5.watch(watchPath, { recursive: true }, () => {
         notify();
       });
       watchers.push(watcher);
@@ -744,7 +745,7 @@ async function startDevServer(options) {
       return;
     }
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      const html = await fs5.readFile(indexHtmlPath, "utf8");
+      const html = await fs6.readFile(indexHtmlPath, "utf8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;
@@ -758,7 +759,7 @@ async function startDevServer(options) {
       }
       const contentType = url.pathname.endsWith(".map") ? "application/json" : "text/javascript";
       res.writeHead(200, { "Content-Type": contentType });
-      res.end(await fs5.readFile(filePath));
+      res.end(await fs6.readFile(filePath));
       return;
     }
     res.writeHead(404, { "Content-Type": "text/plain" });
@@ -786,7 +787,7 @@ async function startDevServer(options) {
   const prototypesRoot = resolvePrototypesRoot(options.repoRoot);
   const loopsRoot = resolveLoopsRoot(options.repoRoot);
   const loopDir = options.loopId ? resolveLoopDir(options.repoRoot, options.loopId) : void 0;
-  await fs5.mkdir(prototypesRoot, { recursive: true });
+  await fs6.mkdir(prototypesRoot, { recursive: true });
   const dataWatcher = watchPaths(
     [prototypesRoot, loopsRoot, loopDir].filter((value) => Boolean(value)),
     () => {
