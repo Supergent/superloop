@@ -905,6 +905,11 @@ run_role() {
   shift
   local prompt_mode="${1:-stdin}"
   shift
+  # Optional: usage tracking parameters
+  local usage_file="${1:-}"
+  shift || true
+  local iteration="${1:-0}"
+  shift || true
   local -a runner_command=()
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--" ]]; then
@@ -931,6 +936,24 @@ run_role() {
     cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
   done
 
+  # Detect runner type and prepare tracked command
+  local runner_type="unknown"
+  if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type detect_runner_type &>/dev/null; then
+    runner_type=$(detect_runner_type "${cmd[@]}")
+
+    if [[ "$runner_type" == "claude" ]]; then
+      # Inject --session-id for Claude
+      local -a tracked_cmd=()
+      while IFS= read -r line; do
+        tracked_cmd+=("$line")
+      done < <(prepare_tracked_command "$runner_type" "${cmd[@]}")
+      cmd=("${tracked_cmd[@]}")
+    fi
+
+    # Start usage tracking
+    track_usage "start" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
+  fi
+
   local status=0
   if [[ "${timeout_seconds:-0}" -gt 0 ]]; then
     run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "${cmd[@]}"
@@ -944,6 +967,11 @@ run_role() {
     fi
     status=${PIPESTATUS[0]}
     set -e
+  fi
+
+  # End usage tracking
+  if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type track_usage &>/dev/null; then
+    track_usage "end" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
   fi
 
   if [[ $status -eq 124 ]]; then
@@ -1534,6 +1562,313 @@ run_openprose_role() {
 
   openprose_write_report
   return 0
+}
+
+# Usage tracking functions for Claude Code and Codex
+# Extracts token counts and timing from session files
+
+# Global variables for usage tracking
+USAGE_TRACKING_ENABLED=1
+USAGE_SESSION_ID=""
+USAGE_THREAD_ID=""
+USAGE_START_TIME=""
+USAGE_END_TIME=""
+USAGE_FILE=""
+
+# Detect runner type from command array
+# Returns: "claude", "codex", or "unknown"
+detect_runner_type() {
+  local -a cmd=("$@")
+  local cmd_str="${cmd[*]}"
+
+  if [[ "${cmd[0]}" == "claude" ]] || [[ "$cmd_str" == *"/claude "* ]] || [[ "$cmd_str" == *"/claude" ]]; then
+    echo "claude"
+  elif [[ "${cmd[0]}" == "codex" ]] || [[ "$cmd_str" == *"/codex "* ]] || [[ "$cmd_str" == *"/codex" ]]; then
+    echo "codex"
+  else
+    echo "unknown"
+  fi
+}
+
+# Generate a UUID for Claude session tracking
+generate_session_id() {
+  if command -v uuidgen &>/dev/null; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif [[ -f /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    # Fallback: generate pseudo-UUID from timestamp and random
+    printf '%08x-%04x-%04x-%04x-%012x' \
+      $((RANDOM * RANDOM)) \
+      $((RANDOM)) \
+      $((RANDOM)) \
+      $((RANDOM)) \
+      $((RANDOM * RANDOM * RANDOM))
+  fi
+}
+
+# Get milliseconds timestamp
+get_timestamp_ms() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    # macOS: use python or perl for milliseconds
+    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || \
+    perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000' 2>/dev/null || \
+    echo "$(($(date +%s) * 1000))"
+  else
+    # Linux: date supports %N for nanoseconds
+    echo "$(($(date +%s%N) / 1000000))"
+  fi
+}
+
+# Find Claude session file by session ID
+# Args: $1 = repo path, $2 = session_id
+find_claude_session_file() {
+  local repo="$1"
+  local session_id="$2"
+  local project_name
+  project_name=$(basename "$repo")
+
+  # Claude stores sessions in ~/.claude/projects/<project>/<session-id>.jsonl
+  local session_file="$HOME/.claude/projects/-${project_name//\//-}/${session_id}.jsonl"
+
+  if [[ -f "$session_file" ]]; then
+    echo "$session_file"
+    return 0
+  fi
+
+  # Try alternative path formats
+  local alt_file
+  for alt_file in "$HOME/.claude/projects"/*"$project_name"*/"${session_id}.jsonl"; do
+    if [[ -f "$alt_file" ]]; then
+      echo "$alt_file"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# Find Codex session file by thread ID
+# Args: $1 = thread_id
+find_codex_session_file() {
+  local thread_id="$1"
+
+  # Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread_id>.jsonl
+  local session_file
+  session_file=$(find "$HOME/.codex/sessions" -name "*${thread_id}.jsonl" -type f 2>/dev/null | head -n1)
+
+  if [[ -n "$session_file" && -f "$session_file" ]]; then
+    echo "$session_file"
+    return 0
+  fi
+
+  return 1
+}
+
+# Extract usage from Claude session file
+# Args: $1 = session_file
+# Output: JSON object with usage stats
+extract_claude_usage() {
+  local session_file="$1"
+
+  if [[ ! -f "$session_file" ]]; then
+    echo '{"error": "session file not found"}'
+    return 1
+  fi
+
+  # Extract usage from assistant messages
+  jq -s '
+    [.[] | select(.type == "assistant" and .message.usage != null) | .message.usage] |
+    if length == 0 then
+      {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    else
+      {
+        "input_tokens": (map(.input_tokens // 0) | add),
+        "output_tokens": (map(.output_tokens // 0) | add),
+        "cache_read_input_tokens": (map(.cache_read_input_tokens // 0) | add),
+        "cache_creation_input_tokens": (map(.cache_creation_input_tokens // 0) | add)
+      }
+    end
+  ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
+}
+
+# Extract usage from Codex session file
+# Args: $1 = session_file
+# Output: JSON object with usage stats
+extract_codex_usage() {
+  local session_file="$1"
+
+  if [[ ! -f "$session_file" ]]; then
+    echo '{"error": "session file not found"}'
+    return 1
+  fi
+
+  # Extract token_count events from Codex JSONL
+  jq -s '
+    [.[] | select(.type == "event_msg" and .payload.type == "token_count") | .payload] |
+    if length == 0 then
+      {"input_tokens": 0, "output_tokens": 0}
+    else
+      {
+        "input_tokens": (map(.input_tokens // 0) | add),
+        "output_tokens": (map(.output_tokens // 0) | add)
+      }
+    end
+  ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
+}
+
+# Extract thread_id from Codex JSON output
+# Args: $1 = log_file containing JSON output
+extract_codex_thread_id() {
+  local log_file="$1"
+
+  if [[ ! -f "$log_file" ]]; then
+    return 1
+  fi
+
+  # Look for thread.started event with thread_id
+  local thread_id
+  thread_id=$(grep -m1 '"thread_id"' "$log_file" 2>/dev/null | jq -r '.thread_id // empty' 2>/dev/null)
+
+  if [[ -n "$thread_id" ]]; then
+    echo "$thread_id"
+    return 0
+  fi
+
+  return 1
+}
+
+# Write usage event to JSONL file
+# Args: $1 = usage_file, $2 = iteration, $3 = role, $4 = duration_ms, $5 = usage_json, $6 = runner_type, $7 = session_file
+write_usage_event() {
+  local usage_file="$1"
+  local iteration="$2"
+  local role="$3"
+  local duration_ms="$4"
+  local usage_json="$5"
+  local runner_type="$6"
+  local session_file="${7:-}"
+
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Build the event JSON
+  jq -n \
+    --arg ts "$timestamp" \
+    --argjson iter "$iteration" \
+    --arg role "$role" \
+    --argjson duration "$duration_ms" \
+    --argjson usage "$usage_json" \
+    --arg runner "$runner_type" \
+    --arg session "$session_file" \
+    '{
+      "timestamp": $ts,
+      "iteration": $iter,
+      "role": $role,
+      "duration_ms": $duration,
+      "runner": $runner,
+      "usage": $usage,
+      "session_file": (if $session == "" then null else $session end)
+    }' >> "$usage_file"
+}
+
+# Prepare command with session tracking args
+# Args: $1 = runner_type, rest = original command
+# Sets: USAGE_SESSION_ID for claude
+# Output: Modified command array elements (one per line)
+prepare_tracked_command() {
+  local runner_type="$1"
+  shift
+  local -a cmd=("$@")
+
+  USAGE_SESSION_ID=""
+
+  case "$runner_type" in
+    claude)
+      # Generate session ID and inject --session-id flag
+      USAGE_SESSION_ID=$(generate_session_id)
+
+      # Find where to insert --session-id (after 'claude' command)
+      local inserted=0
+      for i in "${!cmd[@]}"; do
+        echo "${cmd[$i]}"
+        if [[ $inserted -eq 0 && ("${cmd[$i]}" == "claude" || "${cmd[$i]}" == */claude) ]]; then
+          echo "--session-id"
+          echo "$USAGE_SESSION_ID"
+          inserted=1
+        fi
+      done
+      ;;
+
+    codex)
+      # For codex, we need --json flag to capture thread_id
+      # But this changes output format, so we'll use timestamp-based matching instead
+      # Just pass through the command unchanged
+      for arg in "${cmd[@]}"; do
+        echo "$arg"
+      done
+      ;;
+
+    *)
+      # Unknown runner, pass through unchanged
+      for arg in "${cmd[@]}"; do
+        echo "$arg"
+      done
+      ;;
+  esac
+}
+
+# Main usage tracking wrapper
+# Call this before and after running the command
+# Args: $1 = action (start|end), $2 = usage_file, $3 = iteration, $4 = role, $5 = repo, $6 = runner_type
+track_usage() {
+  local action="$1"
+  local usage_file="$2"
+  local iteration="$3"
+  local role="$4"
+  local repo="$5"
+  local runner_type="$6"
+
+  case "$action" in
+    start)
+      USAGE_START_TIME=$(get_timestamp_ms)
+      ;;
+
+    end)
+      USAGE_END_TIME=$(get_timestamp_ms)
+      local duration_ms=$((USAGE_END_TIME - USAGE_START_TIME))
+
+      # Find and parse session file based on runner type
+      local session_file=""
+      local usage_json='{"input_tokens": 0, "output_tokens": 0}'
+
+      case "$runner_type" in
+        claude)
+          if [[ -n "$USAGE_SESSION_ID" ]]; then
+            session_file=$(find_claude_session_file "$repo" "$USAGE_SESSION_ID" || true)
+            if [[ -n "$session_file" ]]; then
+              usage_json=$(extract_claude_usage "$session_file")
+            fi
+          fi
+          ;;
+
+        codex)
+          # For Codex, find the most recent session file modified after start time
+          local start_ts=$((USAGE_START_TIME / 1000))
+          session_file=$(find "$HOME/.codex/sessions" -name "rollout-*.jsonl" -type f -newermt "@$start_ts" 2>/dev/null | head -n1 || true)
+          if [[ -n "$session_file" ]]; then
+            usage_json=$(extract_codex_usage "$session_file")
+          fi
+          ;;
+      esac
+
+      # Write usage event
+      if [[ -n "$usage_file" ]]; then
+        mkdir -p "$(dirname "$usage_file")"
+        write_usage_event "$usage_file" "$iteration" "$role" "$duration_ms" "$usage_json" "$runner_type" "$session_file"
+      fi
+      ;;
+  esac
 }
 
 snapshot_file() {
@@ -2443,6 +2778,7 @@ run_cmd() {
     local changed_files_planner="$loop_dir/changed-files-planner.txt"
     local changed_files_implementer="$loop_dir/changed-files-implementer.txt"
     local changed_files_all="$loop_dir/changed-files-all.txt"
+    local usage_file="$loop_dir/usage.jsonl"
 
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
@@ -2817,7 +3153,7 @@ run_cmd() {
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         fi
         if [[ -n "$report_guard" ]]; then

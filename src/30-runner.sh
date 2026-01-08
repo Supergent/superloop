@@ -146,6 +146,11 @@ run_role() {
   shift
   local prompt_mode="${1:-stdin}"
   shift
+  # Optional: usage tracking parameters
+  local usage_file="${1:-}"
+  shift || true
+  local iteration="${1:-0}"
+  shift || true
   local -a runner_command=()
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--" ]]; then
@@ -172,6 +177,24 @@ run_role() {
     cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
   done
 
+  # Detect runner type and prepare tracked command
+  local runner_type="unknown"
+  if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type detect_runner_type &>/dev/null; then
+    runner_type=$(detect_runner_type "${cmd[@]}")
+
+    if [[ "$runner_type" == "claude" ]]; then
+      # Inject --session-id for Claude
+      local -a tracked_cmd=()
+      while IFS= read -r line; do
+        tracked_cmd+=("$line")
+      done < <(prepare_tracked_command "$runner_type" "${cmd[@]}")
+      cmd=("${tracked_cmd[@]}")
+    fi
+
+    # Start usage tracking
+    track_usage "start" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
+  fi
+
   local status=0
   if [[ "${timeout_seconds:-0}" -gt 0 ]]; then
     run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "${cmd[@]}"
@@ -185,6 +208,11 @@ run_role() {
     fi
     status=${PIPESTATUS[0]}
     set -e
+  fi
+
+  # End usage tracking
+  if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type track_usage &>/dev/null; then
+    track_usage "end" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
   fi
 
   if [[ $status -eq 124 ]]; then

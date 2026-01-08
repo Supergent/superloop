@@ -292,6 +292,7 @@ run_cmd() {
     local changed_files_planner="$loop_dir/changed-files-planner.txt"
     local changed_files_implementer="$loop_dir/changed-files-implementer.txt"
     local changed_files_all="$loop_dir/changed-files-all.txt"
+    local usage_file="$loop_dir/usage.jsonl"
 
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
@@ -666,7 +667,7 @@ run_cmd() {
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
           role_status=$?
         fi
         if [[ -n "$report_guard" ]]; then

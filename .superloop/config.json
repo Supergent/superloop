@@ -54,6 +54,72 @@
         ]
       },
       "roles": ["planner", "prose-author", "openprose", "tester", "reviewer"]
+    },
+    {
+      "id": "ui-prototyping-framework",
+      "spec_file": ".superloop/ui-prototyping-spec.md",
+      "max_iterations": 20,
+      "completion_promise": "READY",
+      "checklists": ["feat/ui-prototyping/CHECKLIST.md"],
+      "tests": {
+        "mode": "every",
+        "commands": [
+          "cd packages/superloop-ui && bun run build",
+          "cd packages/superloop-ui && bun run typecheck",
+          "cd packages/superloop-ui && biome check ."
+        ]
+      },
+      "evidence": {
+        "enabled": true,
+        "require_on_completion": true,
+        "artifacts": [
+          "packages/superloop-ui/package.json",
+          "packages/superloop-ui/dist/index.js",
+          "packages/superloop-ui/tsconfig.json",
+          "packages/superloop-ui/README.md",
+          "packages/superloop-ui/src/cli/index.ts",
+          "packages/superloop-ui/src/renderers/tui.ts",
+          "packages/superloop-ui/src/renderers/web.tsx",
+          "packages/superloop-ui/src/renderers/cli.ts",
+          "packages/superloop-ui/src/server/dev.ts",
+          "packages/superloop-ui/src/components/PrototypeGrid.tsx"
+        ]
+      },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": false
+      },
+      "reviewer_packet": {
+        "enabled": true
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 900,
+        "planner": 300,
+        "implementer": 900,
+        "tester": 300,
+        "reviewer": 1200
+      },
+      "stuck": {
+        "enabled": true,
+        "threshold": 3,
+        "action": "report_and_stop",
+        "ignore": [
+          ".superloop/**",
+          ".git/**",
+          "node_modules/**",
+          "dist/**",
+          "build/**",
+          "coverage/**",
+          ".next/**",
+          ".venv/**",
+          ".tox/**",
+          ".cache/**",
+          "packages/**/node_modules/**",
+          "packages/**/dist/**"
+        ]
+      },
+      "roles": ["planner", "implementer", "tester", "reviewer"]
     }
   ]
 }

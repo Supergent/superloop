@@ -10,6 +10,7 @@ PARTS=(
   "10-evidence.sh"
   "20-prompts.sh"
   "30-runner.sh"
+  "35-usage.sh"
   "40-gates.sh"
   "50-events.sh"
   "60-commands.sh"
