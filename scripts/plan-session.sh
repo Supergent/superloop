@@ -154,16 +154,16 @@ echo "  PLANNING SESSION ENDED"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Check if spec was created in target repo
+# Check if spec exists in target repo
 if [[ -f "$TARGET_REPO/.superloop/spec.md" ]]; then
-  info "Spec file created: $TARGET_REPO/.superloop/spec.md"
+  info "Spec file: $TARGET_REPO/.superloop/spec.md"
 
   if [[ -f "$TARGET_REPO/.superloop/config.json" ]]; then
-    info "Config file created: $TARGET_REPO/.superloop/config.json"
+    info "Config file: $TARGET_REPO/.superloop/config.json"
   fi
 
   if [[ -f "$TARGET_REPO/CHECKLIST.md" ]]; then
-    info "Checklist created: $TARGET_REPO/CHECKLIST.md"
+    info "Checklist: $TARGET_REPO/CHECKLIST.md"
   fi
 
   echo ""
@@ -171,5 +171,5 @@ if [[ -f "$TARGET_REPO/.superloop/spec.md" ]]; then
   echo "  $SUPERLOOP_DIR/superloop.sh run --repo $TARGET_REPO"
 else
   warn "No spec.md found in $TARGET_REPO/.superloop/"
-  warn "Planning may not have completed. Run this script again or use 'save' command."
+  warn "Use 'save' command during planning to create the spec."
 fi
