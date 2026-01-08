@@ -47,4 +47,19 @@ Bindings are populated from `.superloop/loops/<id>/run-summary.json` when availa
 
 ## Prompting Claude Code
 
-See `docs/ai-prompting.md` for suggested prompts and guardrails.
+When asking Claude Code to generate a mockup, be explicit about the view name,
+ASCII-only constraints, and the save location.
+
+Example prompt:
+
+```
+Generate a TUI mockup for the WorkGrid view.
+Constraints:
+- ASCII only (no Unicode box drawing).
+- 80x24 minimum, 120x40 maximum.
+- Include placeholders like {{iteration}} and {{test_status}}.
+Output:
+- Save to .superloop/ui/prototypes/workgrid/<timestamp>.txt
+```
+
+See `docs/ai-prompting.md` for more prompt templates and guardrails.

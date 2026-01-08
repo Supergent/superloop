@@ -1,33 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+
+import { PrototypeGrid } from "../components/PrototypeGrid.js";
+import { RenderSurface, type RendererMode } from "../renderers/web.js";
+import type { PrototypesPayload, RenderedPrototypeView } from "./types.js";
 
 const API_PATH = "/api/prototypes";
 const EVENTS_PATH = "/events";
-
-export type RenderedPrototypeVersion = {
-  id: string;
-  filename: string;
-  path: string;
-  createdAt: string;
-  content: string;
-  rendered: string;
-};
-
-export type RenderedPrototypeView = {
-  name: string;
-  description?: string;
-  versions: RenderedPrototypeVersion[];
-  latest: RenderedPrototypeVersion;
-};
-
-type PrototypesPayload = {
-  views: RenderedPrototypeView[];
-  loopId?: string;
-  data: Record<string, string>;
-  updatedAt: string;
-};
-
-type RendererMode = "web" | "cli" | "tui" | "all";
 
 export function App() {
   const [payload, setPayload] = useState<PrototypesPayload | null>(null);
@@ -66,7 +45,7 @@ export function App() {
   useEffect(() => {
     const events = new EventSource(EVENTS_PATH);
 
-    events.addEventListener("data", (event) => {
+    events.addEventListener("data", (event: MessageEvent) => {
       try {
         const parsed = JSON.parse((event as MessageEvent).data) as PrototypesPayload;
         setPayload(parsed);
@@ -96,7 +75,7 @@ export function App() {
     }
   }, [payload, activeView]);
 
-  const cards = payload?.views ?? [];
+  const cards: RenderedPrototypeView[] = payload?.views ?? [];
   const selectedVersion = useMemo(() => {
     if (!activeView) {
       return null;
@@ -109,6 +88,14 @@ export function App() {
     setActiveView(view);
     setVersionIndex(view.versions.length - 1);
     setCompareVersions(false);
+  };
+
+  const handleCompareToggle = (event: ChangeEvent<HTMLInputElement>) => {
+    setCompareVersions(event.currentTarget.checked);
+  };
+
+  const handleVersionChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setVersionIndex(Number(event.currentTarget.value));
   };
 
   return (
@@ -138,42 +125,7 @@ export function App() {
         </div>
       </header>
 
-      <section className="grid">
-        {cards.length === 0 && (
-          <div className="empty">
-            <h2>No prototypes yet</h2>
-            <p>
-              Run <span className="mono">superloop-ui generate &lt;view&gt;</span> to seed
-              your first ASCII mockup.
-            </p>
-          </div>
-        )}
-
-        {cards.map((view) => (
-          <motion.button
-            key={view.name}
-            className="card"
-            layout
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35 }}
-            onClick={() => handleOpen(view)}
-          >
-            <div className="card-head">
-              <div>
-                <h3>{view.name}</h3>
-                <p>{view.description ?? "No description yet"}</p>
-              </div>
-              <span className="badge">{view.versions.length} versions</span>
-            </div>
-            <pre className="preview">{formatPreview(view.latest.rendered)}</pre>
-            <div className="card-foot">
-              <span>Latest</span>
-              <span>{view.latest.createdAt}</span>
-            </div>
-          </motion.button>
-        ))}
-      </section>
+      <PrototypeGrid views={cards} onOpen={handleOpen} />
 
       <AnimatePresence>
         {activeView && selectedVersion && (
@@ -214,11 +166,7 @@ export function App() {
                 </div>
                 {activeView.versions.length > 1 && (
                   <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={compareVersions}
-                      onChange={(event) => setCompareVersions(event.target.checked)}
-                    />
+                    <input type="checkbox" checked={compareVersions} onChange={handleCompareToggle} />
                     Compare versions
                   </label>
                 )}
@@ -234,7 +182,7 @@ export function App() {
                     min={0}
                     max={activeView.versions.length - 1}
                     value={versionIndex}
-                    onChange={(event) => setVersionIndex(Number(event.target.value))}
+                    onChange={handleVersionChange}
                   />
                   <span>{selectedVersion.createdAt}</span>
                 </div>
@@ -263,36 +211,4 @@ export function App() {
       </AnimatePresence>
     </div>
   );
-}
-
-function RenderSurface({ content, mode }: { content: string; mode: RendererMode }) {
-  if (mode === "all") {
-    return (
-      <div className="surface-grid">
-        <SurfaceBlock label="Web" className="web" content={content} />
-        <SurfaceBlock label="CLI" className="cli" content={content} />
-        <SurfaceBlock label="TUI" className="tui" content={content} />
-      </div>
-    );
-  }
-
-  return <SurfaceBlock label={mode.toUpperCase()} className={mode} content={content} />;
-}
-
-function SurfaceBlock({ label, content, className }: { label: string; content: string; className: string }) {
-  return (
-    <div className={`surface ${className}`}>
-      <div className="surface-label">{label}</div>
-      <pre>{content}</pre>
-    </div>
-  );
-}
-
-function formatPreview(content: string): string {
-  const lines = content.split("\n");
-  const preview = lines.slice(0, 8).join("\n");
-  if (lines.length > 8) {
-    return `${preview}\n...`;
-  }
-  return preview;
 }

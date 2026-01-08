@@ -54,6 +54,12 @@
           ".cache/**"
         ]
       },
+      "usage_check": {
+        "enabled": true,
+        "warn_threshold": 70,
+        "block_threshold": 95,
+        "wait_on_limit": true
+      },
       "roles": ["planner", "prose-author", "openprose", "tester", "reviewer"]
     },
     {
@@ -120,6 +126,12 @@
           "packages/**/node_modules/**",
           "packages/**/dist/**"
         ]
+      },
+      "usage_check": {
+        "enabled": true,
+        "warn_threshold": 70,
+        "block_threshold": 95,
+        "wait_on_limit": true
       },
       "roles": ["planner", "implementer", "tester", "reviewer"]
     }

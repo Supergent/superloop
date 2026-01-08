@@ -14,6 +14,14 @@ export default defineConfig([
     outDir: "dist"
   },
   {
+    entry: ["src/index.ts"],
+    format: ["esm"],
+    platform: "node",
+    sourcemap: true,
+    target: "node20",
+    outDir: "dist"
+  },
+  {
     entry: ["src/dev-server.ts"],
     format: ["esm"],
     platform: "node",

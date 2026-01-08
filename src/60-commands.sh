@@ -350,6 +350,16 @@ run_cmd() {
     local timeout_inactivity
     timeout_inactivity=$(jq -r '.timeouts.inactivity // 0' <<<"$loop_json")
 
+    # Usage check settings
+    local usage_check_enabled
+    usage_check_enabled=$(jq -r '.usage_check.enabled // false' <<<"$loop_json")
+    local usage_warn_threshold
+    usage_warn_threshold=$(jq -r '.usage_check.warn_threshold // 70' <<<"$loop_json")
+    local usage_block_threshold
+    usage_block_threshold=$(jq -r '.usage_check.block_threshold // 95' <<<"$loop_json")
+    local usage_wait_on_limit
+    usage_wait_on_limit=$(jq -r '.usage_check.wait_on_limit // false' <<<"$loop_json")
+
     local reviewer_packet_enabled
     reviewer_packet_enabled=$(jq -r '.reviewer_packet.enabled // false' <<<"$loop_json")
 
@@ -663,6 +673,56 @@ run_cmd() {
           --arg last_message_file "$last_message_file" \
           '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
+
+        # Pre-flight usage check
+        if [[ "${usage_check_enabled:-false}" == "true" ]]; then
+          local runner_type_for_check=""
+          case "${runner_command[0]}" in
+            *claude*) runner_type_for_check="claude" ;;
+            *codex*) runner_type_for_check="codex" ;;
+          esac
+
+          if [[ -n "$runner_type_for_check" ]]; then
+            local usage_check_result=0
+            check_usage_limits "$runner_type_for_check" "${usage_warn_threshold:-70}" "${usage_block_threshold:-95}" || usage_check_result=$?
+
+            if [[ $usage_check_result -eq 2 ]]; then
+              # Blocked by usage limits
+              local usage_data
+              usage_data=$(jq -n \
+                --arg runner "$runner_type_for_check" \
+                --arg role "$role" \
+                '{runner: $runner, role: $role, action: "blocked"}')
+              log_event "$events_file" "$loop_id" "$iteration" "$run_id" "usage_limit_blocked" "$usage_data" "$role" "error"
+
+              if [[ "${usage_wait_on_limit:-false}" == "true" ]]; then
+                echo "[superloop] Usage limit reached. Waiting for reset..." >&2
+                # Wait up to 2 hours, checking every 5 minutes
+                local wait_count=0
+                while [[ $wait_count -lt 24 ]]; do
+                  sleep 300
+                  ((wait_count++))
+                  check_usage_limits "$runner_type_for_check" "${usage_warn_threshold:-70}" "${usage_block_threshold:-95}" || usage_check_result=$?
+                  if [[ $usage_check_result -ne 2 ]]; then
+                    echo "[superloop] Usage limits cleared. Resuming..." >&2
+                    break
+                  fi
+                  echo "[superloop] Still waiting for usage reset... (${wait_count}/24)" >&2
+                done
+
+                if [[ $usage_check_result -eq 2 ]]; then
+                  echo "[superloop] Timed out waiting for usage reset. Stopping." >&2
+                  write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+                  return 1
+                fi
+              else
+                echo "[superloop] Usage limit reached. Stopping loop." >&2
+                write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+                return 1
+              fi
+            fi
+          fi
+        fi
 
         local role_status=0
         if [[ "$role" == "openprose" ]]; then

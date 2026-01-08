@@ -1,4 +1,4 @@
-import { startDevServer } from "../dev-server.js";
+import { startDevServer } from "../server/dev.js";
 
 export async function devCommand(params: {
   repoRoot: string;

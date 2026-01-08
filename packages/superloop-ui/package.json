@@ -7,11 +7,12 @@
     "superloop-ui": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup && node dist/build-assets.js",
-    "dev": "bun run src/cli.ts dev",
+    "build": "bun install && bunx tsup && node dist/build-assets.js",
+    "dev": "bun install && bun run src/cli.ts dev",
     "start": "node dist/cli.js",
-    "lint": "biome check .",
-    "format": "biome format --write ."
+    "typecheck": "bun install && bunx tsc --noEmit",
+    "lint": "bunx biome check .",
+    "format": "bunx biome format --write ."
   },
   "dependencies": {
     "@inquirer/prompts": "^7.2.0",

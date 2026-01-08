@@ -114,6 +114,8 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
   const loopsRoot = resolveLoopsRoot(options.repoRoot);
   const loopDir = options.loopId ? resolveLoopDir(options.repoRoot, options.loopId) : undefined;
 
+  await fs.mkdir(prototypesRoot, { recursive: true });
+
   const dataWatcher = watchPaths(
     [prototypesRoot, loopsRoot, loopDir].filter((value): value is string => Boolean(value)),
     () => {
