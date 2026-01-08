@@ -413,7 +413,7 @@ run_role() {
 
   # End usage tracking
   if [[ "${USAGE_TRACKING_ENABLED:-1}" -eq 1 ]] && type track_usage &>/dev/null; then
-    track_usage "end" "$usage_file" "$iteration" "$role" "$repo" "$runner_type"
+    track_usage "end" "$usage_file" "$iteration" "$role" "$repo" "$runner_type" "$log_file"
   fi
 
   if [[ $status -eq 124 ]]; then

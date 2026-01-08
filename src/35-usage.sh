@@ -5,6 +5,7 @@
 USAGE_TRACKING_ENABLED=1
 USAGE_SESSION_ID=""
 USAGE_THREAD_ID=""
+USAGE_MODEL=""
 USAGE_START_TIME=""
 USAGE_END_TIME=""
 USAGE_FILE=""
@@ -172,6 +173,80 @@ extract_codex_thread_id() {
   return 1
 }
 
+# Extract model from Claude session file
+# Args: $1 = session_file
+# Output: model name (e.g., "claude-sonnet-4-20250514")
+extract_claude_model() {
+  local session_file="$1"
+
+  if [[ ! -f "$session_file" ]]; then
+    return 1
+  fi
+
+  # Extract model from first assistant message
+  local model
+  model=$(jq -r '[.[] | select(.type == "assistant" and .message.model != null) | .message.model][0] // empty' "$session_file" 2>/dev/null)
+
+  if [[ -n "$model" ]]; then
+    echo "$model"
+    return 0
+  fi
+
+  return 1
+}
+
+# Extract model from Codex log output
+# Args: $1 = log_file
+# Output: model name (e.g., "gpt-5.2-codex")
+extract_codex_model_from_log() {
+  local log_file="$1"
+
+  if [[ ! -f "$log_file" ]]; then
+    return 1
+  fi
+
+  # Look for "model: xxx" line in the header
+  local model
+  model=$(grep -m1 '^model:' "$log_file" 2>/dev/null | sed 's/^model:[[:space:]]*//' || true)
+
+  if [[ -n "$model" ]]; then
+    echo "$model"
+    return 0
+  fi
+
+  return 1
+}
+
+# Extract model from Codex session file
+# Args: $1 = session_file
+# Output: model name
+extract_codex_model() {
+  local session_file="$1"
+
+  if [[ ! -f "$session_file" ]]; then
+    return 1
+  fi
+
+  # Try to find model in session metadata or messages
+  local model
+  model=$(jq -r '[.[] | select(.model != null) | .model][0] // empty' "$session_file" 2>/dev/null)
+
+  if [[ -n "$model" ]]; then
+    echo "$model"
+    return 0
+  fi
+
+  # Try alternate structure
+  model=$(jq -r '.model // empty' "$session_file" 2>/dev/null | head -1)
+
+  if [[ -n "$model" ]]; then
+    echo "$model"
+    return 0
+  fi
+
+  return 1
+}
+
 # Write usage event to JSONL file
 # Args: $1 = usage_file, $2 = iteration, $3 = role, $4 = duration_ms, $5 = usage_json, $6 = runner_type, $7 = session_file
 write_usage_event() {
@@ -186,7 +261,7 @@ write_usage_event() {
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Build the event JSON - include session/thread IDs from globals
+  # Build the event JSON - include session/thread IDs and model from globals
   jq -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
@@ -197,12 +272,14 @@ write_usage_event() {
     --arg session "$session_file" \
     --arg session_id "${USAGE_SESSION_ID:-}" \
     --arg thread_id "${USAGE_THREAD_ID:-}" \
+    --arg model "${USAGE_MODEL:-}" \
     '{
       "timestamp": $ts,
       "iteration": $iter,
       "role": $role,
       "duration_ms": $duration,
       "runner": $runner,
+      "model": (if $model == "" then null else $model end),
       "session_id": (if $session_id == "" then null else $session_id end),
       "thread_id": (if $thread_id == "" then null else $thread_id end),
       "usage": $usage,
@@ -233,6 +310,7 @@ write_session_entry() {
     --arg runner "$runner_type" \
     --arg session_id "${USAGE_SESSION_ID:-}" \
     --arg thread_id "${USAGE_THREAD_ID:-}" \
+    --arg model "${USAGE_MODEL:-}" \
     --arg status "$status" \
     --arg started_at "$started_at" \
     --arg ended_at "$ended_at" \
@@ -240,6 +318,7 @@ write_session_entry() {
       iteration: $iter,
       role: $role,
       runner: $runner,
+      model: (if $model == "" then null else $model end),
       session_id: (if $session_id == "" then null else $session_id end),
       thread_id: (if $thread_id == "" then null else $thread_id end),
       status: $status,
@@ -309,7 +388,7 @@ prepare_tracked_command() {
 
 # Main usage tracking wrapper
 # Call this before and after running the command
-# Args: $1 = action (start|end), $2 = usage_file, $3 = iteration, $4 = role, $5 = repo, $6 = runner_type
+# Args: $1 = action (start|end), $2 = usage_file, $3 = iteration, $4 = role, $5 = repo, $6 = runner_type, $7 = log_file (optional, for model extraction)
 track_usage() {
   local action="$1"
   local usage_file="$2"
@@ -317,10 +396,12 @@ track_usage() {
   local role="$4"
   local repo="$5"
   local runner_type="$6"
+  local log_file="${7:-}"
 
   case "$action" in
     start)
       USAGE_START_TIME=$(get_timestamp_ms)
+      USAGE_MODEL=""  # Reset model for new run
       ;;
 
     end)
@@ -337,6 +418,8 @@ track_usage() {
             session_file=$(find_claude_session_file "$repo" "$USAGE_SESSION_ID" || true)
             if [[ -n "$session_file" ]]; then
               usage_json=$(extract_claude_usage "$session_file")
+              # Extract model from session file
+              USAGE_MODEL=$(extract_claude_model "$session_file" || true)
             fi
           fi
           ;;
@@ -347,6 +430,12 @@ track_usage() {
           session_file=$(find "$HOME/.codex/sessions" -name "rollout-*.jsonl" -type f -newermt "@$start_ts" 2>/dev/null | head -n1 || true)
           if [[ -n "$session_file" ]]; then
             usage_json=$(extract_codex_usage "$session_file")
+            # Try to extract model from session file first
+            USAGE_MODEL=$(extract_codex_model "$session_file" || true)
+          fi
+          # If no model from session, try log file
+          if [[ -z "$USAGE_MODEL" && -n "$log_file" && -f "$log_file" ]]; then
+            USAGE_MODEL=$(extract_codex_model_from_log "$log_file" || true)
           fi
           ;;
       esac
