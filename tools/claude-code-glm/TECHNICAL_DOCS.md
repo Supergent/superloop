@@ -8,6 +8,8 @@ This document describes the implementation of a custom transformer for Claude Co
 
 **Approach:** Custom transformer plugin for Claude Code Router (@musistudio/claude-code-router) that handles bidirectional format translation.
 
+**Important Context:** GLM-4.7 was released on December 22, 2025, and ranks #1 on the Berkeley Function Calling Leaderboard, ahead of Claude Opus 4.1. It has excellent tool calling support (87.4 on τ²-Bench), making it ideal for Claude Code's tool-driven workflows.
+
 ---
 
 ## Business Context
@@ -67,7 +69,7 @@ Claude Code CLI (Anthropic API format)
 
 | Anthropic Field | OpenAI Field | Notes |
 |----------------|----------------|--------|
-| `model` | `model` | Map Claude model names to `zai-glm-4.7` |
+| `model` | `model` | Map Claude model names to `zai-glm-4.7` (canonical name as of Dec 2025) |
 | `messages[].role` | `messages[].role` | Same values (`user`, `assistant`, `system`) |
 | `messages[].content` (string) | `messages[].content` (string) | Direct mapping |
 | `messages[].content` (array of objects) | `messages[].content` (string) | Flatten blocks to string |
@@ -86,6 +88,7 @@ Claude Code CLI (Anthropic API format)
 | OpenAI Field | Anthropic Field | Notes |
 |--------------|-----------------|--------|
 | `choices[0].message.content` | `content[0].text` | Wrap in array with type indicator |
+| `choices[0].message.reasoning` | (stripped) | Cerebras-specific field, not in standard format - ignore |
 | `choices[0].finish_reason` | `stop_reason` | Map values: `"stop"` → `"end_turn"` |
 | `choices[0].message.tool_calls` | `content[].tool_use` | Complex structure transformation |
 | `usage.prompt_tokens` | `usage.input_tokens` | Direct mapping |
@@ -159,7 +162,7 @@ Create file: `~/.claude-code-router/plugins/cerebras-transformer.js`
 module.exports.transformRequest = async function(req) {
   const anthropic = req.body;
 
-  // Extract model name, default to GLM 4.7
+  // Extract model name, default to GLM 4.7 (canonical identifier)
   const model = anthropic.model || 'zai-glm-4.7';
 
   // Transform messages from Anthropic to OpenAI format
@@ -249,7 +252,7 @@ module.exports.transformResponse = async function(resp) {
   const message = choice.message;
   const finishReason = choice.finish_reason || 'stop';
 
-  // Transform content
+  // Transform content (strip Cerebras-specific 'reasoning' field)
   const content = transformResponseContent(message.content);
 
   // Build usage object
@@ -562,16 +565,16 @@ Create file: `~/.claude-code-router/config.json`
   "Providers": [
     {
       "name": "cerebras",
-      "api_base_url": "https://inference.cerebras.ai/v1/chat/completions",
+      "api_base_url": "https://api.cerebras.ai/v1/chat/completions",
       "api_key": "$CEREBRAS_API_KEY",
       "models": [
         "zai-glm-4.7",
-        "glm-4.7"
+        "zai-glm-4.7"
       ],
       "transformer": {
-        "request": "~/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
-        "response": "~/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
-        "streamChunk": "~/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
+        "request": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
+        "response": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
+        "streamChunk": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
       }
     }
   ],
@@ -592,8 +595,8 @@ Create file: `~/.claude-code-router/config.json`
 | `Providers[].api_base_url` | Cerebras endpoint | Full API URL for chat completions |
 | `Providers[].api_key` | `"$CEREBRAS_API_KEY"` | Environment variable interpolation (secure) |
 | `Providers[].models` | `["zai-glm-4.7"]` | Available model names from Cerebras |
-| `Providers[].transformer.request` | Path to transform function | Module::functionName syntax |
-| `Providers[].transformer.response` | Path to transform function | Module::functionName syntax |
+| `Providers[].transformer.request` | Path to transform function | Module::functionName syntax (use $HOME for portability) |
+| `Providers[].transformer.response` | Path to transform function | Module::functionName syntax (use $HOME for portability) |
 | `Providers[].transformer.streamChunk` | Path to transform function | For streaming support |
 | `Router.default` | `"cerebras,zai-glm-4.7"` | Default provider,model for all requests |
 
@@ -700,10 +703,10 @@ For complete isolation from host Claude Code:
 
 ```bash
 # Create new Ubuntu VM
-orb create ubuntu --name claude-cerebras
+orb create ubuntu --name claude-code-glm
 
 # SSH into VM
-orb ssh claude-cerebras
+orb ssh claude-code-glm
 ```
 
 #### 5.2 Install Dependencies in VM
@@ -725,7 +728,7 @@ mkdir -p ~/.claude-code-router/logs
 From host:
 ```bash
 # Copy transformer file to VM
-scp ~/.claude-code-router/plugins/cerebras-transformer.js claude-cerebras:~/.claude-code-router/plugins/
+scp ~/.claude-code-router/plugins/cerebras-transformer.js claude-code-glm:~/.claude-code-router/plugins/
 ```
 
 Or create directly in VM using your favorite editor (nano, vim, etc.)
@@ -742,13 +745,13 @@ cat > ~/.claude-code-router/config.json << 'EOF'
   "Providers": [
     {
       "name": "cerebras",
-      "api_base_url": "https://inference.cerebras.ai/v1/chat/completions",
+      "api_base_url": "https://api.cerebras.ai/v1/chat/completions",
       "api_key": "$CEREBRAS_API_KEY",
       "models": ["zai-glm-4.7"],
       "transformer": {
-        "request": "/root/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
-        "response": "/root/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
-        "streamChunk": "/root/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
+        "request": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
+        "response": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
+        "streamChunk": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
       }
     }
   ],
@@ -849,12 +852,13 @@ Add other providers alongside Cerebras:
   "Providers": [
     {
       "name": "cerebras",
-      "api_base_url": "https://inference.cerebras.ai/v1/chat/completions",
+      "api_base_url": "https://api.cerebras.ai/v1/chat/completions",
       "api_key": "$CEREBRAS_API_KEY",
       "models": ["zai-glm-4.7"],
       "transformer": {
-        "request": "~/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
-        "response": "~/.claude-code-router/plugins/cerebras-transformer.js::transformResponse"
+        "request": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
+        "response": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
+        "streamChunk": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
       }
     },
     {
@@ -956,8 +960,10 @@ Error: Cannot find module for transform: ~/.claude-code-router/plugins/cerebras-
 1. Check if `transformTools()` in transformer handles all tool fields
 2. Verify `tool_choice` transformation matches OpenAI format
 3. Test simple tool call: "Use the read_file tool to read README.md"
-4. Check Cerebras documentation for tool calling support
-5. May need to disable tool use for GLM 4.7 if not fully supported
+4. Check transformer logs for tool transformation errors
+5. Verify streaming tool calls work (GLM-4.7 ranks #1 on Berkeley Function Calling Leaderboard)
+
+**Note:** GLM-4.7 has excellent tool calling support (87.4 on τ²-Bench). If issues persist, they're likely in the transformer logic, not the model.
 
 #### Issue: "Port already in use"
 
@@ -985,7 +991,7 @@ Error: listen EADDRINUSE: address already in use :::3456
 - Slow performance
 
 **Solutions:**
-1. Increase VM memory: `orb edit claude-cerebras --memory 4G`
+1. Increase VM memory: `orb edit claude-code-glm --memory 4G`
 2. Limit log retention: Add `"LOG_RETENTION_DAYS": 7` to config
 3. Increase swap space in VM
 4. Reduce concurrent connections in config if applicable
@@ -1095,7 +1101,7 @@ As of documentation date:
 - **Input:** $2.25 per 1M tokens
 - **Output:** $2.75 per 1M tokens
 - **Context:** 131k tokens (paid), 64k (free)
-- **Speed:** ~1000 tokens/sec
+- **Speed:** ~1000-1700 tokens/sec (varies by workload)
 
 ### Monitoring Usage
 
@@ -1240,16 +1246,16 @@ For the implementing engineer, verify:
   "Providers": [
     {
       "name": "cerebras",
-      "api_base_url": "https://inference.cerebras.ai/v1/chat/completions",
+      "api_base_url": "https://api.cerebras.ai/v1/chat/completions",
       "api_key": "$CEREBRAS_API_KEY",
       "models": [
         "zai-glm-4.7",
-        "glm-4.7"
+        "zai-glm-4.7"
       ],
       "transformer": {
-        "request": "/home/username/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
-        "response": "/home/username/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
-        "streamChunk": "/home/username/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
+        "request": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformRequest",
+        "response": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformResponse",
+        "streamChunk": "$HOME/.claude-code-router/plugins/cerebras-transformer.js::transformStreamChunk"
       }
     }
   ],
