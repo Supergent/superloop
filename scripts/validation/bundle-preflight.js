@@ -53,6 +53,25 @@ function extractScriptSrcs(html) {
   return scripts;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function selectorPresent(html, selector) {
+  if (!selector) return true;
+  if (selector.startsWith("#")) {
+    const id = escapeRegExp(selector.slice(1));
+    const idRegex = new RegExp(`id\\s*=\\s*["']${id}["']`, "i");
+    return idRegex.test(html);
+  }
+  if (selector.startsWith(".")) {
+    const cls = escapeRegExp(selector.slice(1));
+    const classRegex = new RegExp(`class\\s*=\\s*["'][^"']*\\b${cls}\\b[^"']*["']`, "i");
+    return classRegex.test(html);
+  }
+  return html.includes(selector);
+}
+
 function normalizeEntry(entry, repo) {
   if (!entry) return null;
   if (path.isAbsolute(entry)) {
@@ -130,7 +149,7 @@ function main() {
     ? config.required_selectors
     : [];
   for (const selector of requiredSelectors) {
-    if (!html.includes(selector)) {
+    if (!selectorPresent(html, selector)) {
       result.ok = false;
       result.errors.push(`missing_selector:${selector}`);
     }
