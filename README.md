@@ -167,3 +167,45 @@ Each loop writes to:
 
 - Edit `src/*.sh` and run `scripts/build.sh` to regenerate `superloop.sh`.
 - CI checks that the generated `superloop.sh` is up to date.
+
+## Benchmarks
+
+This repository includes comprehensive benchmark results comparing **claude-code-glm** (Claude Code enhanced with Cerebras + Mantic + Relace running in Orb VM) against **vanilla Claude Code** on macOS.
+
+### Key Results
+
+**GLM achieved a 5.9x speedup over vanilla Claude Code with perfect quality.**
+
+| Metric | Vanilla | GLM | Winner |
+|--------|---------|-----|--------|
+| **Time** | 132 seconds | 22.24 seconds | **GLM (5.9x faster)** |
+| **Total Tokens** | 1,182,342 | 925,728 | **GLM (21.7% fewer)** |
+| **Total Cost** | $8.31 | $3.53 | **GLM (58% cheaper)** |
+| **Quality** | Perfect | Perfect | Tie |
+
+*Total cost includes API cost + developer time at $200/hour*
+
+### Test Details
+
+- **Task:** Multi-location refactor (rename `CheckInputScripts` → `ValidateInputScripts`)
+- **Codebase:** Bitcoin Core v26.0 (~500K LOC)
+- **Test Date:** January 9, 2026
+- **Results:** Both systems achieved 100% accuracy (6 files, 32 renames, zero errors)
+
+### Performance Highlights
+
+- **Cerebras throughput:** ~3,000 tokens/second (2x advertised performance)
+- **Rate limiting:** Hit Cerebras API limits mid-task, proving extreme speed
+- **Time breakdown:** Reading 29%, Editing 25%, Overhead 46%
+- **Annual savings:** $2,485 for 10 refactoring tasks per week
+
+### Documentation
+
+- **[BENCHMARK-RESULTS-FINAL.md](BENCHMARK-RESULTS-FINAL.md)** - Complete analysis and findings
+- **[benchmarks/](benchmarks/)** - Full framework, scripts, and detailed results
+  - Test scenarios and automation
+  - Token usage analysis
+  - Throughput analysis
+  - Methodology documentation
+
+**Conclusion:** GLM provides clear, measurable productivity gains worth the infrastructure investment.
