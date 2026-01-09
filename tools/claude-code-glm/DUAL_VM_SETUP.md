@@ -294,6 +294,44 @@ echo $CEREBRAS_API_KEY
 source ~/.bashrc
 ```
 
+**API Error 422 - "body.reasoning: property 'body.reasoning' is unsupported":**
+
+This error occurs because Claude Code v2.1.1+ sends a `reasoning` parameter for extended thinking mode, but Cerebras API doesn't support it.
+
+**Solution (GitHub issue #503):**
+
+Add this to your `~/.claude-code-router/config.json` at the top level:
+```json
+{
+  "reasoning": {
+    "effort": null,
+    "max_tokens": null
+  },
+  "Providers": [ ... ]
+}
+```
+
+This disables the router's built-in reasoning transformer. Then restart:
+```bash
+pkill -f ccr
+ccr start &
+sleep 3
+eval "$(ccr activate)"
+```
+
+**Alternative (if above doesn't work):**
+
+Ensure your custom transformer explicitly removes the parameter:
+```javascript
+// In cerebras-transformer.js transformRequest:
+delete anthropic.reasoning;
+delete anthropic.thinking;
+```
+
+**Note:** This issue is documented in:
+- [GitHub issue #503](https://github.com/musistudio/claude-code-router/issues/503)
+- [GitHub issue #436](https://github.com/musistudio/claude-code-router/issues/436)
+
 ### Z.ai VM Issues
 
 **"Insufficient balance" error:**

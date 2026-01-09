@@ -168,6 +168,30 @@ echo "List the .md files in current directory" | claude
 echo "What is the git status?" | claude
 ```
 
+## Common Issues
+
+### API Error 422: "body.reasoning: property 'body.reasoning' is unsupported"
+
+**Quick Fix:**
+
+Add this to `~/.claude-code-router/config.json` (Cerebras VM only):
+```json
+{
+  "reasoning": {"effort": null, "max_tokens": null},
+  "Providers": [ ... ]
+}
+```
+
+Then restart router: `pkill -f ccr && ccr start`
+
+**Details:** See [DUAL_VM_SETUP.md](DUAL_VM_SETUP.md) troubleshooting section for complete solution.
+
+### Other Issues
+
+- Router not starting → Check logs: `tail ~/.claude-code-router/logs/ccr-*.log`
+- Files being modified on Mac → Switch to isolated mode: `~/start-claude-isolated.sh`
+- Z.ai balance error → Fund account at https://z.ai/manage-apikey/apikey-list
+
 ## Files Modified/Created
 
 **In VM:**
