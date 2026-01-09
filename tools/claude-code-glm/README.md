@@ -6,15 +6,27 @@ Run Claude Code CLI with **GLM-4.7** via **two specialized VMs**:
 
 ⚠️ **Security**: All API keys in this documentation are placeholders. See [SECURITY_NOTE.md](SECURITY_NOTE.md) for key management.
 
+🚨 **CRITICAL - Filesystem Isolation**: OrbStack VMs share your Mac filesystem by default! Claude Code can modify your actual Mac files. **READ [FILESYSTEM_ISOLATION.md](FILESYSTEM_ISOLATION.md) before using** to protect your files.
+
 📖 **Complete Guide**: See [DUAL_VM_SETUP.md](DUAL_VM_SETUP.md) for detailed dual-VM documentation.
 
 ## Quick Launch
 
 ### Cerebras VM (High-Speed Development)
 
+**Isolated Mode (Recommended - Safe):**
 ```bash
 # From Mac
-orb shell claude-code-glm-cerebras
+orb -m claude-code-glm-cerebras
+
+# Inside VM
+~/start-claude-isolated.sh
+```
+
+**Shared Mode (Advanced - Mac files at risk):**
+```bash
+# From Mac
+orb -m claude-code-glm-cerebras
 
 # Inside VM
 source ~/.bashrc && ccr start &
@@ -23,15 +35,16 @@ cd ~/superloop && claude
 ```
 
 **Best for:** Complex tasks, large refactors, debugging
+**See:** [FILESYSTEM_ISOLATION.md](FILESYSTEM_ISOLATION.md) for details on isolated vs shared modes
 
 ### Z.ai VM (Cost-Effective Coding)
 
 ```bash
 # From Mac
-orb shell claude-code-glm-zai
+orb -m claude-code-glm-zai
 
-# Inside VM
-cd ~/superloop && claude
+# Inside VM (isolated mode recommended)
+~/start-claude-isolated.sh
 ```
 
 **Best for:** Daily coding, learning, routine development
@@ -71,8 +84,8 @@ cat ~/.claude/settings.json           # View Claude Code config
 # No router needed for Z.ai!
 
 # Access your code (both VMs)
-cd ~/superloop  # Your project
-cd ~/work       # All projects
+cd ~/vm-projects/superloop  # Isolated project (safe)
+# Avoid: cd ~/superloop or ~/work (deprecated, shared with Mac)
 ```
 
 ## What's Running
@@ -91,19 +104,21 @@ cd ~/work       # All projects
 - **Method**: Official Z.ai integration per their docs
 
 **Both VMs:**
-- **Code Access**: Direct mount of `/Users/multiplicity/Work`
+- **Code Access**: Isolated copy in `~/vm-projects/superloop` (recommended)
+- **Filesystem**: Can access Mac files at `/Users/multiplicity/Work` (use with caution)
 - **Ubuntu**: ARM64, OrbStack VMs
 - **Isolated**: Independent configurations
+- **Safety**: See [FILESYSTEM_ISOLATION.md](FILESYSTEM_ISOLATION.md) for safe usage
 
 ## Switching Between VMs
 
 **Method 1: Different Terminals**
 ```bash
 # Terminal 1 - Cerebras
-orb shell claude-code-glm-cerebras
+orb -m claude-code-glm-cerebras
 
 # Terminal 2 - Z.ai
-orb shell claude-code-glm-zai
+orb -m claude-code-glm-zai
 ```
 
 **Method 2: Exit and Switch**
@@ -112,15 +127,15 @@ orb shell claude-code-glm-zai
 exit
 
 # Switch to other VM
-orb shell claude-code-glm-cerebras
+orb -m claude-code-glm-cerebras
 # or
-orb shell claude-code-glm-zai
+orb -m claude-code-glm-zai
 ```
 
 **Method 3: Mac Aliases (add to ~/.zshrc)**
 ```bash
-alias claude-fast='orb shell claude-code-glm-cerebras'
-alias claude-cheap='orb shell claude-code-glm-zai'
+alias claude-fast='orb -m claude-code-glm-cerebras'
+alias claude-cheap='orb -m claude-code-glm-zai'
 ```
 
 ## Setting Up Z.ai (Required for Z.ai VM)
@@ -129,14 +144,13 @@ alias claude-cheap='orb shell claude-code-glm-zai'
 2. Fund account at https://z.ai/manage-apikey/apikey-list
 3. Configure in VM:
    ```bash
-   orb shell claude-code-glm-zai
+   orb -m claude-code-glm-zai
    nano ~/.claude/settings.json
    # Replace "your-zai-api-key-here" with actual key
    ```
 4. Test:
    ```bash
-   cd ~/superloop
-   claude
+   ~/start-claude-isolated.sh
    ```
 
 **Status**: Cerebras VM ready. Z.ai VM needs API key funding.
@@ -160,12 +174,15 @@ echo "What is the git status?" | claude
 - `~/.claude-code-router/config.json` - Router config
 - `~/.claude-code-router/plugins/cerebras-transformer.js` - Transformer
 - `~/.bashrc` - Contains API key
-- `~/start-claude-router.sh` - Helper script
-- `~/setup-workspace.sh` - Workspace setup
+- `~/start-claude-router.sh` - Helper script (shared mode)
+- `~/start-claude-isolated.sh` - Isolated mode startup ⭐ RECOMMENDED
+- `~/vm-projects/superloop/` - Isolated project copy (safe)
+- `~/setup-workspace.sh` - Workspace setup (deprecated)
 
 **On Mac (in `tools/claude-code-glm/`):**
 - `README.md` - This quick start file
-- `DUAL_VM_SETUP.md` - Complete dual-VM setup guide ⭐ NEW
+- `FILESYSTEM_ISOLATION.md` - **CRITICAL: Read this first!** ⭐ NEW
+- `DUAL_VM_SETUP.md` - Complete dual-VM setup guide
 - `SETUP_GUIDE.md` - Original single-VM setup (Cerebras)
 - `MULTI_PROVIDER_SETUP.md` - Router-based multi-provider config
 - `TECHNICAL_DOCS.md` - Full technical documentation
@@ -181,7 +198,8 @@ echo "What is the git status?" | claude
 - ⏳ Z.ai VM: Configured, needs API key funding
 
 **Next Steps:**
-1. Fund Z.ai account: https://z.ai/manage-apikey/apikey-list
-2. Add Z.ai API key to `claude-code-glm-zai` VM
-3. Test both VMs with your projects
-4. Develop workflow leveraging both providers!
+1. **READ [FILESYSTEM_ISOLATION.md](FILESYSTEM_ISOLATION.md)** - Critical for safe usage! ⭐
+2. Fund Z.ai account: https://z.ai/manage-apikey/apikey-list
+3. Add Z.ai API key to `claude-code-glm-zai` VM
+4. Test both VMs with isolated mode: `~/start-claude-isolated.sh`
+5. Develop workflow leveraging both providers!

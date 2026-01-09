@@ -28,45 +28,73 @@ You now have **two independent VMs** for Claude Code with GLM-4.7:
 
 ---
 
+## 🚨 CRITICAL: Filesystem Isolation
+
+**DANGER:** OrbStack VMs share your Mac filesystem by default!
+
+By default, changes Claude Code makes in the VM will **immediately affect your Mac files**. This can be dangerous if Claude makes mistakes or you're experimenting.
+
+### Recommended: Isolated Mode
+
+Both VMs are configured with **isolated filesystems** where Claude Code works on a VM-only copy:
+
+```
+Mac:  /Users/yourname/Work/superloop (ORIGINAL - SAFE)
+VM:   ~/vm-projects/superloop         (ISOLATED COPY)
+```
+
+**To use isolated mode:**
+```bash
+# Inside either VM
+~/start-claude-isolated.sh
+```
+
+### Advanced: Shared Mode (Use with Caution)
+
+If you want Claude Code to modify Mac files directly, you can use shared mode. Only do this if you:
+- Have recent git commits for rollback
+- Understand the risks
+- Are working on non-critical files
+
+**For complete documentation, see [FILESYSTEM_ISOLATION.md](FILESYSTEM_ISOLATION.md)**
+
+---
+
 ## Quick Start
 
-### Cerebras VM (High-Speed)
+### Cerebras VM (High-Speed) - Isolated Mode
 
 ```bash
-# Start VM and router
-orb shell claude-code-glm-cerebras
+# From Mac
+orb -m claude-code-glm-cerebras
 
-# Inside VM
-source ~/.bashrc
-ccr start &
-sleep 3
-eval "$(ccr activate)"
-cd ~/superloop
-claude
+# Inside VM (recommended: isolated mode)
+~/start-claude-isolated.sh
 ```
 
 **What's running:**
 - Claude Code Router (port 3456)
 - Custom Anthropic ↔ OpenAI transformer
 - Cerebras GLM-4.7 (zai-glm-4.7 model)
+- Working directory: `~/vm-projects/superloop` (isolated)
 
-### Z.ai VM (Best Pricing)
+### Z.ai VM (Best Pricing) - Isolated Mode
 
 ```bash
-# Start VM
-orb shell claude-code-glm-zai
+# From Mac
+orb -m claude-code-glm-zai
 
-# Inside VM
-cd ~/superloop
-claude
+# Inside VM (recommended: isolated mode)
+~/start-claude-isolated.sh
 ```
 
 **What's running:**
 - Claude Code directly connected to Z.ai
 - No router needed (direct integration)
 - Z.ai GLM-4.7 model
+- Working directory: `~/vm-projects/superloop` (isolated)
 
-**Note:** You'll need to replace `your-zai-api-key-here` in `~/.claude/settings.json` with your actual Z.ai API key.
+**Note:** You'll need to replace `your-zai-api-key-here` in `~/.claude/settings.json` with your actual Z.ai API key and fund your Z.ai account.
 
 ---
 
