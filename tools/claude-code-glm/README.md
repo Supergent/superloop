@@ -172,19 +172,24 @@ echo "What is the git status?" | claude
 
 ### API Error 422: "body.reasoning: property 'body.reasoning' is unsupported"
 
-**Quick Fix:**
+**Solution:** This is fixed by the local proxy that ships with the Cerebras VM setup. The proxy automatically strips the unsupported reasoning parameter before forwarding to Cerebras.
 
-Add this to `~/.claude-code-router/config.json` (Cerebras VM only):
-```json
-{
-  "reasoning": {"effort": null, "max_tokens": null},
-  "Providers": [ ... ]
-}
+**Already configured:**
+- Proxy: `~/cerebras-proxy.js` (runs on port 8080)
+- Startup script: `~/start-claude-isolated.sh` (launches proxy automatically)
+- No manual configuration needed!
+
+**If proxy fails:**
+```bash
+# Check logs
+tail /tmp/cerebras-proxy.log
+
+# Restart everything
+pkill -f cerebras-proxy && pkill -f ccr
+~/start-claude-isolated.sh
 ```
 
-Then restart router: `pkill -f ccr && ccr start`
-
-**Details:** See [DUAL_VM_SETUP.md](DUAL_VM_SETUP.md) troubleshooting section for complete solution.
+**Technical details:** See [REASONING_PARAMETER_FIX.md](REASONING_PARAMETER_FIX.md) for architecture and troubleshooting.
 
 ### Other Issues
 
@@ -205,7 +210,8 @@ Then restart router: `pkill -f ccr && ccr start`
 
 **On Mac (in `tools/claude-code-glm/`):**
 - `README.md` - This quick start file
-- `FILESYSTEM_ISOLATION.md` - **CRITICAL: Read this first!** ⭐ NEW
+- `FILESYSTEM_ISOLATION.md` - **CRITICAL: Read this first!** ⭐
+- `REASONING_PARAMETER_FIX.md` - **Proxy solution for API 422 errors** ⭐ NEW
 - `DUAL_VM_SETUP.md` - Complete dual-VM setup guide
 - `SETUP_GUIDE.md` - Original single-VM setup (Cerebras)
 - `MULTI_PROVIDER_SETUP.md` - Router-based multi-provider config
@@ -214,6 +220,7 @@ Then restart router: `pkill -f ccr && ccr start`
 - `SETUP_STATUS.md` - Current status and troubleshooting
 - `SECURITY_NOTE.md` - API key security best practices
 - `test-cerebras-api.sh` - API testing script
+- `archive/` - Failed troubleshooting attempts (reference only)
 
 ## Status: ✅ DUAL-VM SETUP COMPLETE
 

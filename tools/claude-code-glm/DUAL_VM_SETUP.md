@@ -296,41 +296,41 @@ source ~/.bashrc
 
 **API Error 422 - "body.reasoning: property 'body.reasoning' is unsupported":**
 
-This error occurs because Claude Code v2.1.1+ sends a `reasoning` parameter for extended thinking mode, but Cerebras API doesn't support it.
+This error occurs because Claude Code Router v2.0.0 adds a `reasoning` parameter that Cerebras API doesn't support.
 
-**Solution (GitHub issue #503):**
+**Solution: Local Proxy (Pre-configured)**
 
-Add this to your `~/.claude-code-router/config.json` at the top level:
-```json
-{
-  "reasoning": {
-    "effort": null,
-    "max_tokens": null
-  },
-  "Providers": [ ... ]
-}
-```
+The Cerebras VM includes a local proxy that automatically strips the reasoning parameter:
 
-This disables the router's built-in reasoning transformer. Then restart:
+- **Proxy:** `~/cerebras-proxy.js` (runs on port 8080)
+- **Auto-starts:** Launched by `~/start-claude-isolated.sh`
+- **Transparent:** No manual configuration needed
+
+The proxy sits between the router and Cerebras API, intercepting requests and removing unsupported parameters before forwarding.
+
+**Verification:**
 ```bash
-pkill -f ccr
-ccr start &
-sleep 3
-eval "$(ccr activate)"
+# Check proxy is running
+ps aux | grep cerebras-proxy
+
+# View proxy logs
+tail -f /tmp/cerebras-proxy.log
+
+# Should show: "Stripped reasoning/thinking, forwarding request..."
 ```
 
-**Alternative (if above doesn't work):**
-
-Ensure your custom transformer explicitly removes the parameter:
-```javascript
-// In cerebras-transformer.js transformRequest:
-delete anthropic.reasoning;
-delete anthropic.thinking;
+**If proxy fails:**
+```bash
+# Restart everything
+pkill -f cerebras-proxy && pkill -f ccr
+~/start-claude-isolated.sh
 ```
 
-**Note:** This issue is documented in:
-- [GitHub issue #503](https://github.com/musistudio/claude-code-router/issues/503)
-- [GitHub issue #436](https://github.com/musistudio/claude-code-router/issues/436)
+**Technical Details:** See [REASONING_PARAMETER_FIX.md](../REASONING_PARAMETER_FIX.md) for:
+- Full proxy source code
+- Architecture diagram
+- Failed attempts we tried
+- Why config-based solutions don't work
 
 ### Z.ai VM Issues
 
