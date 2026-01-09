@@ -1,4 +1,5 @@
 .superloop/loops/
 .superloop/logs/
 .superloop/state.json
+packages/superloop-ui/dist/
 prose/
