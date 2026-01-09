@@ -10,13 +10,15 @@ build_role_prompt() {
   local test_report="$9"
   local test_output="${10}"
   local test_status="${11}"
-  local checklist_status="${12}"
-  local checklist_remaining="${13}"
-  local evidence_file="${14}"
-  local reviewer_packet="${15:-}"
-  local changed_files_planner="${16:-}"
-  local changed_files_implementer="${17:-}"
-  local changed_files_all="${18:-}"
+  local validation_status="${12}"
+  local validation_results="${13}"
+  local checklist_status="${14}"
+  local checklist_remaining="${15}"
+  local evidence_file="${16}"
+  local reviewer_packet="${17:-}"
+  local changed_files_planner="${18:-}"
+  local changed_files_implementer="${19:-}"
+  local changed_files_all="${20:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -30,6 +32,8 @@ Context files (read as needed):
 - Test report: $test_report
 - Test output: $test_output
 - Test status: $test_status
+- Validation status: $validation_status
+- Validation results: $validation_results
 - Checklist status: $checklist_status
 - Checklist remaining: $checklist_remaining
 - Evidence: $evidence_file
@@ -50,4 +54,3 @@ EOF
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
   fi
 }
-

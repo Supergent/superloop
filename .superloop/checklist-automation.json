@@ -1,0 +1,12 @@
+{
+  "mappings": [
+    {
+      "checklist_item": "WorkGrid web UI loads and displays prototype cards correctly",
+      "test_type": "web_element",
+      "config": {
+        "entry": "packages/superloop-ui/dist/web/index.html",
+        "selectors": ["#root"]
+      }
+    }
+  ]
+}

@@ -278,6 +278,8 @@ run_cmd() {
     local test_output="$loop_dir/test-output.txt"
     local test_status="$loop_dir/test-status.json"
     local test_report="$loop_dir/test-report.md"
+    local validation_status_file="$loop_dir/validation-status.json"
+    local validation_results_file="$loop_dir/validation-results.json"
     local checklist_status="$loop_dir/checklist-status.json"
     local checklist_remaining="$loop_dir/checklist-remaining.md"
     local evidence_file="$loop_dir/evidence.json"
@@ -324,6 +326,13 @@ run_cmd() {
     if [[ ${#test_commands[@]} -eq 0 ]]; then
       tests_mode="disabled"
     fi
+
+    local validation_enabled
+    validation_enabled=$(jq -r '.validation.enabled // false' <<<"$loop_json")
+    local validation_mode
+    validation_mode=$(jq -r '.validation.mode // "every"' <<<"$loop_json")
+    local validation_require
+    validation_require=$(jq -r '.validation.require_on_completion // false' <<<"$loop_json")
 
     local evidence_enabled
     evidence_enabled=$(jq -r '.evidence.enabled // false' <<<"$loop_json")
@@ -407,8 +416,9 @@ run_cmd() {
         fi
       fi
 
-      local tests_status checklist_status_text evidence_status stuck_value
+      local tests_status validation_status checklist_status_text evidence_status stuck_value
       tests_status=$(read_test_status_summary "$test_status")
+      validation_status=$(read_validation_status_summary "$validation_status_file")
       checklist_status_text=$(read_checklist_status_summary "$checklist_status")
       if [[ "$evidence_enabled" == "true" ]]; then
         if [[ -f "$evidence_file" ]]; then
@@ -431,7 +441,7 @@ run_cmd() {
         approval_status=$(read_approval_status "$approval_file")
       fi
 
-      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
+      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status validation=$validation_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
       if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
         return 0
       fi
@@ -469,13 +479,14 @@ run_cmd() {
         return 0
       elif [[ "$approval_state" == "approved" ]]; then
         local approval_run_id approval_iteration approval_promise_text approval_promise_matched
-        local approval_tests approval_checklist approval_evidence approval_started_at approval_ended_at
+        local approval_tests approval_validation approval_checklist approval_evidence approval_started_at approval_ended_at
         local approval_decision_by approval_decision_note approval_decision_at
         approval_run_id=$(jq -r '.run_id // ""' "$approval_file")
         approval_iteration=$(jq -r '.iteration // 0' "$approval_file")
         approval_promise_text=$(jq -r '.candidate.promise.text // ""' "$approval_file")
         approval_promise_matched=$(jq -r '.candidate.promise.matched // false' "$approval_file")
         approval_tests=$(jq -r '.candidate.gates.tests // "unknown"' "$approval_file")
+        approval_validation=$(jq -r '.candidate.gates.validation // "unknown"' "$approval_file")
         approval_checklist=$(jq -r '.candidate.gates.checklist // "unknown"' "$approval_file")
         approval_evidence=$(jq -r '.candidate.gates.evidence // "unknown"' "$approval_file")
         approval_started_at=$(jq -r '.iteration_started_at // ""' "$approval_file")
@@ -502,6 +513,7 @@ run_cmd() {
           promise_matched="false"
         fi
         local tests_status="$approval_tests"
+        local validation_status="$approval_validation"
         local checklist_status_text="$approval_checklist"
         local evidence_status="$approval_evidence"
         local approval_status="approved"
@@ -515,8 +527,8 @@ run_cmd() {
           stuck_value="${stuck_streak}/${stuck_threshold}"
         fi
 
-        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
-        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
 
         local approval_consume_data
         approval_consume_data=$(jq -n \
@@ -528,7 +540,7 @@ run_cmd() {
         log_event "$events_file" "$loop_id" "$approval_iteration" "$approval_run_id" "approval_consumed" "$approval_consume_data"
 
         local completion_ok=1
-        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
         write_timeline "$run_summary_file" "$timeline_file"
 
         local loop_complete_data
@@ -598,6 +610,8 @@ run_cmd() {
           "$test_report" \
           "$test_output" \
           "$test_status" \
+          "$validation_status_file" \
+          "$validation_results_file" \
           "$checklist_status" \
           "$checklist_remaining" \
           "$evidence_file" \
@@ -617,6 +631,8 @@ run_cmd() {
             "$evidence_file" \
             "$checklist_status" \
             "$checklist_remaining" \
+            "$validation_status_file" \
+            "$validation_results_file" \
             "$reviewer_packet"
         fi
 
@@ -909,6 +925,55 @@ run_cmd() {
         '{status: $status, details: $details}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_end" "$tests_end_data"
 
+      local validation_status="skipped"
+      local validation_ok=1
+      local validation_gate_ok=1
+      local validation_start_data
+      validation_start_data=$(jq -n \
+        --arg enabled "$validation_enabled" \
+        --arg mode "$validation_mode" \
+        '{enabled: $enabled, mode: $mode}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "validation_start" "$validation_start_data"
+
+      local validation_should_run=0
+      if [[ "$validation_enabled" == "true" ]]; then
+        if [[ "$validation_mode" == "every" ]]; then
+          validation_should_run=1
+        elif [[ "$validation_mode" == "on_promise" ]]; then
+          if [[ "$promise_matched" == "true" || $checklist_ok -eq 1 ]]; then
+            validation_should_run=1
+          fi
+        fi
+      fi
+
+      if [[ "$validation_enabled" == "true" && $validation_should_run -eq 1 ]]; then
+        if run_validation "$repo" "$loop_dir" "$loop_id" "$iteration" "$loop_json"; then
+          validation_status="ok"
+          validation_ok=1
+        else
+          validation_status="failed"
+          validation_ok=0
+        fi
+      elif [[ "$validation_enabled" == "true" ]]; then
+        write_validation_status "$validation_status_file" "skipped" "true" ""
+        validation_status="skipped"
+      fi
+
+      local validation_end_data
+      local validation_results_rel=""
+      if [[ -f "$validation_results_file" ]]; then
+        validation_results_rel="${validation_results_file#$repo/}"
+      fi
+      validation_end_data=$(jq -n \
+        --arg status "$validation_status" \
+        --arg results_file "$validation_results_rel" \
+        '{status: $status, results_file: $results_file}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "validation_end" "$validation_end_data"
+
+      if [[ "$validation_enabled" == "true" && "$validation_require" == "true" ]]; then
+        validation_gate_ok=$validation_ok
+      fi
+
       local evidence_status="skipped"
       local evidence_ok=1
       local evidence_gate_ok=1
@@ -957,7 +1022,7 @@ run_cmd() {
       fi
 
       local candidate_ok=0
-      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
+      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $validation_gate_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
         candidate_ok=1
       fi
 
@@ -985,12 +1050,12 @@ run_cmd() {
         if [[ $stuck_rc -eq 0 ]]; then
           stuck_streak="$stuck_result"
           if [[ "$no_progress" == "true" ]]; then
-            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
             local stuck_value="n/a"
             if [[ "$stuck_enabled" == "true" ]]; then
               stuck_value="${stuck_streak}/${stuck_threshold}"
             fi
-            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
             local no_progress_data
             no_progress_data=$(jq -n \
               --arg reason "checklist_remaining_no_change" \
@@ -1010,12 +1075,12 @@ run_cmd() {
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
           stuck_triggered="true"
-          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
           local stuck_value="n/a"
           if [[ "$stuck_enabled" == "true" ]]; then
             stuck_value="${stuck_streak}/${stuck_threshold}"
           fi
-          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
           local stuck_data
           stuck_data=$(jq -n \
             --argjson streak "$stuck_streak" \
@@ -1048,21 +1113,22 @@ run_cmd() {
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
       fi
 
-      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
       local stuck_value="n/a"
       if [[ "$stuck_enabled" == "true" ]]; then
         stuck_value="${stuck_streak}/${stuck_threshold}"
       fi
-      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
       local gates_data
       gates_data=$(jq -n \
         --argjson promise "$promise_matched_json" \
         --arg tests "$tests_status" \
+        --arg validation "$validation_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
         --arg approval "$approval_status" \
         --arg stuck "$stuck_value" \
-        '{promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
+        '{promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "gates_evaluated" "$gates_data"
 
       local iteration_ended_at
@@ -1078,13 +1144,14 @@ run_cmd() {
         --argjson completion "$completion_json" \
         --argjson promise "$promise_matched_json" \
         --arg tests "$tests_status" \
+        --arg validation "$validation_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
         --arg approval "$approval_status" \
-        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence, approval: $approval}')
+        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence, approval: $approval}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
 
-      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
       write_timeline "$run_summary_file" "$timeline_file"
 
       if [[ $approval_required -eq 1 && $candidate_ok -eq 1 ]]; then
@@ -1099,6 +1166,7 @@ run_cmd() {
           "$promise_text" \
           "$promise_matched" \
           "$tests_status" \
+          "$validation_status" \
           "$checklist_status_text" \
           "$evidence_status" \
           "${summary_file#$repo/}" \
@@ -1113,9 +1181,10 @@ run_cmd() {
           --arg approval_file "${approval_file#$repo/}" \
           --argjson promise "$promise_matched_json" \
           --arg tests "$tests_status" \
+          --arg validation "$validation_status" \
           --arg checklist "$checklist_status_text" \
           --arg evidence "$evidence_status" \
-          '{approval_file: $approval_file, promise: $promise, tests: $tests, checklist: $checklist, evidence: $evidence}')
+          '{approval_file: $approval_file, promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
 
         echo "Approval required for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
@@ -1189,6 +1258,7 @@ status_cmd() {
           "updated_at=" + ($updated // "unknown"),
           "promise=" + (($e.promise.matched // false) | tostring),
           "tests=" + ($e.gates.tests // "unknown"),
+          "validation=" + ($e.gates.validation // "unknown"),
           "checklist=" + ($e.gates.checklist // "unknown"),
           "evidence=" + ($e.gates.evidence // "unknown"),
           "approval=" + ($e.gates.approval // "unknown"),

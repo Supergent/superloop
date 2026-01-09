@@ -77,6 +77,36 @@
           "cd packages/superloop-ui && PATH=\"$PWD/node_modules/.bin:$PATH\" biome check ."
         ]
       },
+      "validation": {
+        "enabled": true,
+        "mode": "every",
+        "require_on_completion": true,
+        "preflight": {
+          "enabled": true,
+          "entry": "packages/superloop-ui/dist/web/index.html",
+          "web_root": "packages/superloop-ui/dist/web",
+          "required_selectors": ["#root"],
+          "required_text": ["WorkGrid"]
+        },
+        "smoke_tests": {
+          "enabled": true,
+          "optional": true,
+          "entry": "packages/superloop-ui/dist/web/index.html",
+          "web_root": "packages/superloop-ui/dist/web",
+          "checks": [
+            {"selector": "#root", "should": "exist"},
+            {"selector": ".app", "should": "exist"},
+            {"text": "WorkGrid", "should": "be_visible"}
+          ],
+          "screenshot_path": ".superloop/loops/{loop_id}/validation/smoke-screenshot.png",
+          "timeout_ms": 15000,
+          "fail_on_console_error": true
+        },
+        "automated_checklist": {
+          "enabled": false,
+          "mapping_file": ".superloop/checklist-automation.json"
+        }
+      },
       "evidence": {
         "enabled": true,
         "require_on_completion": true,

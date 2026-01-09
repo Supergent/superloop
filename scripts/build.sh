@@ -8,6 +8,7 @@ OUT_FILE="$ROOT_DIR/superloop.sh"
 PARTS=(
   "00-header.sh"
   "10-evidence.sh"
+  "15-validation.sh"
   "20-prompts.sh"
   "30-runner.sh"
   "35-usage.sh"

@@ -110,6 +110,8 @@ Each loop writes to:
   review.md
   test-output.txt
   test-status.json
+  validation-status.json
+  validation-results.json
   checklist-status.json
   checklist-remaining.md
   evidence.json
@@ -122,6 +124,7 @@ Each loop writes to:
   run-summary.json
   timeline.md
   report.html
+  validation/
   last_messages/
   logs/iter-N/
 ```
@@ -149,10 +152,11 @@ Each loop writes to:
 - Checklist validation ignores code blocks and treats missing files as failures.
 - In `on_promise` mode, tests also run once checklists are complete to avoid deadlock.
 - The tester writes `test-report.md` and the reviewer writes `review.md` each iteration.
-- Gate summaries are written to `gate-summary.txt` each iteration (promise/tests/checklists/evidence/stuck).
+- Gate summaries are written to `gate-summary.txt` each iteration (promise/tests/validation/checklists/evidence/stuck).
 - Anti-churn: role prompts discourage unnecessary edits, and the wrapper restores plan/report files when content is unchanged to avoid rewrite noise.
 - Evidence manifests are written to `evidence.json` when enabled and include artifact hashes/mtimes and gate-produced file metadata.
 - Reviewer packets are written to `reviewer-packet.md` when enabled to summarize gates, tests, checklists, and evidence for the reviewer.
+- Validation preflight runs without external deps; web smoke tests use Playwright when enabled (can be marked optional per loop).
 - Optional per-role timeouts can stop a run if a role exceeds the configured limit.
 - Optional approval gating can pause completion until a human approves (records decisions in `decisions.jsonl`/`decisions.md`).
 - Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.

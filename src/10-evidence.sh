@@ -139,6 +139,21 @@ write_evidence_manifest() {
   local checklist_patterns_json
   checklist_patterns_json=$(jq -c '.checklists // []' <<<"$loop_json")
 
+  local validation_enabled
+  validation_enabled=$(jq -r '.validation.enabled // false' <<<"$loop_json")
+  local validation_status_file="$loop_dir/validation-status.json"
+  local validation_results_file="$loop_dir/validation-results.json"
+  local validation_status_json="null"
+  if [[ "$validation_enabled" == "true" && -f "$validation_status_file" ]]; then
+    validation_status_json=$(cat "$validation_status_file")
+  fi
+  validation_status_json=$(json_or_default "$validation_status_json" "null")
+  local validation_results_json="null"
+  if [[ "$validation_enabled" == "true" && -f "$validation_results_file" ]]; then
+    validation_results_json=$(cat "$validation_results_file")
+  fi
+  validation_results_json=$(json_or_default "$validation_results_json" "null")
+
   local artifacts_jsonl="$loop_dir/evidence-artifacts.jsonl"
   : > "$artifacts_jsonl"
   local artifacts_gate="evidence"
@@ -190,6 +205,8 @@ write_evidence_manifest() {
   local test_output_rel="${test_output_file#$repo/}"
   local checklist_status_rel="${checklist_status_file#$repo/}"
   local checklist_remaining_rel="${checklist_remaining_file#$repo/}"
+  local validation_status_rel="${validation_status_file#$repo/}"
+  local validation_results_rel="${validation_results_file#$repo/}"
 
   jq -n \
     --arg generated_at "$(timestamp)" \
@@ -213,6 +230,10 @@ write_evidence_manifest() {
     --arg checklist_remaining_file "$checklist_remaining_rel" \
     --argjson checklist_remaining_sha "$checklist_remaining_sha_json" \
     --argjson checklist_remaining_mtime "$checklist_remaining_mtime_json" \
+    --arg validation_status_file "$validation_status_rel" \
+    --argjson validation_status "$validation_status_json" \
+    --arg validation_results_file "$validation_results_rel" \
+    --argjson validation_results "$validation_results_json" \
     --argjson artifacts "$artifacts_json" \
     '{
       generated_at: $generated_at,
@@ -239,6 +260,12 @@ write_evidence_manifest() {
         remaining_file: $checklist_remaining_file,
         remaining_sha256: $checklist_remaining_sha,
         remaining_mtime: $checklist_remaining_mtime
+      },
+      validation: {
+        status: $validation_status,
+        status_file: $validation_status_file,
+        results: $validation_results,
+        results_file: $validation_results_file
       },
       artifacts: $artifacts
     }' \
@@ -378,4 +405,3 @@ run_tests() {
 
   return 1
 }
-

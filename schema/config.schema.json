@@ -53,6 +53,71 @@
             },
             "required": ["mode", "commands"]
           },
+          "validation": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "mode": {
+                "type": "string",
+                "enum": ["disabled", "every", "on_promise"]
+              },
+              "require_on_completion": {"type": "boolean"},
+              "preflight": {
+                "type": "object",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "entry": {"type": "string"},
+                  "web_root": {"type": "string"},
+                  "required_selectors": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "required_text": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "min_script_bytes": {"type": "integer"},
+                  "max_script_kb": {"type": "integer"},
+                  "require_scripts": {"type": "boolean"}
+                },
+                "required": ["enabled"]
+              },
+              "smoke_tests": {
+                "type": "object",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "optional": {"type": "boolean"},
+                  "entry": {"type": "string"},
+                  "web_root": {"type": "string"},
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "selector": {"type": "string"},
+                        "text": {"type": "string"},
+                        "should": {"type": "string"}
+                      }
+                    }
+                  },
+                  "screenshot_path": {"type": "string"},
+                  "timeout_ms": {"type": "integer"},
+                  "headless": {"type": "boolean"},
+                  "fail_on_console_error": {"type": "boolean"}
+                },
+                "required": ["enabled"]
+              },
+              "automated_checklist": {
+                "type": "object",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "mapping_file": {"type": "string"}
+                },
+                "required": ["enabled"]
+              }
+            },
+            "required": ["enabled", "require_on_completion"]
+          },
           "evidence": {
             "type": "object",
             "properties": {

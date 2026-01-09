@@ -108,14 +108,15 @@ append_run_summary() {
   local promise_text="${10}"
   local tests_mode="${11}"
   local tests_status="${12}"
-  local checklist_status="${13}"
-  local evidence_status="${14}"
-  local approval_status="${15}"
-  local stuck_streak="${16}"
-  local stuck_threshold="${17}"
-  local completion_ok="${18}"
-  local loop_dir="${19}"
-  local events_file="${20}"
+  local validation_status="${13}"
+  local checklist_status="${14}"
+  local evidence_status="${15}"
+  local approval_status="${16}"
+  local stuck_streak="${17}"
+  local stuck_threshold="${18}"
+  local completion_ok="${19}"
+  local loop_dir="${20}"
+  local events_file="${21}"
 
   local plan_file="$loop_dir/plan.md"
   local implementer_report="$loop_dir/implementer.md"
@@ -132,10 +133,13 @@ append_run_summary() {
   local approval_file="$loop_dir/approval.json"
   local decisions_jsonl="$loop_dir/decisions.jsonl"
   local decisions_md="$loop_dir/decisions.md"
+  local validation_status_file="$loop_dir/validation-status.json"
+  local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
+  local validation_status_meta validation_results_meta
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
   plan_meta=$(json_or_default "$plan_meta" "{}")
@@ -155,6 +159,10 @@ append_run_summary() {
   checklist_remaining_meta=$(json_or_default "$checklist_remaining_meta" "{}")
   evidence_meta=$(file_meta_json "${evidence_file#$repo/}" "$evidence_file")
   evidence_meta=$(json_or_default "$evidence_meta" "{}")
+  validation_status_meta=$(file_meta_json "${validation_status_file#$repo/}" "$validation_status_file")
+  validation_status_meta=$(json_or_default "$validation_status_meta" "{}")
+  validation_results_meta=$(file_meta_json "${validation_results_file#$repo/}" "$validation_results_file")
+  validation_results_meta=$(json_or_default "$validation_results_meta" "{}")
   summary_meta=$(file_meta_json "${summary_file_gate#$repo/}" "$summary_file_gate")
   summary_meta=$(json_or_default "$summary_meta" "{}")
   notes_meta=$(file_meta_json "${notes_file#$repo/}" "$notes_file")
@@ -181,6 +189,8 @@ append_run_summary() {
     --argjson checklist_status "$checklist_status_meta" \
     --argjson checklist_remaining "$checklist_remaining_meta" \
     --argjson evidence "$evidence_meta" \
+    --argjson validation_status "$validation_status_meta" \
+    --argjson validation_results "$validation_results_meta" \
     --argjson gate_summary "$summary_meta" \
     --argjson iteration_notes "$notes_meta" \
     --argjson events "$events_meta" \
@@ -198,6 +208,8 @@ append_run_summary() {
       checklist_status: $checklist_status,
       checklist_remaining: $checklist_remaining,
       evidence: $evidence,
+      validation_status: $validation_status,
+      validation_results: $validation_results,
       gate_summary: $gate_summary,
       iteration_notes: $iteration_notes,
       events: $events,
@@ -228,6 +240,7 @@ append_run_summary() {
     --arg promise_matched "$promise_matched_json" \
     --arg tests_mode "$tests_mode" \
     --arg tests_status "$tests_status" \
+    --arg validation_status "$validation_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
     --arg approval_status "$approval_status" \
@@ -247,6 +260,7 @@ append_run_summary() {
       },
       gates: {
         tests: $tests_status,
+        validation: $validation_status,
         checklist: $checklist_status,
         evidence: $evidence_status,
         approval: $approval_status
@@ -299,7 +313,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
@@ -330,6 +344,34 @@ read_test_status_summary() {
     return 0
   fi
 
+  echo "unknown"
+}
+
+read_validation_status_summary() {
+  local status_file="$1"
+
+  if [[ ! -f "$status_file" ]]; then
+    echo "unknown"
+    return 0
+  fi
+
+  local status
+  status=$(jq -r '.status // empty' "$status_file" 2>/dev/null || true)
+  if [[ -n "$status" && "$status" != "null" ]]; then
+    echo "$status"
+    return 0
+  fi
+
+  local ok
+  ok=$(jq -r '.ok // empty' "$status_file" 2>/dev/null || true)
+  if [[ "$ok" == "true" ]]; then
+    echo "ok"
+    return 0
+  fi
+  if [[ "$ok" == "false" ]]; then
+    echo "failed"
+    return 0
+  fi
   echo "unknown"
 }
 
