@@ -114,6 +114,47 @@
                   "mapping_file": {"type": "string"}
                 },
                 "required": ["enabled"]
+              },
+              "agent_browser": {
+                "type": "object",
+                "description": "Browser automation tests using agent-browser CLI",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "optional": {"type": "boolean"},
+                  "session": {
+                    "type": "string",
+                    "description": "Session name (supports {loop_id}, {iteration} placeholders)"
+                  },
+                  "setup": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Commands to run before tests (e.g., open, wait)"
+                  },
+                  "tests": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {"type": "string"},
+                        "commands": {
+                          "type": "array",
+                          "items": {"type": "string"}
+                        }
+                      },
+                      "required": ["name", "commands"]
+                    }
+                  },
+                  "cleanup": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Commands to run after tests (e.g., close)"
+                  },
+                  "screenshot_on_failure": {"type": "boolean"},
+                  "screenshot_path": {"type": "string"},
+                  "timeout_ms": {"type": "integer"},
+                  "headed": {"type": "boolean"}
+                },
+                "required": ["enabled"]
               }
             },
             "required": ["enabled", "require_on_completion"]
@@ -142,6 +183,36 @@
             "type": "object",
             "properties": {
               "enabled": {"type": "boolean"}
+            },
+            "required": ["enabled"]
+          },
+          "tester_exploration": {
+            "type": "object",
+            "description": "Configuration for tester's exploratory testing capabilities",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "tool": {
+                "type": "string",
+                "enum": ["agent_browser"],
+                "description": "Browser automation tool for exploration"
+              },
+              "entry_url": {
+                "type": "string",
+                "description": "URL to open for exploration (supports {web_root}, {repo} placeholders)"
+              },
+              "focus_areas": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Areas to focus exploration on (e.g., 'Login flow', 'Dashboard')"
+              },
+              "max_steps": {
+                "type": "integer",
+                "description": "Maximum exploration steps to limit cost/time"
+              },
+              "screenshot_dir": {
+                "type": "string",
+                "description": "Directory for exploration screenshots"
+              }
             },
             "required": ["enabled"]
           },

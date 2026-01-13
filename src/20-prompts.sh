@@ -19,6 +19,7 @@ build_role_prompt() {
   local changed_files_planner="${18:-}"
   local changed_files_implementer="${19:-}"
   local changed_files_all="${20:-}"
+  local tester_exploration_json="${21:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -52,5 +53,134 @@ EOF
   fi
   if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
+  fi
+
+  # Add tester exploration context if enabled for tester role
+  if [[ "$role" == "tester" && -n "$tester_exploration_json" ]]; then
+    local exploration_enabled
+    exploration_enabled=$(jq -r '.enabled // false' <<<"$tester_exploration_json" 2>/dev/null || echo "false")
+
+    if [[ "$exploration_enabled" == "true" ]]; then
+      local tool entry_url focus_areas max_steps screenshot_dir
+      tool=$(jq -r '.tool // "agent_browser"' <<<"$tester_exploration_json")
+      entry_url=$(jq -r '.entry_url // ""' <<<"$tester_exploration_json")
+      max_steps=$(jq -r '.max_steps // ""' <<<"$tester_exploration_json")
+      screenshot_dir=$(jq -r '.screenshot_dir // ""' <<<"$tester_exploration_json")
+
+      cat <<'AGENT_BROWSER_SKILL' >> "$prompt_file"
+
+## Exploration Configuration
+
+Browser exploration is ENABLED. Use agent-browser to verify the implementation.
+
+### agent-browser Quick Reference
+
+**Core workflow:**
+1. Navigate: `agent-browser open <url>`
+2. Snapshot: `agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
+3. Interact using refs from the snapshot
+4. Re-snapshot after navigation or significant DOM changes
+
+**Navigation:**
+```
+agent-browser open <url>      # Navigate to URL
+agent-browser back            # Go back
+agent-browser forward         # Go forward
+agent-browser reload          # Reload page
+agent-browser close           # Close browser
+```
+
+**Snapshot (page analysis):**
+```
+agent-browser snapshot        # Full accessibility tree
+agent-browser snapshot -i     # Interactive elements only (recommended)
+agent-browser snapshot -c     # Compact output
+agent-browser snapshot -d 3   # Limit depth to 3
+```
+
+**Interactions (use @refs from snapshot):**
+```
+agent-browser click @e1           # Click
+agent-browser dblclick @e1        # Double-click
+agent-browser fill @e2 "text"     # Clear and type
+agent-browser type @e2 "text"     # Type without clearing
+agent-browser press Enter         # Press key
+agent-browser press Control+a     # Key combination
+agent-browser hover @e1           # Hover
+agent-browser check @e1           # Check checkbox
+agent-browser uncheck @e1         # Uncheck checkbox
+agent-browser select @e1 "value"  # Select dropdown
+agent-browser scroll down 500     # Scroll page
+agent-browser scrollintoview @e1  # Scroll element into view
+```
+
+**Get information:**
+```
+agent-browser get text @e1        # Get element text
+agent-browser get value @e1       # Get input value
+agent-browser get title           # Get page title
+agent-browser get url             # Get current URL
+```
+
+**Screenshots:**
+```
+agent-browser screenshot          # Screenshot to stdout
+agent-browser screenshot path.png # Save to file
+agent-browser screenshot --full   # Full page
+```
+
+**Wait:**
+```
+agent-browser wait @e1                     # Wait for element
+agent-browser wait 2000                    # Wait milliseconds
+agent-browser wait --text "Success"        # Wait for text
+agent-browser wait --load networkidle      # Wait for network idle
+```
+
+**Semantic locators (alternative to refs):**
+```
+agent-browser find role button click --name "Submit"
+agent-browser find text "Sign In" click
+agent-browser find label "Email" fill "user@test.com"
+```
+
+**Example exploration flow:**
+```
+agent-browser open https://example.com/app
+agent-browser snapshot -i
+# Output shows: textbox "Email" [ref=e1], button "Submit" [ref=e2]
+
+agent-browser fill @e1 "test@example.com"
+agent-browser click @e2
+agent-browser wait --load networkidle
+agent-browser snapshot -i  # Check result
+agent-browser screenshot exploration-result.png
+```
+
+AGENT_BROWSER_SKILL
+
+      echo "### Session Configuration" >> "$prompt_file"
+      echo "" >> "$prompt_file"
+      if [[ -n "$entry_url" && "$entry_url" != "null" ]]; then
+        echo "- Entry URL: $entry_url" >> "$prompt_file"
+      fi
+      if [[ -n "$max_steps" && "$max_steps" != "null" ]]; then
+        echo "- Max exploration steps: $max_steps" >> "$prompt_file"
+      fi
+      if [[ -n "$screenshot_dir" && "$screenshot_dir" != "null" ]]; then
+        echo "- Screenshot directory: $screenshot_dir" >> "$prompt_file"
+      fi
+
+      # Add focus areas if specified
+      local focus_count
+      focus_count=$(jq -r '.focus_areas // [] | length' <<<"$tester_exploration_json" 2>/dev/null || echo "0")
+      if [[ "$focus_count" -gt 0 ]]; then
+        echo "" >> "$prompt_file"
+        echo "**Focus your exploration on:**" >> "$prompt_file"
+        jq -r '.focus_areas // [] | .[]' <<<"$tester_exploration_json" 2>/dev/null | while read -r area; do
+          echo "- $area" >> "$prompt_file"
+        done
+      fi
+    fi
   fi
 }
