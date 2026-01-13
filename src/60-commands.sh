@@ -3,7 +3,7 @@ init_cmd() {
   local force="$2"
   local superloop_dir="$repo/.superloop"
 
-  mkdir -p "$superloop_dir/roles" "$superloop_dir/loops" "$superloop_dir/logs"
+  mkdir -p "$superloop_dir/roles" "$superloop_dir/loops" "$superloop_dir/logs" "$superloop_dir/specs"
 
   if [[ -f "$superloop_dir/config.json" && $force -ne 1 ]]; then
     die "found existing $superloop_dir/config.json (use --force to overwrite)"
@@ -11,18 +11,29 @@ init_cmd() {
 
   cat > "$superloop_dir/config.json" <<'EOF'
 {
-  "runner": {
-    "command": ["codex", "exec"],
-    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-    "fast_args": [],
-    "prompt_mode": "stdin"
+  "runners": {
+    "codex": {
+      "command": ["codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "claude-vanilla": {
+      "command": ["claude-vanilla"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "claude-glm-mantic": {
+      "command": ["claude-glm-mantic"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    }
   },
   "loops": [
     {
       "id": "initiation",
-      "spec_file": ".superloop/spec.md",
+      "spec_file": ".superloop/specs/initiation.md",
       "max_iterations": 20,
-      "completion_promise": "INITIATION_READY",
+      "completion_promise": "SUPERLOOP_COMPLETE",
       "checklists": [],
       "tests": {
         "mode": "on_promise",
@@ -65,23 +76,49 @@ init_cmd() {
           ".cache/**"
         ]
       },
-      "roles": ["planner", "implementer", "tester", "reviewer"]
+      "roles": {
+        "planner": {"runner": "codex"},
+        "implementer": {"runner": "claude-vanilla"},
+        "tester": {"runner": "claude-glm-mantic"},
+        "reviewer": {"runner": "codex"}
+      }
     }
   ]
 }
 EOF
 
-  cat > "$superloop_dir/spec.md" <<'EOF'
-# Supergent Loop Spec
+  cat > "$superloop_dir/specs/initiation.md" <<'EOF'
+# Feature: [Your Feature Name]
 
-Replace this file with the actual task specification.
+## Overview
 
-Include:
-- Goal and scope
-- Requirements and constraints
-- Verification steps
-- Completion criteria
-- Promise tag usage
+Replace this with a description of what you're building and why.
+
+Use `/construct-superloop` in Claude Code for guided spec creation.
+
+## Requirements
+
+- [ ] REQ-1: [First requirement]
+- [ ] REQ-2: [Second requirement]
+
+## Technical Approach
+
+[Describe the implementation approach]
+
+## Acceptance Criteria
+
+- [ ] AC-1: When [action], then [expected result]
+- [ ] AC-2: When [action], then [expected result]
+
+## Constraints
+
+- **Performance**: [requirements]
+- **Security**: [requirements]
+- **Compatibility**: [requirements]
+
+## Out of Scope
+
+- [What's not included]
 EOF
 
   cat > "$superloop_dir/roles/planner.md" <<'EOF'
