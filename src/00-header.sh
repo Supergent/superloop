@@ -11,6 +11,7 @@ Supergent Runner Wrapper
 
 Usage:
   superloop.sh init [--repo DIR] [--force]
+  superloop.sh list [--repo DIR] [--config FILE]
   superloop.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
   superloop.sh status [--repo DIR] [--summary] [--loop ID]
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]

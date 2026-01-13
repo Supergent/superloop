@@ -93,6 +93,9 @@ main() {
     init)
       init_cmd "$repo" "$force"
       ;;
+    list)
+      list_cmd "$repo" "$config_path"
+      ;;
     run)
       run_cmd "$repo" "$config_path" "$loop_id" "$fast" "$dry_run"
       ;;

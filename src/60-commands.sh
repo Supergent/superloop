@@ -496,6 +496,89 @@ EOF
   echo "Installed agent-browser skill in $claude_skills_dir"
 }
 
+list_cmd() {
+  local repo="$1"
+  local config_path="$2"
+
+  if [[ ! -f "$config_path" ]]; then
+    die "config not found: $config_path (run 'superloop init' first)"
+  fi
+
+  local superloop_dir="$repo/.superloop"
+  local state_file="$superloop_dir/state.json"
+  local current_loop_id=""
+  local is_active="false"
+
+  # Read current state if exists
+  if [[ -f "$state_file" ]]; then
+    current_loop_id=$(jq -r '.current_loop_id // ""' "$state_file")
+    is_active=$(jq -r '.active // false' "$state_file")
+  fi
+
+  # Get loop count
+  local loop_count
+  loop_count=$(jq '.loops | length' "$config_path")
+
+  if [[ "$loop_count" -eq 0 ]]; then
+    echo "No loops configured."
+    return 0
+  fi
+
+  echo "Loops in $config_path:"
+  echo ""
+  printf "%-20s %-12s %-40s %s\n" "ID" "STATUS" "SPEC" "LAST RUN"
+  printf "%-20s %-12s %-40s %s\n" "--------------------" "------------" "----------------------------------------" "-------------------"
+
+  local i=0
+  while [[ $i -lt $loop_count ]]; do
+    local loop_json loop_id spec_file status last_run
+    loop_json=$(jq -c ".loops[$i]" "$config_path")
+    loop_id=$(jq -r '.id' <<<"$loop_json")
+    spec_file=$(jq -r '.spec_file' <<<"$loop_json")
+
+    # Determine status
+    local loop_dir="$superloop_dir/loops/$loop_id"
+    local run_summary="$loop_dir/run-summary.json"
+
+    if [[ "$is_active" == "true" && "$current_loop_id" == "$loop_id" ]]; then
+      status="RUNNING"
+    elif [[ -f "$run_summary" ]]; then
+      # Check if completed
+      local last_completion
+      last_completion=$(jq -r '.[-1].completion_ok // false' "$run_summary" 2>/dev/null || echo "false")
+      if [[ "$last_completion" == "true" ]]; then
+        status="COMPLETED"
+      else
+        status="STOPPED"
+      fi
+    elif [[ -d "$loop_dir" ]]; then
+      status="STARTED"
+    else
+      status="NOT STARTED"
+    fi
+
+    # Get last run time
+    if [[ -f "$run_summary" ]]; then
+      last_run=$(jq -r '.[-1].ended_at // .[-1].started_at // "unknown"' "$run_summary" 2>/dev/null || echo "-")
+      # Truncate to just date and time
+      last_run="${last_run:0:19}"
+    else
+      last_run="-"
+    fi
+
+    # Truncate long values for display
+    local display_id="${loop_id:0:20}"
+    local display_spec="${spec_file:0:40}"
+
+    printf "%-20s %-12s %-40s %s\n" "$display_id" "$status" "$display_spec" "$last_run"
+
+    ((i++))
+  done
+
+  echo ""
+  echo "Total: $loop_count loop(s)"
+}
+
 run_cmd() {
   local repo="$1"
   local config_path="$2"
