@@ -44,5 +44,6 @@ export default defineConfig([
     target: "es2020",
     outDir: "dist/web",
     splitting: false,
+    noExternal: [/./],
   },
 ]);
