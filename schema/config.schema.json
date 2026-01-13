@@ -2,28 +2,51 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Supergent Config",
   "type": "object",
-  "properties": {
-    "runner": {
+  "definitions": {
+    "runner_config": {
       "type": "object",
+      "description": "Configuration for a runner (AI coding CLI)",
       "properties": {
         "command": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {"type": "string"},
+          "description": "Command to invoke (e.g., ['codex', 'exec'] or ['claude'])"
         },
         "args": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {"type": "string"},
+          "description": "Arguments to pass (supports {repo}, {last_message_file} placeholders)"
         },
         "fast_args": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {"type": "string"},
+          "description": "Alternative args for --fast mode"
         },
         "prompt_mode": {
           "type": "string",
-          "enum": ["stdin", "file"]
+          "enum": ["stdin", "file"],
+          "description": "How to pass the prompt: stdin or file"
         }
       },
       "required": ["command", "args"]
+    }
+  },
+  "properties": {
+    "runner": {
+      "$ref": "#/definitions/runner_config",
+      "description": "Default runner for all roles (legacy single-runner mode)"
+    },
+    "runners": {
+      "type": "object",
+      "description": "Named runner registry for per-role runner selection",
+      "additionalProperties": {
+        "$ref": "#/definitions/runner_config"
+      },
+      "examples": [{
+        "codex": {"command": ["codex", "exec"], "args": ["--full-auto", "-C", "{repo}", "-"]},
+        "claude-vanilla": {"command": ["claude-vanilla"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]},
+        "claude-glm-mantic": {"command": ["claude-glm-mantic"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]}
+      }]
     },
     "loops": {
       "type": "array",
@@ -259,8 +282,33 @@
             "required": ["enabled", "threshold", "action", "ignore"]
           },
           "roles": {
-            "type": "array",
-            "items": {"type": "string"}
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Simple list of roles using default runner"
+              },
+              {
+                "type": "object",
+                "description": "Per-role runner configuration",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "runner": {
+                      "type": "string",
+                      "description": "Name of runner from 'runners' registry"
+                    }
+                  },
+                  "required": ["runner"]
+                },
+                "examples": [{
+                  "planner": {"runner": "codex"},
+                  "implementer": {"runner": "claude-vanilla"},
+                  "tester": {"runner": "claude-glm-mantic"},
+                  "reviewer": {"runner": "codex"}
+                }]
+              }
+            ]
           }
         },
         "required": [
@@ -280,5 +328,8 @@
       }
     }
   },
-  "required": ["runner", "loops"]
+  "anyOf": [
+    {"required": ["runner", "loops"]},
+    {"required": ["runners", "loops"]}
+  ]
 }

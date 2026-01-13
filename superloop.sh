@@ -4820,34 +4820,86 @@ run_cmd() {
     die "config has no loops"
   fi
 
-  local -a runner_command=()
+  # Check if using runners registry (per-role) or single runner (legacy)
+  local has_runners_registry
+  has_runners_registry=$(jq -r 'if .runners then "true" else "false" end' "$config_path")
+  local runners_json=""
+  if [[ "$has_runners_registry" == "true" ]]; then
+    runners_json=$(jq -c '.runners // {}' "$config_path")
+  fi
+
+  # Parse default runner (legacy mode or fallback)
+  local -a default_runner_command=()
   while IFS= read -r line; do
-    runner_command+=("$line")
+    default_runner_command+=("$line")
   done < <(jq -r '.runner.command[]?' "$config_path")
-  if [[ ${#runner_command[@]} -eq 0 ]]; then
-    die "runner.command is required"
-  fi
 
-  local -a runner_args=()
+  local -a default_runner_args=()
   while IFS= read -r line; do
-    runner_args+=("$line")
+    default_runner_args+=("$line")
   done < <(jq -r '.runner.args[]?' "$config_path")
-  if [[ ${#runner_args[@]} -eq 0 ]]; then
-    die "runner.args is required"
-  fi
 
-  local -a runner_fast_args=()
+  local -a default_runner_fast_args=()
   while IFS= read -r line; do
-    runner_fast_args+=("$line")
+    default_runner_fast_args+=("$line")
   done < <(jq -r '.runner.fast_args[]?' "$config_path")
 
-  local runner_prompt_mode
-  runner_prompt_mode=$(jq -r '.runner.prompt_mode // "stdin"' "$config_path")
-  if [[ "$runner_prompt_mode" != "stdin" && "$runner_prompt_mode" != "file" ]]; then
-    die "runner.prompt_mode must be stdin or file"
+  local default_runner_prompt_mode
+  default_runner_prompt_mode=$(jq -r '.runner.prompt_mode // "stdin"' "$config_path")
+
+  # Validate: must have either runner or runners
+  if [[ ${#default_runner_command[@]} -eq 0 && "$has_runners_registry" != "true" ]]; then
+    die "either runner.command or runners registry is required"
   fi
 
-  if [[ "${dry_run:-0}" -ne 1 ]]; then
+  if [[ "$default_runner_prompt_mode" != "stdin" && "$default_runner_prompt_mode" != "file" ]]; then
+    default_runner_prompt_mode="stdin"
+  fi
+
+  # Helper function to get runner config for a role
+  get_runner_for_role() {
+    local role="$1"
+    local role_runner_name="$2"  # From roles config, may be empty
+    local runner_name=""
+
+    # If role has explicit runner assignment, use it
+    if [[ -n "$role_runner_name" ]]; then
+      runner_name="$role_runner_name"
+    fi
+
+    # If we have a runner name and runners registry, look it up
+    if [[ -n "$runner_name" && -n "$runners_json" ]]; then
+      local runner_config
+      runner_config=$(jq -c --arg name "$runner_name" '.[$name] // empty' <<<"$runners_json")
+      if [[ -n "$runner_config" ]]; then
+        echo "$runner_config"
+        return 0
+      else
+        echo "warning: runner '$runner_name' not found in registry, using default" >&2
+      fi
+    fi
+
+    # Fall back to default runner
+    if [[ ${#default_runner_command[@]} -gt 0 ]]; then
+      jq -n \
+        --argjson cmd "$(printf '%s\n' "${default_runner_command[@]}" | jq -R . | jq -s .)" \
+        --argjson args "$(printf '%s\n' "${default_runner_args[@]}" | jq -R . | jq -s .)" \
+        --argjson fast_args "$(printf '%s\n' "${default_runner_fast_args[@]}" | jq -R . | jq -s .)" \
+        --arg prompt_mode "$default_runner_prompt_mode" \
+        '{command: $cmd, args: $args, fast_args: $fast_args, prompt_mode: $prompt_mode}'
+      return 0
+    fi
+
+    return 1
+  }
+
+  # For backward compatibility, set up default runner variables
+  local -a runner_command=("${default_runner_command[@]}")
+  local -a runner_args=("${default_runner_args[@]}")
+  local -a runner_fast_args=("${default_runner_fast_args[@]}")
+  local runner_prompt_mode="$default_runner_prompt_mode"
+
+  if [[ "${dry_run:-0}" -ne 1 && ${#runner_command[@]} -gt 0 ]]; then
     need_exec "${runner_command[0]}"
   fi
 
@@ -4855,7 +4907,7 @@ run_cmd() {
   if [[ "${fast_mode:-0}" -eq 1 ]]; then
     if [[ ${#runner_fast_args[@]} -gt 0 ]]; then
       runner_active_args=("${runner_fast_args[@]}")
-    else
+    elif [[ ${#runner_args[@]} -gt 0 ]]; then
       echo "warning: --fast set but runner.fast_args is empty; using runner.args" >&2
     fi
   fi
@@ -4938,13 +4990,36 @@ run_cmd() {
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
 
+    # Parse roles - can be array or object with runner assignments
+    local roles_type
+    roles_type=$(jq -r '.roles | type' <<<"$loop_json")
     local -a roles=()
-    while IFS= read -r line; do
-      roles+=("$line")
-    done < <(jq -r '.roles[]?' <<<"$loop_json")
+    local roles_config_json="{}"
+
+    if [[ "$roles_type" == "array" ]]; then
+      # Legacy array format: ["planner", "implementer", "tester", "reviewer"]
+      while IFS= read -r line; do
+        roles+=("$line")
+      done < <(jq -r '.roles[]?' <<<"$loop_json")
+    elif [[ "$roles_type" == "object" ]]; then
+      # New object format: {"planner": {"runner": "codex"}, ...}
+      roles_config_json=$(jq -c '.roles' <<<"$loop_json")
+      while IFS= read -r line; do
+        roles+=("$line")
+      done < <(jq -r '.roles | keys[]' <<<"$loop_json")
+    fi
+
     if [[ ${#roles[@]} -eq 0 ]]; then
       roles=(planner implementer tester reviewer)
     fi
+
+    # Helper to get runner name for a role from roles config
+    get_role_runner_name() {
+      local role="$1"
+      if [[ "$roles_type" == "object" ]]; then
+        jq -r --arg role "$role" '.[$role].runner // empty' <<<"$roles_config_json"
+      fi
+    }
 
     local -a checklist_patterns=()
     while IFS= read -r line; do
@@ -5336,10 +5411,21 @@ run_cmd() {
           '{prompt_file: $prompt_file, log_file: $log_file, last_message_file: $last_message_file}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "role_start" "$role_start_data" "$role"
 
-        # Pre-flight usage check
+        # Pre-flight usage check (need to know runner first)
+        # Get runner for this specific role (early, for usage check)
+        local early_role_runner_name
+        early_role_runner_name=$(get_role_runner_name "$role")
+        local early_runner_cmd=""
+        if [[ -n "$early_role_runner_name" && -n "$runners_json" ]]; then
+          early_runner_cmd=$(jq -r --arg name "$early_role_runner_name" '.[$name].command[0] // empty' <<<"$runners_json")
+        fi
+        if [[ -z "$early_runner_cmd" && ${#runner_command[@]} -gt 0 ]]; then
+          early_runner_cmd="${runner_command[0]}"
+        fi
+
         if [[ "${usage_check_enabled:-false}" == "true" ]]; then
           local runner_type_for_check=""
-          case "${runner_command[0]}" in
+          case "$early_runner_cmd" in
             *claude*) runner_type_for_check="claude" ;;
             *codex*) runner_type_for_check="codex" ;;
           esac
@@ -5393,13 +5479,60 @@ run_cmd() {
           fi
         fi
 
+        # Get runner for this specific role
+        local role_runner_name
+        role_runner_name=$(get_role_runner_name "$role")
+        local role_runner_config
+        role_runner_config=$(get_runner_for_role "$role" "$role_runner_name")
+
+        # Parse role-specific runner settings
+        local -a role_runner_command=()
+        local -a role_runner_args=()
+        local -a role_runner_fast_args=()
+        local role_runner_prompt_mode="stdin"
+
+        if [[ -n "$role_runner_config" ]]; then
+          while IFS= read -r line; do
+            [[ -n "$line" ]] && role_runner_command+=("$line")
+          done < <(jq -r '.command[]?' <<<"$role_runner_config")
+
+          while IFS= read -r line; do
+            [[ -n "$line" ]] && role_runner_args+=("$line")
+          done < <(jq -r '.args[]?' <<<"$role_runner_config")
+
+          while IFS= read -r line; do
+            [[ -n "$line" ]] && role_runner_fast_args+=("$line")
+          done < <(jq -r '.fast_args[]?' <<<"$role_runner_config")
+
+          role_runner_prompt_mode=$(jq -r '.prompt_mode // "stdin"' <<<"$role_runner_config")
+        fi
+
+        # Fall back to default runner if role-specific failed
+        if [[ ${#role_runner_command[@]} -eq 0 ]]; then
+          role_runner_command=("${runner_command[@]}")
+          role_runner_args=("${runner_args[@]}")
+          role_runner_fast_args=("${runner_fast_args[@]}")
+          role_runner_prompt_mode="$runner_prompt_mode"
+        fi
+
+        # Select args based on fast mode
+        local -a role_runner_active_args=("${role_runner_args[@]}")
+        if [[ "${fast_mode:-0}" -eq 1 && ${#role_runner_fast_args[@]} -gt 0 ]]; then
+          role_runner_active_args=("${role_runner_fast_args[@]}")
+        fi
+
+        # Log which runner is being used for this role
+        if [[ -n "$role_runner_name" ]]; then
+          echo "[superloop] Role '$role' using runner: $role_runner_name (${role_runner_command[0]:-unknown})"
+        fi
+
         local role_status=0
         set +e
         if [[ "$role" == "openprose" ]]; then
-          run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$runner_prompt_mode" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$role_runner_prompt_mode" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${runner_command[@]}" -- "${runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$role_runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         fi
         set -e
