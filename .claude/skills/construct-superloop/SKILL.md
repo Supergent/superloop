@@ -312,6 +312,14 @@ Understanding config helps you set appropriate values:
       "action": "report_and_stop"
     },
 
+    "usage_check": {
+      "enabled": true,          // Pre-flight rate limit check (default: true)
+      "warn_threshold": 70,     // Warn at this % usage
+      "block_threshold": 95,    // Stop at this % usage
+      "wait_on_limit": true,    // Wait for reset instead of stopping
+      "max_wait_seconds": 7200  // Max wait time (2 hours)
+    },
+
     "roles": {
       "planner": {"runner": "codex"},
       "implementer": {"runner": "claude-vanilla"},
@@ -331,6 +339,9 @@ Understanding config helps you set appropriate values:
 | `tests.commands` | Test commands | Must exit 0 on success |
 | `timeouts.*` | Role time limits | Increase for complex features |
 | `stuck.threshold` | Stall detection | Lower = fail faster on stuck loops |
+| `usage_check.enabled` | Pre-flight rate limit check | Default `true`, disable if no API credentials |
+| `usage_check.wait_on_limit` | Wait vs stop on limit | `true` for unattended runs, `false` for interactive |
+| `usage_check.block_threshold` | Usage % to stop | 95 default, lower for safety margin |
 
 ## What Makes a Good Spec (For Automation)
 
@@ -828,6 +839,13 @@ Generate or update `.superloop/config.json`:
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": []
+      },
+      "usage_check": {
+        "enabled": true,
+        "warn_threshold": 70,
+        "block_threshold": 95,
+        "wait_on_limit": true,
+        "max_wait_seconds": 7200
       },
       "roles": {
         "planner": {"runner": "codex"},
