@@ -156,16 +156,16 @@ def is_rate_limit_json(obj):
         return False
     error_detail = extract_error_details(obj)
     text = " ".join(str(value) for value in error_detail.values()).lower()
-    if any(token in text for token in ("rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "too many requests")):
+    if any(token in text for token in ("rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "too many requests", "overloaded")):
         return True
     status = error_detail.get("status") or error_detail.get("code")
     try:
-        if int(status) == 429:
+        if int(status) in (429, 529):  # 429 = rate limit, 529 = overloaded
             return True
     except (TypeError, ValueError):
         pass
     obj_type = obj.get("type")
-    if isinstance(obj_type, str) and ("usage_limit" in obj_type or "rate_limit" in obj_type):
+    if isinstance(obj_type, str) and ("usage_limit" in obj_type or "rate_limit" in obj_type or "overloaded" in obj_type):
         return True
     return False
 
@@ -601,9 +601,17 @@ run_role() {
         cmd=("claude" "--resume" "$USAGE_SESSION_ID" "-p" "continue from where you left off")
         prompt_mode="arg"  # Resume uses prompt as argument
       elif [[ "$runner_type" == "codex" ]]; then
-        # For Codex, try to extract thread_id from log (if not already captured)
-        if [[ -z "$USAGE_THREAD_ID" && -f "$log_file" ]]; then
-          USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+        # For Codex, try multiple methods to get thread_id for resume
+        if [[ -z "$USAGE_THREAD_ID" ]]; then
+          # Method 1: Extract from log output
+          if [[ -f "$log_file" ]]; then
+            USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+          fi
+          # Method 2: Extract from session filename (most reliable)
+          if [[ -z "$USAGE_THREAD_ID" && -n "$USAGE_START_TIME" ]]; then
+            local codex_start_ts=$((USAGE_START_TIME / 1000))
+            find_and_set_codex_thread_id "$codex_start_ts" 2>/dev/null || true
+          fi
         fi
         if [[ -n "$USAGE_THREAD_ID" ]]; then
           echo "[superloop] Resuming Codex thread: $USAGE_THREAD_ID" >&2

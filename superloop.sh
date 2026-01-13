@@ -1555,16 +1555,16 @@ def is_rate_limit_json(obj):
         return False
     error_detail = extract_error_details(obj)
     text = " ".join(str(value) for value in error_detail.values()).lower()
-    if any(token in text for token in ("rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "too many requests")):
+    if any(token in text for token in ("rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "too many requests", "overloaded")):
         return True
     status = error_detail.get("status") or error_detail.get("code")
     try:
-        if int(status) == 429:
+        if int(status) in (429, 529):  # 429 = rate limit, 529 = overloaded
             return True
     except (TypeError, ValueError):
         pass
     obj_type = obj.get("type")
-    if isinstance(obj_type, str) and ("usage_limit" in obj_type or "rate_limit" in obj_type):
+    if isinstance(obj_type, str) and ("usage_limit" in obj_type or "rate_limit" in obj_type or "overloaded" in obj_type):
         return True
     return False
 
@@ -2000,9 +2000,17 @@ run_role() {
         cmd=("claude" "--resume" "$USAGE_SESSION_ID" "-p" "continue from where you left off")
         prompt_mode="arg"  # Resume uses prompt as argument
       elif [[ "$runner_type" == "codex" ]]; then
-        # For Codex, try to extract thread_id from log (if not already captured)
-        if [[ -z "$USAGE_THREAD_ID" && -f "$log_file" ]]; then
-          USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+        # For Codex, try multiple methods to get thread_id for resume
+        if [[ -z "$USAGE_THREAD_ID" ]]; then
+          # Method 1: Extract from log output
+          if [[ -f "$log_file" ]]; then
+            USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+          fi
+          # Method 2: Extract from session filename (most reliable)
+          if [[ -z "$USAGE_THREAD_ID" && -n "$USAGE_START_TIME" ]]; then
+            local codex_start_ts=$((USAGE_START_TIME / 1000))
+            find_and_set_codex_thread_id "$codex_start_ts" 2>/dev/null || true
+          fi
         fi
         if [[ -n "$USAGE_THREAD_ID" ]]; then
           echo "[superloop] Resuming Codex thread: $USAGE_THREAD_ID" >&2
@@ -2822,6 +2830,50 @@ extract_codex_thread_id() {
 
   if [[ -n "$thread_id" ]]; then
     echo "$thread_id"
+    return 0
+  fi
+
+  return 1
+}
+
+# Extract thread_id from Codex session filename
+# Session files are named: rollout-<timestamp>-<thread_id>.jsonl
+# Args: $1 = session_file path
+extract_thread_id_from_filename() {
+  local session_file="$1"
+  local filename
+  filename=$(basename "$session_file")
+
+  # Pattern: rollout-YYYYMMDD_HHMMSS_mmm-<thread_id>.jsonl
+  # or: rollout-<number>-<thread_id>.jsonl
+  if [[ "$filename" =~ ^rollout-.*-([a-zA-Z0-9_-]+)\.jsonl$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+# Find Codex session file by start time and extract thread_id
+# Args: $1 = start_timestamp_seconds
+# Sets: USAGE_THREAD_ID global
+# Returns: 0 if found, 1 otherwise
+find_and_set_codex_thread_id() {
+  local start_ts="$1"
+  local session_file thread_id
+
+  # Find session file created after start time
+  session_file=$(find "$HOME/.codex/sessions" -name "rollout-*.jsonl" -type f -newermt "@$start_ts" 2>/dev/null | head -n1 || true)
+
+  if [[ -z "$session_file" ]]; then
+    return 1
+  fi
+
+  # Extract thread_id from filename
+  thread_id=$(extract_thread_id_from_filename "$session_file" || true)
+
+  if [[ -n "$thread_id" ]]; then
+    USAGE_THREAD_ID="$thread_id"
     return 0
   fi
 

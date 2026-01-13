@@ -173,6 +173,50 @@ extract_codex_thread_id() {
   return 1
 }
 
+# Extract thread_id from Codex session filename
+# Session files are named: rollout-<timestamp>-<thread_id>.jsonl
+# Args: $1 = session_file path
+extract_thread_id_from_filename() {
+  local session_file="$1"
+  local filename
+  filename=$(basename "$session_file")
+
+  # Pattern: rollout-YYYYMMDD_HHMMSS_mmm-<thread_id>.jsonl
+  # or: rollout-<number>-<thread_id>.jsonl
+  if [[ "$filename" =~ ^rollout-.*-([a-zA-Z0-9_-]+)\.jsonl$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+# Find Codex session file by start time and extract thread_id
+# Args: $1 = start_timestamp_seconds
+# Sets: USAGE_THREAD_ID global
+# Returns: 0 if found, 1 otherwise
+find_and_set_codex_thread_id() {
+  local start_ts="$1"
+  local session_file thread_id
+
+  # Find session file created after start time
+  session_file=$(find "$HOME/.codex/sessions" -name "rollout-*.jsonl" -type f -newermt "@$start_ts" 2>/dev/null | head -n1 || true)
+
+  if [[ -z "$session_file" ]]; then
+    return 1
+  fi
+
+  # Extract thread_id from filename
+  thread_id=$(extract_thread_id_from_filename "$session_file" || true)
+
+  if [[ -n "$thread_id" ]]; then
+    USAGE_THREAD_ID="$thread_id"
+    return 0
+  fi
+
+  return 1
+}
+
 # Extract model from Claude session file
 # Args: $1 = session_file
 # Output: model name (e.g., "claude-sonnet-4-20250514")
