@@ -281,6 +281,42 @@
             },
             "required": ["enabled", "threshold", "action", "ignore"]
           },
+          "usage_check": {
+            "type": "object",
+            "description": "Pre-flight API usage limit checking before each role execution",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable pre-flight usage checks (gracefully degrades if no credentials)"
+              },
+              "warn_threshold": {
+                "type": "integer",
+                "default": 70,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Log warning when usage exceeds this percentage"
+              },
+              "block_threshold": {
+                "type": "integer",
+                "default": 95,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Block execution when usage exceeds this percentage"
+              },
+              "wait_on_limit": {
+                "type": "boolean",
+                "default": false,
+                "description": "Wait for rate limit reset instead of stopping execution"
+              },
+              "max_wait_seconds": {
+                "type": "integer",
+                "default": 7200,
+                "minimum": 0,
+                "description": "Maximum seconds to wait for rate limit reset (default: 2 hours)"
+              }
+            }
+          },
           "roles": {
             "oneOf": [
               {

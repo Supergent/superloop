@@ -854,9 +854,9 @@ run_cmd() {
     local timeout_inactivity
     timeout_inactivity=$(jq -r '.timeouts.inactivity // 0' <<<"$loop_json")
 
-    # Usage check settings
+    # Usage check settings (enabled by default - gracefully degrades if no credentials)
     local usage_check_enabled
-    usage_check_enabled=$(jq -r '.usage_check.enabled // false' <<<"$loop_json")
+    usage_check_enabled=$(jq -r '.usage_check.enabled // true' <<<"$loop_json")
     local usage_warn_threshold
     usage_warn_threshold=$(jq -r '.usage_check.warn_threshold // 70' <<<"$loop_json")
     local usage_block_threshold
