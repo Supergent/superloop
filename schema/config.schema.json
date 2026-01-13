@@ -53,6 +53,23 @@
             },
             "required": ["mode", "commands"]
           },
+          "planning": {
+            "type": "object",
+            "description": "Configuration for the planning workflow",
+            "properties": {
+              "style": {
+                "type": "string",
+                "enum": ["supergent", "simple"],
+                "default": "supergent",
+                "description": "Planning style: 'supergent' uses PLAN.MD + PHASE files with atomic tasks, 'simple' uses a single plan.md"
+              },
+              "phases_enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Whether to use separate PHASE_*.MD files for task breakdown"
+              }
+            }
+          },
           "validation": {
             "type": "object",
             "properties": {

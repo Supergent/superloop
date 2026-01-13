@@ -20,6 +20,7 @@ build_role_prompt() {
   local changed_files_implementer="${19:-}"
   local changed_files_all="${20:-}"
   local tester_exploration_json="${21:-}"
+  local tasks_dir="${22:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -38,6 +39,7 @@ Context files (read as needed):
 - Checklist status: $checklist_status
 - Checklist remaining: $checklist_remaining
 - Evidence: $evidence_file
+- Tasks directory: $tasks_dir
 EOF
 
   if [[ -n "$reviewer_packet" ]]; then
@@ -53,6 +55,49 @@ EOF
   fi
   if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
+  fi
+
+  # Add phase files context for planner and implementer
+  if [[ -n "$tasks_dir" && -d "$tasks_dir" ]]; then
+    local phase_files
+    phase_files=$(find "$tasks_dir" -maxdepth 1 -name 'PHASE_*.MD' -type f 2>/dev/null | sort)
+    if [[ -n "$phase_files" ]]; then
+      echo "" >> "$prompt_file"
+      echo "Phase files (task breakdown):" >> "$prompt_file"
+      local active_phase=""
+      while IFS= read -r phase_file; do
+        local phase_name
+        phase_name=$(basename "$phase_file")
+        # Check if this phase has unchecked tasks
+        local unchecked_count=0
+        if [[ -f "$phase_file" ]]; then
+          unchecked_count=$(grep -c '\[ \]' "$phase_file" 2>/dev/null || echo "0")
+        fi
+        local checked_count=0
+        if [[ -f "$phase_file" ]]; then
+          checked_count=$(grep -c '\[x\]' "$phase_file" 2>/dev/null || echo "0")
+        fi
+        local status_marker=""
+        if [[ $unchecked_count -eq 0 && $checked_count -gt 0 ]]; then
+          status_marker=" (complete)"
+        elif [[ $unchecked_count -gt 0 ]]; then
+          if [[ -z "$active_phase" ]]; then
+            active_phase="$phase_file"
+            status_marker=" (ACTIVE - $unchecked_count tasks remaining)"
+          else
+            status_marker=" ($unchecked_count tasks remaining)"
+          fi
+        fi
+        echo "- $phase_file$status_marker" >> "$prompt_file"
+      done <<< "$phase_files"
+      if [[ -n "$active_phase" ]]; then
+        echo "" >> "$prompt_file"
+        echo "Active phase file: $active_phase" >> "$prompt_file"
+      fi
+    else
+      echo "" >> "$prompt_file"
+      echo "Phase files: (none yet - planner should create tasks/PHASE_1.MD)" >> "$prompt_file"
+    fi
   fi
 
   # Add tester exploration context if enabled for tester role

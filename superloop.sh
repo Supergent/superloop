@@ -1186,6 +1186,7 @@ build_role_prompt() {
   local changed_files_implementer="${19:-}"
   local changed_files_all="${20:-}"
   local tester_exploration_json="${21:-}"
+  local tasks_dir="${22:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -1204,6 +1205,7 @@ Context files (read as needed):
 - Checklist status: $checklist_status
 - Checklist remaining: $checklist_remaining
 - Evidence: $evidence_file
+- Tasks directory: $tasks_dir
 EOF
 
   if [[ -n "$reviewer_packet" ]]; then
@@ -1219,6 +1221,49 @@ EOF
   fi
   if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
+  fi
+
+  # Add phase files context for planner and implementer
+  if [[ -n "$tasks_dir" && -d "$tasks_dir" ]]; then
+    local phase_files
+    phase_files=$(find "$tasks_dir" -maxdepth 1 -name 'PHASE_*.MD' -type f 2>/dev/null | sort)
+    if [[ -n "$phase_files" ]]; then
+      echo "" >> "$prompt_file"
+      echo "Phase files (task breakdown):" >> "$prompt_file"
+      local active_phase=""
+      while IFS= read -r phase_file; do
+        local phase_name
+        phase_name=$(basename "$phase_file")
+        # Check if this phase has unchecked tasks
+        local unchecked_count=0
+        if [[ -f "$phase_file" ]]; then
+          unchecked_count=$(grep -c '\[ \]' "$phase_file" 2>/dev/null || echo "0")
+        fi
+        local checked_count=0
+        if [[ -f "$phase_file" ]]; then
+          checked_count=$(grep -c '\[x\]' "$phase_file" 2>/dev/null || echo "0")
+        fi
+        local status_marker=""
+        if [[ $unchecked_count -eq 0 && $checked_count -gt 0 ]]; then
+          status_marker=" (complete)"
+        elif [[ $unchecked_count -gt 0 ]]; then
+          if [[ -z "$active_phase" ]]; then
+            active_phase="$phase_file"
+            status_marker=" (ACTIVE - $unchecked_count tasks remaining)"
+          else
+            status_marker=" ($unchecked_count tasks remaining)"
+          fi
+        fi
+        echo "- $phase_file$status_marker" >> "$prompt_file"
+      done <<< "$phase_files"
+      if [[ -n "$active_phase" ]]; then
+        echo "" >> "$prompt_file"
+        echo "Active phase file: $active_phase" >> "$prompt_file"
+      fi
+    else
+      echo "" >> "$prompt_file"
+      echo "Phase files: (none yet - planner should create tasks/PHASE_1.MD)" >> "$prompt_file"
+    fi
   fi
 
   # Add tester exploration context if enabled for tester role
@@ -4381,41 +4426,164 @@ EOF
   cat > "$superloop_dir/roles/planner.md" <<'EOF'
 You are the Planner.
 
-Responsibilities:
-- Read the spec and iteration notes.
-- Maintain a concise, ordered plan aligned with the spec and current status.
-- Note blockers or unclear requirements in the plan.
-- If you identify files that will need to be created or modified, list them in a "Target Files" section.
+## Responsibilities
 
-Rules:
-- Do not modify code or run tests.
-- Do not output a promise tag.
-- Minimize plan churn: if the current plan still matches the spec/status, do not edit the plan file.
-- If updates are required, change only the minimum necessary (avoid rephrasing or reordering unchanged steps).
-- Avoid speculative blockers: keep "None" unless a concrete blocker appears; do not update blockers just to note verification completion.
-- Write only to the plan file path listed in context.
+### First Iteration (Initiation)
+
+If PLAN.MD does not exist or is empty, create the full feature plan:
+
+**Create PLAN.MD** with this structure:
+```markdown
+# {Feature Name}
+
+## Goal
+{Main objective - one clear sentence}
+
+## Scope
+- {What's included}
+- {What's included}
+
+## Non-Goals (this iteration)
+- {Explicitly out of scope}
+
+## Primary References
+- {Key file}: {purpose}
+
+## Architecture
+{High-level description of components and their interactions}
+
+## Decisions
+- {Key decision and rationale}
+
+## Risks / Constraints
+- {Known risk or constraint}
+
+## Phases
+- **Phase 1**: {Brief description}
+- **Phase 2**: {Brief description} (if applicable)
+```
+
+**Create tasks/PHASE_1.MD** with atomic tasks:
+```markdown
+# Phase 1 - {Phase Title}
+
+## P1.1 {Task Group Name}
+1. [ ] {Atomic task with file path}
+2. [ ] {Atomic task with file path}
+   1. [ ] {Sub-task}
+   2. [ ] {Sub-task}
+
+## P1.2 {Task Group Name}
+1. [ ] {Atomic task}
+2. [ ] {Atomic task}
+
+## P1.V Validation
+1. [ ] {Validation criterion}
+```
+
+### Subsequent Iterations
+
+1. Read the current PLAN.MD and active PHASE file.
+2. Review iteration notes for blockers or test failures.
+3. If current phase has unchecked tasks, no changes needed.
+4. If current phase is complete (all `[x]`), create the next PHASE file.
+5. Update PLAN.MD only if scope, decisions, or architecture must change.
+
+## Atomic Task Format
+
+Tasks use hierarchical numbering for deep referenceability:
+- `P1.1` = Phase 1, Task Group 1
+- `P1.1.3` = Phase 1, Task Group 1, Task 3
+- `P1.1.3.2` = Sub-task 2 of Task 3
+
+Each task MUST:
+- Be a single, verifiable unit of work
+- Include the target file path when modifying code
+- Use `[ ]` checkbox format for tracking
+- Be completable by the implementer in one pass
+
+Example:
+```markdown
+## P1.2 API Endpoint Setup
+1. [ ] Create `src/api/users.ts` with GET /users endpoint
+2. [ ] Add authentication middleware to `src/middleware/auth.ts`
+   1. [ ] Implement JWT validation
+   2. [ ] Add role-based access check
+3. [ ] Wire endpoint in `src/routes/index.ts`
+```
+
+## Rules
+
+- Do NOT modify code or run tests.
+- Do NOT output a promise tag.
+- Create the `tasks/` directory and PHASE files as needed.
+- Minimize churn: do not rewrite completed tasks or unchanged sections.
+- Keep tasks atomic: if a task feels too big, break it into sub-tasks.
+- Write PLAN.MD to the plan file path listed in context.
+- Write PHASE files to the tasks/ directory under the loop directory.
 EOF
 
   cat > "$superloop_dir/roles/implementer.md" <<'EOF'
 You are the Implementer.
 
-Responsibilities:
-- Read the spec and plan.
-- Implement the required changes in the codebase.
-- Summarize changes in the implementer report.
+## Responsibilities
 
-Rules:
-- Do not edit the spec or plan files.
-- Do not run tests.
-- Do not output a promise tag.
-- Minimize report churn: if the report already reflects the current state and no changes were made, do not edit it.
-- If updates are required, change only the minimum necessary (avoid rephrasing or reordering unchanged bullets).
+1. Read PLAN.MD for context, architecture, and decisions.
+2. Read the active PHASE file (in tasks/ directory) for current tasks.
+3. Work through unchecked tasks (`[ ]`) in order.
+4. Check off tasks as you complete them: change `[ ]` to `[x]`.
+5. Write implementation notes to the implementer report.
+
+## Workflow
+
+1. Find the first unchecked task in the active PHASE file.
+2. Implement that task completely.
+3. Mark it `[x]` in the PHASE file.
+4. Repeat until all tasks are checked or you hit a blocker.
+
+## Task Completion
+
+When you complete a task, update the PHASE file:
+
+Before:
+```markdown
+1. [ ] Create `src/api/users.ts` with GET /users endpoint
+```
+
+After:
+```markdown
+1. [x] Create `src/api/users.ts` with GET /users endpoint
+```
+
+## Rules
+
+- Do NOT edit the spec or PLAN.MD (only the planner modifies those).
+- Do NOT run tests (the wrapper handles that).
+- Do NOT output a promise tag.
+- DO update PHASE files to check off completed tasks.
+- Work through tasks in order unless blocked.
+- If blocked, note the blocker and move to the next unblocked task.
 - Write your summary to the implementer report file path listed in context.
-- Always include a "Files Touched" section in your report listing every file you created, modified, or deleted. Use this format:
-  ## Files Touched
-  - CREATED: path/to/new/file.ts
-  - MODIFIED: path/to/changed/file.ts
-  - DELETED: path/to/removed/file.ts
+
+## Implementer Report Format
+
+Always include these sections:
+
+```markdown
+## Tasks Completed
+- P1.2.1: Created src/api/users.ts
+- P1.2.2: Added auth middleware
+
+## Files Touched
+- CREATED: src/api/users.ts
+- MODIFIED: src/middleware/auth.ts
+
+## Blockers (if any)
+- P1.2.3: Blocked on missing database schema
+
+## Notes
+- Additional context for the next iteration
+```
 EOF
 
   cat > "$superloop_dir/roles/tester.md" <<'EOF'
@@ -4766,7 +4934,8 @@ run_cmd() {
     local changed_files_all="$loop_dir/changed-files-all.txt"
     local usage_file="$loop_dir/usage.jsonl"
 
-    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir"
+    local tasks_dir="$loop_dir/tasks"
+    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
 
     local -a roles=()
@@ -5092,7 +5261,8 @@ run_cmd() {
           "$changed_files_planner" \
           "$changed_files_implementer" \
           "$changed_files_all" \
-          "$tester_exploration_json"
+          "$tester_exploration_json" \
+          "$tasks_dir"
 
         if [[ "$role" == "reviewer" && "$reviewer_packet_enabled" == "true" && -n "$reviewer_packet" ]]; then
           write_reviewer_packet \
