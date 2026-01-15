@@ -227,7 +227,9 @@ agent-browser screenshot <path>  # Capture evidence
 
 **Why this matters for your spec**:
 - Acceptance criteria become Tester's checklist
-- "When X, then Y" format is directly testable
+- Given/When/Then format maps directly to test cases
+- Tester verifies each AC has a corresponding test
+- Missing test coverage = Tester reports gap = blocks completion
 - Edge cases you mention = things Tester verifies
 
 ### 4. Reviewer
@@ -357,13 +359,20 @@ Your spec must work for machines, not just humans:
          "REQ-3: Return 401 with error message on invalid credentials"
    ```
 
-2. **Testable Acceptance Criteria**
+2. **Testable Acceptance Criteria (Given/When/Then)**
    ```
    BAD:  "Authentication should work correctly"
-   GOOD: "AC-1: When valid credentials submitted, then JWT returned with 200"
-         "AC-2: When invalid password submitted, then 401 returned"
-         "AC-3: When missing email field, then 400 returned with validation error"
+
+   GOOD (each AC becomes a test case):
+   "AC-1: Given valid credentials, when POST /login, then return 200 with JWT"
+   "AC-2: Given invalid password, when POST /login, then return 401"
+   "AC-3: Given missing email field, when POST /login, then return 400 with validation error"
+   "AC-4: Given expired token, when GET /protected, then return 401"
    ```
+
+   **Why Given/When/Then?** Each acceptance criterion maps directly to a test.
+   The Tester will verify every AC has a corresponding test. Missing coverage
+   blocks completion.
 
 3. **Explicit Technical Approach**
    ```
@@ -669,11 +678,18 @@ Planner uses this to structure PLAN.MD.]
 
 ## Acceptance Criteria
 
-[Tester verifies these. Reviewer checks these for completion.]
+[Each AC maps to a test case. Use Given/When/Then format.
+Tester verifies every AC has a corresponding test.]
 
-- [ ] AC-1: When [action], then [expected result]
-- [ ] AC-2: When [action], then [expected result]
-- [ ] AC-3: When [error condition], then [error handling]
+- [ ] AC-1: Given [precondition], when [action], then [expected result]
+- [ ] AC-2: Given [precondition], when [action], then [expected result]
+- [ ] AC-3: Given [error condition], when [action], then [error handling]
+
+## Test Requirements
+
+All acceptance criteria MUST have corresponding automated tests.
+The Tester will verify test coverage and report gaps.
+Missing AC coverage blocks loop completion.
 
 ## Constraints
 

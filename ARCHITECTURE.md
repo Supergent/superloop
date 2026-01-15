@@ -134,19 +134,49 @@ The Planner follows these rules:
 
 ## Why Tester as Separate Role?
 
-The Tester doesn't just run tests - it analyzes results:
+The Tester doesn't just run tests - it analyzes results AND verifies coverage:
 
 ```
 Automated tests → Tester reads output → test-report.md
+                  Tester reads spec → AC coverage check
                   Tester explores UI → findings
                   Tester identifies gaps → recommendations
 ```
 
 **Rationale:**
 - **Analysis, not just execution** - understands WHY tests failed
+- **AC coverage verification** - ensures each acceptance criterion has a test
 - **Exploratory testing** - catches things automated tests miss
 - **Reporting** - provides human-readable assessment
 - **Browser exploration** - can manually test UI when enabled
+
+## Why Spec-Driven Testing?
+
+The Implementer writes tests, but the Tester verifies they cover the spec.
+
+```
+spec.md (you write):
+  AC-1: Given valid credentials, when POST /login, then return 200 with JWT
+  AC-2: Given invalid password, when POST /login, then return 401
+
+Tester report:
+  ## AC Coverage
+  - AC-1: ✓ Covered by test_login_success
+  - AC-2: ✗ NO TEST - missing coverage
+```
+
+**Why this matters:**
+- **Closes the loop** - tests come from requirements, not implementation
+- **Prevents blind spots** - Implementer might not test what they assumed
+- **Blocks completion** - Reviewer sees missing coverage, won't approve
+- **Traceability** - clear mapping from requirement → test
+
+**The flow:**
+1. You write testable ACs in Given/When/Then format
+2. Planner creates tasks including "write test for AC-1"
+3. Implementer writes tests
+4. Tester verifies coverage: "Is there a test for each AC?"
+5. Reviewer sees coverage report, blocks if gaps exist
 
 ## Why Stuck Detection?
 
