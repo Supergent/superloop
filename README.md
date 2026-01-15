@@ -45,7 +45,7 @@ Each iteration runs four roles in sequence:
 |------|-------|--------|---------|
 | **Planner** | spec.md | PLAN.MD, PHASE_*.MD | Decomposes requirements into atomic tasks |
 | **Implementer** | PLAN.MD, PHASE_*.MD | Code changes | Executes tasks, checks them off |
-| **Tester** | Test results | test-report.md | Validates implementation, reports issues |
+| **Tester** | Test results + spec | test-report.md | Analyzes failures, verifies AC coverage |
 | **Reviewer** | All artifacts | review.md | Approves completion or requests changes |
 
 The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>` and all gates pass.
@@ -159,6 +159,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the rationale behind Superloop's desi
 - Why one phase at a time
 - Why gates and the promise system
 - Why atomic tasks with checkboxes
+- Why spec-driven testing (AC coverage verification)
 
 ## License
 
