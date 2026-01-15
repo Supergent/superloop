@@ -726,3 +726,20 @@ export const superloopRegistry = {
   Divider,
   EmptyState,
 };
+
+// ===================
+// Unified Registry (Superloop + Tool UI)
+// ===================
+
+import { toolUIRegistry } from "../tool-ui/index.js";
+
+/**
+ * Unified component registry combining Superloop and Tool UI components.
+ *
+ * This registry can render both Superloop-specific components (GateStatus, TaskList, etc.)
+ * and Tool UI components (CodeBlock, Terminal, ApprovalCard, Image, etc.)
+ */
+export const unifiedRegistry = {
+  ...superloopRegistry,
+  ...toolUIRegistry,
+};

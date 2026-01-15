@@ -9,6 +9,13 @@ import { resolveLoopDir, resolveLoopsRoot, resolvePrototypesRoot } from "./lib/p
 import { buildPrototypesPayload } from "./lib/payload.js";
 import { watchPaths } from "./lib/watch.js";
 import { loadSuperloopContext } from "./liquid/context-loader.js";
+import {
+  listViews,
+  loadView,
+  saveVersion,
+  setActiveVersion,
+  resolveLiquidRoot,
+} from "./liquid/storage.js";
 
 export type DevServerOptions = {
   repoRoot: string;
@@ -96,14 +103,27 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
       if (req.method === "POST") {
         let body = "";
         req.on("data", (chunk) => (body += chunk));
-        req.on("end", () => {
+        req.on("end", async () => {
           try {
-            overrideTree = JSON.parse(body);
+            const data = JSON.parse(body);
+            overrideTree = data.tree ?? data;
+
+            // Optionally save as a versioned view
+            if (data.save && data.viewName) {
+              await saveVersion({
+                repoRoot: options.repoRoot,
+                viewName: data.viewName,
+                tree: data.tree ?? data,
+                prompt: data.prompt,
+                description: data.description,
+              });
+            }
+
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true }));
-          } catch {
+          } catch (err) {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Invalid JSON" }));
+            res.end(JSON.stringify({ error: String(err) }));
           }
         });
         return;
@@ -114,6 +134,90 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
         res.end(JSON.stringify({ ok: true }));
         return;
       }
+    }
+
+    // Liquid Dashboard API: List all views
+    if (url.pathname === "/api/liquid/views" && req.method === "GET") {
+      try {
+        const views = await listViews(options.repoRoot);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(views));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // Liquid Dashboard API: Get/Create view versions
+    const viewMatch = url.pathname.match(/^\/api\/liquid\/views\/([^/]+)$/);
+    if (viewMatch) {
+      const viewName = decodeURIComponent(viewMatch[1]);
+
+      if (req.method === "GET") {
+        try {
+          const view = await loadView({ repoRoot: options.repoRoot, viewName });
+          if (view) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(view));
+          } else {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "View not found" }));
+          }
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+        return;
+      }
+
+      if (req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", async () => {
+          try {
+            const data = JSON.parse(body);
+            const version = await saveVersion({
+              repoRoot: options.repoRoot,
+              viewName,
+              tree: data.tree,
+              prompt: data.prompt,
+              description: data.description,
+              parentVersion: data.parentVersion,
+            });
+            res.writeHead(201, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(version));
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: String(err) }));
+          }
+        });
+        return;
+      }
+    }
+
+    // Liquid Dashboard API: Set active version
+    const activeMatch = url.pathname.match(/^\/api\/liquid\/views\/([^/]+)\/active$/);
+    if (activeMatch && req.method === "PUT") {
+      const viewName = decodeURIComponent(activeMatch[1]);
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          await setActiveVersion({
+            repoRoot: options.repoRoot,
+            viewName,
+            versionId: data.versionId ?? null,
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
+      return;
     }
 
     // Liquid Dashboard: Serve HTML
@@ -134,6 +238,19 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
       }
       const contentType = url.pathname.endsWith(".map") ? "application/json" : "text/javascript";
       res.writeHead(200, { "Content-Type": contentType });
+      res.end(await fs.readFile(filePath));
+      return;
+    }
+
+    // Serve CSS
+    if (url.pathname === "/styles.css") {
+      const filePath = path.join(distWebRoot, "styles.css");
+      if (!(await fileExists(filePath))) {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("CSS not ready. Waiting for build...");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/css" });
       res.end(await fs.readFile(filePath));
       return;
     }
@@ -187,13 +304,17 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
   };
 
   const prototypesRoot = resolvePrototypesRoot(options.repoRoot);
+  const liquidRoot = resolveLiquidRoot(options.repoRoot);
   const loopsRoot = resolveLoopsRoot(options.repoRoot);
   const loopDir = options.loopId ? resolveLoopDir(options.repoRoot, options.loopId) : undefined;
 
   await fs.mkdir(prototypesRoot, { recursive: true });
+  await fs.mkdir(liquidRoot, { recursive: true });
 
   const dataWatcher = watchPaths(
-    [prototypesRoot, loopsRoot, loopDir].filter((value): value is string => Boolean(value)),
+    [prototypesRoot, liquidRoot, loopsRoot, loopDir].filter((value): value is string =>
+      Boolean(value),
+    ),
     () => {
       void broadcast();
     },

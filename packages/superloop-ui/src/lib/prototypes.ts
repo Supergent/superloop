@@ -1,9 +1,27 @@
+/**
+ * @deprecated ASCII Prototype System (Legacy)
+ *
+ * This module is deprecated in favor of the Liquid Interface versioning system.
+ * Use `@superloop-ui/liquid/storage` instead for versioned UI views.
+ *
+ * The ASCII prototype system stored text-based mockups. The new liquid system
+ * stores typed UITree JSON with full component validation and version history.
+ *
+ * Migration path:
+ * - Use `saveVersion()` from `./liquid/storage.js` to save UITrees
+ * - Use `loadView()` to load versioned views
+ * - Use the Dashboard's version selector for history navigation
+ *
+ * This file is kept for backwards compatibility but will be removed in a future version.
+ */
+
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import { fileExists, readJson } from "./fs-utils.js";
 import { resolvePrototypesRoot } from "./paths.js";
 
+/** @deprecated Use ViewVersion from ./liquid/storage.js */
 export type PrototypeVersion = {
   id: string;
   filename: string;
@@ -12,6 +30,7 @@ export type PrototypeVersion = {
   content: string;
 };
 
+/** @deprecated Use LiquidView from ./liquid/storage.js */
 export type PrototypeView = {
   name: string;
   description?: string;

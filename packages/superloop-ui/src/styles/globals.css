@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Background colors - matching existing design tokens */
+    --background: 240 10% 4%; /* #0a0a0a */
+    --foreground: 0 0% 98%; /* #fafafa */
+
+    /* Card */
+    --card: 240 6% 8%; /* #141414 */
+    --card-foreground: 0 0% 98%;
+
+    /* Popover */
+    --popover: 240 6% 8%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Primary */
+    --primary: 217 91% 60%; /* #3b82f6 - blue */
+    --primary-foreground: 0 0% 98%;
+
+    /* Secondary */
+    --secondary: 240 4% 16%; /* #262626 */
+    --secondary-foreground: 0 0% 98%;
+
+    /* Muted */
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%; /* #a1a1aa */
+
+    /* Accent */
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 98%;
+
+    /* Destructive (error) */
+    --destructive: 0 84% 60%; /* #ef4444 */
+    --destructive-foreground: 0 0% 98%;
+
+    /* Success */
+    --success: 142 76% 36%; /* #22c55e */
+    --success-foreground: 0 0% 98%;
+
+    /* Warning */
+    --warning: 45 93% 47%; /* #eab308 */
+    --warning-foreground: 0 0% 0%;
+
+    /* Border */
+    --border: 240 4% 16%; /* #262626 */
+    --input: 240 4% 16%;
+    --ring: 217 91% 60%;
+
+    /* Radius */
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+}
+
+/* Scrollbar styling for dark theme */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted));
+    border-radius: 4px;
+  }
+}

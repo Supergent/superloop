@@ -1,5 +1,16 @@
+/**
+ * @deprecated ASCII Template System (Legacy)
+ *
+ * This module is deprecated. Use the Liquid Interface system instead.
+ * The liquid system provides typed UITree components with full validation.
+ *
+ * See: ./liquid/catalog.ts for available components
+ * See: ./liquid/storage.ts for versioned view storage
+ */
+
 const FRAME_WIDTH = 78;
 
+/** @deprecated Use UITree components from ./liquid/catalog.ts */
 export function buildPlaceholder(viewName: string, description?: string): string {
   const lines = [
     `SUPERLOOP UI: ${viewName}`,

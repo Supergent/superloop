@@ -1,3 +1,17 @@
+/**
+ * @deprecated WorkGrid (ASCII Prototype Viewer) - Legacy
+ *
+ * This component is deprecated. Use the Liquid Dashboard instead:
+ * - Navigate to /liquid for the new dashboard
+ * - Use @superloop-ui/liquid/Dashboard for programmatic access
+ *
+ * The liquid dashboard provides:
+ * - Typed UITree components (not ASCII)
+ * - Version history with timeline navigation
+ * - Live data binding with superloop context
+ * - Full component validation
+ */
+
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 

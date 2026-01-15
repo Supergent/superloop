@@ -457,6 +457,38 @@ curl -X POST http://localhost:3333/api/liquid/override \
 
 Or if using WebFetch, make a POST request to the override endpoint.
 
+## Saving as a Versioned View (Recommended)
+
+To save the view with version history for future reference and iteration:
+
+```bash
+curl -X POST http://localhost:3333/api/liquid/override \
+  -H "Content-Type: application/json" \
+  -d '{
+    "save": true,
+    "viewName": "test-failures",
+    "prompt": "Show me what tests are failing",
+    "tree": {"root":"main","elements":{...}}
+  }'
+```
+
+Or save directly to a named view:
+
+```bash
+curl -X POST http://localhost:3333/api/liquid/views/test-failures \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tree": {"root":"main","elements":{...}},
+    "prompt": "Show me what tests are failing"
+  }'
+```
+
+**Benefits of saving versions:**
+- Track design evolution over time
+- Roll back to previous versions
+- See which prompt generated each view
+- Build on previous iterations
+
 ## Clearing the Override
 
 To return to default view:
