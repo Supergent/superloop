@@ -1,36 +1,81 @@
 # Changelog
 
+## 0.4.0 - 2026-01-14
+
+### Changed
+- **Repository cleanup**: Removed 17,000+ lines of cruft
+  - Deleted `tools/claude-code-glm/` (21 markdown files, benchmark tooling)
+  - Deleted `benchmarks/` directory and results
+  - Deleted `prose/` submodule (OpenProse integration)
+  - Deleted `feat/` directory (stale feature work)
+  - Deleted redundant spec-authoring system (`.superloop/skills/`, `plan-session.sh`)
+  - Deleted stale docs (`GETTING_STARTED.md`, `OPENPROSE_INTEGRATION.md`, `PRODUCTIZATION_PHASE_1.MD`)
+  - Cleaned `.superloop/config.json` (removed completed loops)
+- **README rewrite**: Clear architecture diagram, accurate documentation
+
+### Removed
+- OpenProse integration (`prose-author` and `openprose` roles)
+- Runner-agnostic spec authoring (consolidated to Claude Code skill)
+- Benchmark framework and results
+
+## 0.3.1 - 2026-01-13
+
+### Added
+- Pre-flight usage check with configurable thresholds (warn at 70%, block at 95%)
+- Rate limit handling with automatic pause and 100% resume reliability
+- Per-role runner selection for multi-model orchestration
+- `list` command to show configured loops and their status
+
+### Changed
+- Usage check enabled by default in schema
+
 ## 0.3.0 - 2026-01-05
-- Rename the main wrapper script to `superloop.sh` (breaking change).
+
+### Changed
+- Rename main wrapper script to `superloop.sh` (breaking change)
 
 ## 0.2.0 - 2026-01-05
-- Replace codex-specific config with a generic runner abstraction (breaking config change).
-- Add placeholder expansion for runner arguments and prompt mode selection.
-- Split the wrapper into src modules with a build script (single-file output preserved).
-- Rename branding to Supergent.
+
+### Changed
+- Replace codex-specific config with generic runner abstraction (breaking config change)
+- Add placeholder expansion for runner arguments and prompt mode selection
+- Split wrapper into `src/` modules with build script (single-file output preserved)
+- Rename branding to Supergent
 
 ## 0.1.5 - 2026-01-05
-- Fix approval decision updates so empty notes do not blank approval.json.
+
+### Fixed
+- Approval decision updates no longer blank `approval.json` with empty notes
 
 ## 0.1.4 - 2026-01-05
-- Add per-role timeout support to prevent hanging Codex runs.
-- Add reviewer packet generation to reduce reviewer context load.
+
+### Added
+- Per-role timeout support to prevent hanging runs
+- Reviewer packet generation to reduce reviewer context load
 
 ## 0.1.3 - 2026-01-05
-- Add optional approval gating with `approve` command and decision logs.
-- Include approval/decision artifacts in run summaries and reports.
+
+### Added
+- Optional approval gating with `approve` command and decision logs
+- Approval/decision artifacts in run summaries and reports
 
 ## 0.1.2 - 2026-01-05
-- Add `status --summary` to show latest gate/evidence snapshot from run summaries.
-- Add CI report generation and upload of `report.html` artifact.
+
+### Added
+- `status --summary` for gate/evidence snapshot from run summaries
+- CI report generation and `report.html` artifact upload
 
 ## 0.1.1 - 2026-01-05
-- Add observability artifacts (events, run summary, timeline).
-- Add `report` command to generate HTML loop reports.
-- Expand evidence manifests with artifact hashes/mtimes and gate file metadata.
+
+### Added
+- Observability artifacts (events, run summary, timeline)
+- `report` command to generate HTML loop reports
+- Evidence manifests with artifact hashes/mtimes and gate file metadata
 
 ## 0.1.0 - 2026-01-05
-- Add `--version` flag and version output.
-- Add config schema and `validate` command.
-- Add CI workflow for validation and dry-run smoke check.
-- Add MIT license.
+
+### Added
+- `--version` flag and version output
+- Config schema and `validate` command
+- CI workflow for validation and dry-run smoke check
+- MIT license

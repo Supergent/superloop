@@ -1,211 +1,157 @@
-# Supergent Runner Wrapper
+# Superloop
 
-This is a runner-driven CLI wrapper that runs a multi-role loop (planner, implementer, tester, reviewer) with enforced gates for checklists and tests.
-
-## Quick start
-
-1) Initialize `.superloop` in your repo:
-
-```bash
-./superloop.sh init --repo /path/to/repo
-```
-
-2) Edit the spec:
+A bash orchestration harness that runs AI coding agents in an iterative loop until a feature is complete.
 
 ```
-/path/to/repo/.superloop/spec.md
+┌──────────────────────────────────────────────────────────────────┐
+│                      HUMAN-IN-THE-LOOP                           │
+│  Constructor (/construct-superloop) → spec.md + config.json      │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    AUTOMATED (superloop run)                     │
+│                                                                  │
+│   Planner ──► Implementer ──► Tester ──► Reviewer ──┐            │
+│      ▲                                              │            │
+│      └──────────────────────────────────────────────┘            │
+│                    (repeats until complete)                      │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-3) Configure loops, tests, and checklists:
+## Quick Start
+
+**1. Create a spec** (in Claude Code):
 
 ```
-/path/to/repo/.superloop/config.json
+/construct-superloop
 ```
 
-4) Run the loop:
+This guides you through creating `spec.md` and `config.json`.
+
+**2. Run the loop:**
 
 ```bash
 ./superloop.sh run --repo /path/to/repo
 ```
 
-For philosophy, principles, and a deeper tutorial, see `GETTING_STARTED.md`.
+The loop runs until all gates pass: promise emitted, tests pass, checklists complete, evidence exists.
 
-Note: the legacy `.superloop/` workspace is deprecated. Use `.superloop/` only; if you still have `.superloop/`, migrate manually by re-initializing and copying the spec/config, then remove `.superloop/` once verified.
+## How It Works
 
-## Config overview
+Each iteration runs four roles in sequence:
 
-`.superloop/config.json` controls the loop and runner (examples use `codex exec`). Example:
+| Role | Input | Output | Purpose |
+|------|-------|--------|---------|
+| **Planner** | spec.md | PLAN.MD, PHASE_*.MD | Decomposes requirements into atomic tasks |
+| **Implementer** | PLAN.MD, PHASE_*.MD | Code changes | Executes tasks, checks them off |
+| **Tester** | Test results | test-report.md | Validates implementation, reports issues |
+| **Reviewer** | All artifacts | review.md | Approves completion or requests changes |
+
+The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>` and all gates pass.
+
+## Config
+
+`.superloop/config.json` controls runners and loops:
 
 ```json
 {
   "runner": {
     "command": ["codex", "exec"],
-    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+    "args": ["--full-auto", "-C", "{repo}", "-"],
     "prompt_mode": "stdin"
   },
-  "loops": [
-    {
-      "id": "initiation",
-      "spec_file": ".superloop/spec.md",
-      "max_iterations": 20,
-      "completion_promise": "INITIATION_READY",
-      "checklists": ["feat/my-feature/initiation/tasks/PHASE_1.MD"],
-      "tests": {
-        "mode": "on_promise",
-        "commands": ["npm test"]
-      },
-      "evidence": {
-        "enabled": true,
-        "require_on_completion": true,
-        "artifacts": ["README.md", "src/index.ts"]
-      },
-      "approval": {
-        "enabled": false,
-        "require_on_completion": true
-      },
-      "reviewer_packet": {
-        "enabled": true
-      },
-      "timeouts": {
-        "enabled": true,
-        "default": 900,
-        "planner": 300,
-        "implementer": 900,
-        "tester": 300,
-        "reviewer": 1200
-      },
-      "stuck": {
-        "enabled": true,
-        "threshold": 3,
-        "action": "report_and_stop",
-        "ignore": [
-          ".superloop/**",
-          ".git/**",
-          "node_modules/**",
-          "dist/**",
-          "build/**",
-          "coverage/**",
-          ".next/**",
-          ".venv/**",
-          ".tox/**",
-          ".cache/**"
-        ]
-      },
-      "roles": ["planner", "implementer", "tester", "reviewer"]
-    }
-  ]
+  "loops": [{
+    "id": "my-feature",
+    "spec_file": ".superloop/specs/my-feature.md",
+    "completion_promise": "READY",
+    "max_iterations": 20,
+    "tests": {
+      "mode": "on_promise",
+      "commands": ["npm test"]
+    },
+    "roles": ["planner", "implementer", "tester", "reviewer"]
+  }]
 }
 ```
 
-## Outputs
-
-Each loop writes to:
-
-```
-.superloop/loops/<loop-id>/
-  plan.md
-  iteration_notes.md
-  implementer.md
-  review.md
-  test-output.txt
-  test-status.json
-  validation-status.json
-  validation-results.json
-  checklist-status.json
-  checklist-remaining.md
-  evidence.json
-  reviewer-packet.md
-  approval.json
-  gate-summary.txt
-  events.jsonl
-  decisions.jsonl
-  decisions.md
-  run-summary.json
-  timeline.md
-  report.html
-  validation/
-  last_messages/
-  logs/iter-N/
-```
+See `schema/config.schema.json` for the full schema.
 
 ## Commands
 
-- `init`: Create `.superloop/` scaffolding.
-- `run`: Start or resume the loop.
-- `status`: Print `.superloop/state.json`.
-- `approve`: Record an approval or rejection for a pending approval gate.
-- `cancel`: Remove `.superloop/state.json`.
-- `run --fast`: Use `runner.fast_args` if provided (falls back to `runner.args`).
-- `run --dry-run`: Read-only status summary from existing artifacts; no runner calls.
-- `status --summary`: Print latest gate/evidence snapshot from `run-summary.json` (use `--loop` to pick a loop).
-- `validate`: Validate a config file against `schema/config.schema.json`.
-- `report`: Generate an HTML report from loop artifacts (events, summary, timeline).
-- `report --out FILE`: Write the report to a custom path.
-- `--version`: Print the current wrapper version.
-- `self-check.sh --repo DIR --loop ID [--fast]`: Run a churn smoke check (two consecutive runs must leave plan/report files unchanged).
+| Command | Description |
+|---------|-------------|
+| `init --repo DIR` | Create `.superloop/` scaffolding |
+| `run --repo DIR` | Start or resume the loop |
+| `run --dry-run` | Read-only status from existing artifacts |
+| `run --fast` | Use `runner.fast_args` if configured |
+| `status --repo DIR` | Print current state |
+| `status --summary` | Print gate/evidence snapshot |
+| `approve --loop ID` | Record approval for pending gate |
+| `cancel` | Stop and clear state |
+| `validate` | Check config against schema |
+| `report --loop ID` | Generate HTML report |
+| `--version` | Print version |
 
-## Notes
+## Gates
 
-- The loop only completes when the reviewer outputs the exact promise AND all gates pass.
-- Tests can run `every` iteration or only `on_promise` (default).
-- Checklist validation ignores code blocks and treats missing files as failures.
-- In `on_promise` mode, tests also run once checklists are complete to avoid deadlock.
-- The tester writes `test-report.md` and the reviewer writes `review.md` each iteration.
-- Gate summaries are written to `gate-summary.txt` each iteration (promise/tests/validation/checklists/evidence/stuck).
-- Anti-churn: role prompts discourage unnecessary edits, and the wrapper restores plan/report files when content is unchanged to avoid rewrite noise.
-- Evidence manifests are written to `evidence.json` when enabled and include artifact hashes/mtimes and gate-produced file metadata.
-- Reviewer packets are written to `reviewer-packet.md` when enabled to summarize gates, tests, checklists, and evidence for the reviewer.
-- Validation preflight runs without external deps; web smoke tests use Playwright when enabled (can be marked optional per loop).
-- Optional per-role timeouts can stop a run if a role exceeds the configured limit.
-- Optional approval gating can pause completion until a human approves (records decisions in `decisions.jsonl`/`decisions.md`).
-- Stuck detection stops the loop after a configurable number of no-progress iterations and writes `stuck-report.md`.
-- Runner prompt mode controls whether prompts are piped via stdin or provided as a file.
-- Runner args support `{repo}`, `{prompt_file}`, and `{last_message_file}` placeholders.
+The loop only completes when ALL gates pass:
+
+- **Promise**: Reviewer outputs exact `completion_promise` tag
+- **Tests**: All test commands exit 0
+- **Checklists**: All `[ ]` items checked `[x]`
+- **Evidence**: All artifact files exist (with hash verification)
+- **Approval**: Human approval recorded (if enabled)
+
+## Outputs
+
+Each loop writes to `.superloop/loops/<loop-id>/`:
+
+```
+plan.md              # Current plan
+implementer.md       # Implementation summary
+test-report.md       # Test analysis
+review.md            # Reviewer assessment
+test-status.json     # Pass/fail status
+evidence.json        # Artifact hashes
+gate-summary.txt     # Gate statuses
+events.jsonl         # Event stream
+timeline.md          # Human-readable timeline
+report.html          # Visual report
+logs/iter-N/         # Per-iteration logs
+```
+
+## Directory Structure
+
+```
+superloop/
+├── superloop.sh           # Main executable
+├── src/                   # Bash modules (12 files)
+├── schema/                # Config JSON schema
+├── scripts/
+│   ├── build.sh           # Assembles src/ into superloop.sh
+│   └── validation/        # Smoke test utilities
+├── packages/superloop-ui/ # UI framework (TypeScript/React)
+├── .superloop/
+│   ├── config.json        # Loop configuration
+│   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
+│   └── templates/         # Spec template
+└── .claude/skills/        # Claude Code skills (/construct-superloop)
+```
 
 ## Development
 
-- Edit `src/*.sh` and run `scripts/build.sh` to regenerate `superloop.sh`.
-- CI checks that the generated `superloop.sh` is up to date.
+```bash
+# Edit modules
+vim src/*.sh
 
-## Benchmarks
+# Rebuild
+./scripts/build.sh
 
-This repository includes comprehensive benchmark results comparing **claude-code-glm** (Claude Code enhanced with Cerebras + Mantic + Relace running in Orb VM) against **vanilla Claude Code** on macOS.
+# Verify (CI checks this)
+git diff --exit-code superloop.sh
+```
 
-### Key Results
+## License
 
-**GLM achieved a 5.9x speedup over vanilla Claude Code with perfect quality.**
-
-| Metric | Vanilla | GLM | Winner |
-|--------|---------|-----|--------|
-| **Time** | 132 seconds | 22.24 seconds | **GLM (5.9x faster)** |
-| **Total Tokens** | 1,182,342 | 925,728 | **GLM (21.7% fewer)** |
-| **Total Cost** | $8.31 | $3.53 | **GLM (58% cheaper)** |
-| **Quality** | Perfect | Perfect | Tie |
-
-*Total cost includes API cost + developer time at $200/hour*
-
-### Test Details
-
-- **Task:** Multi-location refactor (rename `CheckInputScripts` → `ValidateInputScripts`)
-- **Codebase:** Bitcoin Core v26.0 (~500K LOC)
-- **Test Date:** January 9, 2026
-- **Results:** Both systems achieved 100% accuracy (6 files, 32 renames, zero errors)
-
-### Performance Highlights
-
-- **Cerebras throughput:** ~3,000 tokens/second (2x advertised performance)
-- **Rate limiting:** Hit Cerebras API limits mid-task, proving extreme speed
-- **Time breakdown:** Reading 29%, Editing 25%, Overhead 46%
-- **Annual savings:** $2,485 for 10 refactoring tasks per week
-
-### Documentation
-
-- **[BENCHMARK-RESULTS-FINAL.md](BENCHMARK-RESULTS-FINAL.md)** - Complete analysis and findings
-- **[benchmarks/](benchmarks/)** - Full framework, scripts, and detailed results
-  - Test scenarios and automation
-  - Token usage analysis
-  - Throughput analysis
-  - Methodology documentation
-
-**Conclusion:** GLM provides clear, measurable productivity gains worth the infrastructure investment.
+MIT
