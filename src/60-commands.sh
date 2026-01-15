@@ -675,16 +675,21 @@ run_cmd() {
   }
 
   # For backward compatibility, set up default runner variables
-  local -a runner_command=("${default_runner_command[@]}")
-  local -a runner_args=("${default_runner_args[@]}")
-  local -a runner_fast_args=("${default_runner_fast_args[@]}")
+  # Use ${array[@]+"${array[@]}"} to safely handle empty arrays with set -u
+  local -a runner_command=()
+  [[ ${#default_runner_command[@]} -gt 0 ]] && runner_command=("${default_runner_command[@]}")
+  local -a runner_args=()
+  [[ ${#default_runner_args[@]} -gt 0 ]] && runner_args=("${default_runner_args[@]}")
+  local -a runner_fast_args=()
+  [[ ${#default_runner_fast_args[@]} -gt 0 ]] && runner_fast_args=("${default_runner_fast_args[@]}")
   local runner_prompt_mode="$default_runner_prompt_mode"
 
   if [[ "${dry_run:-0}" -ne 1 && ${#runner_command[@]} -gt 0 ]]; then
     need_exec "${runner_command[0]}"
   fi
 
-  local -a runner_active_args=("${runner_args[@]}")
+  local -a runner_active_args=()
+  [[ ${#runner_args[@]} -gt 0 ]] && runner_active_args=("${runner_args[@]}")
   if [[ "${fast_mode:-0}" -eq 1 ]]; then
     if [[ ${#runner_fast_args[@]} -gt 0 ]]; then
       runner_active_args=("${runner_fast_args[@]}")
@@ -856,14 +861,43 @@ run_cmd() {
           fi
           ;;
         claude)
-          # Claude Code doesn't have CLI flags for thinking.
-          # Thinking is controlled via:
-          # - Tab key toggle (interactive)
-          # - Trigger words in prompts: "think" < "think hard" < "think harder" < "ultrathink"
-          # - Settings in ~/.claude/settings.json
-          # For now, we don't inject flags. Users should use trigger words in spec/prompts.
-          # TODO: Add prompt injection for thinking trigger words based on level
+          # Claude Code thinking is controlled via MAX_THINKING_TOKENS env var.
+          # Use get_thinking_env() to get the env var prefix for command execution.
+          # No CLI flags for thinking.
           ;;
+      esac
+    }
+
+    # Get environment variables for thinking (returns VAR=value to prefix command)
+    # Used for Claude where thinking is controlled via MAX_THINKING_TOKENS env var
+    get_thinking_env() {
+      local runner_type="$1"  # "codex" or "claude"
+      local thinking="$2"     # none|minimal|low|standard|high|max
+
+      if [[ -z "$thinking" || "$thinking" == "null" ]]; then
+        return 0
+      fi
+
+      case "$runner_type" in
+        claude)
+          # Map thinking level to MAX_THINKING_TOKENS (per-request budget)
+          # - 0 = disabled
+          # - 1024 = minimum
+          # - 32000 = recommended max for real-time (above this, use batch)
+          local tokens=""
+          case "$thinking" in
+            none)     tokens="0" ;;
+            minimal)  tokens="1024" ;;
+            low)      tokens="4096" ;;
+            standard) tokens="10000" ;;
+            high)     tokens="20000" ;;
+            max)      tokens="32000" ;;
+          esac
+          if [[ -n "$tokens" ]]; then
+            echo "MAX_THINKING_TOKENS=$tokens"
+          fi
+          ;;
+        # Codex uses CLI flags, not env vars - handled by get_thinking_flags
       esac
     }
 
@@ -1388,7 +1422,8 @@ run_cmd() {
           role_runner_active_args=("--model" "$role_model" "${role_runner_active_args[@]}")
         fi
 
-        # Inject thinking flags based on runner type
+        # Inject thinking flags based on runner type (for Codex CLI flags)
+        local role_thinking_env=""
         if [[ -n "$role_thinking" && "$role_thinking" != "null" ]]; then
           local -a thinking_flags=()
           while IFS= read -r flag; do
@@ -1397,6 +1432,8 @@ run_cmd() {
           if [[ ${#thinking_flags[@]} -gt 0 ]]; then
             role_runner_active_args=("${thinking_flags[@]}" "${role_runner_active_args[@]}")
           fi
+          # Get thinking env vars (for Claude MAX_THINKING_TOKENS)
+          role_thinking_env=$(get_thinking_env "$role_runner_type" "$role_thinking")
         fi
 
         # Log which runner is being used for this role
@@ -1413,7 +1450,7 @@ run_cmd() {
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$role_runner_prompt_mode" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$role_runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$role_runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "$role_thinking_env" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         fi
         set -e
