@@ -176,6 +176,7 @@ report_cmd() {
   local approval_file="$loop_dir/approval.json"
   local decisions_md="$loop_dir/decisions.md"
   local decisions_jsonl="$loop_dir/decisions.jsonl"
+  local usage_file="$loop_dir/usage.jsonl"
   local report_file="$out_path"
   if [[ -z "$report_file" ]]; then
     report_file="$loop_dir/report.html"
@@ -187,7 +188,7 @@ report_cmd() {
     die "missing python3/python for report generation"
   fi
 
-  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$reviewer_packet" "$approval_file" "$decisions_md" "$decisions_jsonl" "$report_file" <<'PY'
+  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$reviewer_packet" "$approval_file" "$decisions_md" "$decisions_jsonl" "$usage_file" "$report_file" <<'PY'
 import datetime
 import html
 import json
@@ -225,6 +226,88 @@ def json_block(value):
         return str(value)
 
 
+def read_jsonl(path):
+    if not path or not os.path.exists(path):
+        return []
+    entries = []
+    with open(path, "r") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
+    return entries
+
+
+def aggregate_usage(entries):
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "thinking_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "cached_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_duration_ms": 0,
+    }
+    by_role = {}
+    by_runner = {}
+
+    for entry in entries:
+        usage = entry.get("usage", {})
+        cost = entry.get("cost_usd", 0) or 0
+        duration = entry.get("duration_ms", 0) or 0
+        role = entry.get("role", "unknown")
+        runner = entry.get("runner", "unknown")
+
+        totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+        totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+        totals["thinking_tokens"] += usage.get("thinking_tokens", 0) or 0
+        totals["reasoning_output_tokens"] += usage.get("reasoning_output_tokens", 0) or 0
+        totals["cached_input_tokens"] += usage.get("cached_input_tokens", 0) or 0
+        totals["cache_read_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+        totals["cache_creation_input_tokens"] += usage.get("cache_creation_input_tokens", 0) or 0
+        totals["total_cost_usd"] += cost
+        totals["total_duration_ms"] += duration
+
+        if role not in by_role:
+            by_role[role] = {"cost_usd": 0.0, "duration_ms": 0, "count": 0}
+        by_role[role]["cost_usd"] += cost
+        by_role[role]["duration_ms"] += duration
+        by_role[role]["count"] += 1
+
+        if runner not in by_runner:
+            by_runner[runner] = {"cost_usd": 0.0, "count": 0}
+        by_runner[runner]["cost_usd"] += cost
+        by_runner[runner]["count"] += 1
+
+    return totals, by_role, by_runner
+
+
+def format_duration(ms):
+    if ms < 1000:
+        return "{}ms".format(ms)
+    secs = ms / 1000
+    if secs < 60:
+        return "{:.1f}s".format(secs)
+    mins = secs / 60
+    if mins < 60:
+        return "{:.1f}m".format(mins)
+    hours = mins / 60
+    return "{:.1f}h".format(hours)
+
+
+def format_tokens(n):
+    if n >= 1000000:
+        return "{:.1f}M".format(n / 1000000)
+    if n >= 1000:
+        return "{:.1f}K".format(n / 1000)
+    return str(n)
+
+
 loop_id = sys.argv[1]
 summary_path = sys.argv[2]
 timeline_path = sys.argv[3]
@@ -235,7 +318,8 @@ reviewer_packet_path = sys.argv[7]
 approval_path = sys.argv[8]
 decisions_md_path = sys.argv[9]
 decisions_jsonl_path = sys.argv[10]
-out_path = sys.argv[11]
+usage_path = sys.argv[11]
+out_path = sys.argv[12]
 
 summary = read_json(summary_path)
 timeline = read_text(timeline_path)
@@ -245,6 +329,8 @@ reviewer_packet = read_text(reviewer_packet_path).strip()
 approval = read_json(approval_path)
 decisions_md = read_text(decisions_md_path).strip()
 decisions_jsonl = read_text(decisions_jsonl_path).strip()
+usage_entries = read_jsonl(usage_path)
+usage_totals, usage_by_role, usage_by_runner = aggregate_usage(usage_entries)
 
 events_lines = []
 if os.path.exists(events_path):
@@ -269,6 +355,61 @@ overview = [
     "</div>",
 ]
 sections.append("<h2>Overview</h2>" + "".join(overview))
+
+# Usage & Cost section
+if usage_entries:
+    usage_html = ["<div class='usage-grid'>"]
+
+    # Summary row
+    usage_html.append("<div class='usage-summary'>")
+    usage_html.append("<div class='usage-stat'><span class='label'>Total Cost</span><span class='value'>${:.4f}</span></div>".format(usage_totals["total_cost_usd"]))
+    usage_html.append("<div class='usage-stat'><span class='label'>Duration</span><span class='value'>{}</span></div>".format(format_duration(usage_totals["total_duration_ms"])))
+    usage_html.append("<div class='usage-stat'><span class='label'>Iterations</span><span class='value'>{}</span></div>".format(len(usage_entries)))
+    usage_html.append("</div>")
+
+    # Token breakdown
+    usage_html.append("<h3>Token Usage</h3>")
+    usage_html.append("<table class='usage-table'>")
+    usage_html.append("<tr><th>Type</th><th>Count</th></tr>")
+    usage_html.append("<tr><td>Input Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["input_tokens"])))
+    usage_html.append("<tr><td>Output Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["output_tokens"])))
+    if usage_totals["thinking_tokens"] > 0:
+        usage_html.append("<tr><td>Thinking Tokens (Claude)</td><td>{}</td></tr>".format(format_tokens(usage_totals["thinking_tokens"])))
+    if usage_totals["reasoning_output_tokens"] > 0:
+        usage_html.append("<tr><td>Reasoning Tokens (Codex)</td><td>{}</td></tr>".format(format_tokens(usage_totals["reasoning_output_tokens"])))
+    cache_tokens = usage_totals["cached_input_tokens"] + usage_totals["cache_read_input_tokens"]
+    if cache_tokens > 0:
+        usage_html.append("<tr><td>Cache Read Tokens</td><td>{}</td></tr>".format(format_tokens(cache_tokens)))
+    if usage_totals["cache_creation_input_tokens"] > 0:
+        usage_html.append("<tr><td>Cache Write Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["cache_creation_input_tokens"])))
+    usage_html.append("</table>")
+
+    # Cost by role
+    if usage_by_role:
+        usage_html.append("<h3>Cost by Role</h3>")
+        usage_html.append("<table class='usage-table'>")
+        usage_html.append("<tr><th>Role</th><th>Runs</th><th>Duration</th><th>Cost</th></tr>")
+        for role in ["planner", "implementer", "tester", "reviewer"]:
+            if role in usage_by_role:
+                r = usage_by_role[role]
+                usage_html.append("<tr><td>{}</td><td>{}</td><td>{}</td><td>${:.4f}</td></tr>".format(
+                    role.capitalize(), r["count"], format_duration(r["duration_ms"]), r["cost_usd"]))
+        usage_html.append("</table>")
+
+    # Cost by runner
+    if usage_by_runner:
+        usage_html.append("<h3>Cost by Runner</h3>")
+        usage_html.append("<table class='usage-table'>")
+        usage_html.append("<tr><th>Runner</th><th>Runs</th><th>Cost</th></tr>")
+        for runner, r in sorted(usage_by_runner.items()):
+            usage_html.append("<tr><td>{}</td><td>{}</td><td>${:.4f}</td></tr>".format(
+                runner.capitalize(), r["count"], r["cost_usd"]))
+        usage_html.append("</table>")
+
+    usage_html.append("</div>")
+    sections.append("<h2>Usage &amp; Cost</h2>" + "\n".join(usage_html))
+else:
+    sections.append("<h2>Usage &amp; Cost</h2><p>No usage data found.</p>")
 
 if gate_summary:
     sections.append("<h2>Gate Summary</h2><pre>{}</pre>".format(escape_block(gate_summary)))
@@ -346,6 +487,47 @@ html_doc = """<!doctype html>
       border: 1px solid #e2e2e2;
       padding: 12px;
       margin-bottom: 12px;
+    }}
+    .usage-grid {{
+      background: #fff;
+      border: 1px solid #e2e2e2;
+      padding: 16px;
+    }}
+    .usage-summary {{
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e2e2e2;
+    }}
+    .usage-stat {{
+      display: flex;
+      flex-direction: column;
+    }}
+    .usage-stat .label {{
+      font-size: 12px;
+      color: #666;
+    }}
+    .usage-stat .value {{
+      font-size: 20px;
+      font-weight: bold;
+    }}
+    .usage-table {{
+      border-collapse: collapse;
+      margin: 8px 0 16px 0;
+    }}
+    .usage-table th,
+    .usage-table td {{
+      border: 1px solid #e2e2e2;
+      padding: 6px 12px;
+      text-align: left;
+    }}
+    .usage-table th {{
+      background: #f5f5f5;
+    }}
+    h3 {{
+      margin: 16px 0 8px 0;
+      font-size: 14px;
     }}
   </style>
 </head>

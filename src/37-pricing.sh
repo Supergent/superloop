@@ -285,3 +285,154 @@ calculate_aggregate_costs() {
   # Add total cost
   echo "$result" | jq --argjson cost "$total_cost" '. + {total_cost_usd: $cost}'
 }
+
+# -----------------------------------------------------------------------------
+# Usage Command
+# -----------------------------------------------------------------------------
+
+# Format duration in human-readable form
+format_duration() {
+  local ms="$1"
+  local seconds=$((ms / 1000))
+  local minutes=$((seconds / 60))
+  local hours=$((minutes / 60))
+
+  if [[ $hours -gt 0 ]]; then
+    printf "%dh %dm %ds" $hours $((minutes % 60)) $((seconds % 60))
+  elif [[ $minutes -gt 0 ]]; then
+    printf "%dm %ds" $minutes $((seconds % 60))
+  else
+    printf "%ds" $seconds
+  fi
+}
+
+# Format token count with K/M suffix
+format_tokens() {
+  local tokens="$1"
+  if [[ $tokens -ge 1000000 ]]; then
+    awk -v t="$tokens" 'BEGIN { printf "%.1fM", t/1000000 }'
+  elif [[ $tokens -ge 1000 ]]; then
+    awk -v t="$tokens" 'BEGIN { printf "%.1fK", t/1000 }'
+  else
+    echo "$tokens"
+  fi
+}
+
+# Usage command - display usage summary for a loop
+# Args: $1 = repo, $2 = loop_id, $3 = config_path, $4 = json_output (0|1)
+usage_cmd() {
+  local repo="$1"
+  local loop_id="$2"
+  local config_path="$3"
+  local json_output="${4:-0}"
+
+  # If no loop_id, try to find one
+  if [[ -z "$loop_id" ]]; then
+    # Get first loop from config
+    if [[ -f "$config_path" ]]; then
+      loop_id=$(jq -r '.loops[0].id // empty' "$config_path" 2>/dev/null || true)
+    fi
+    if [[ -z "$loop_id" ]]; then
+      echo "error: no loop specified and no loops in config" >&2
+      return 1
+    fi
+  fi
+
+  local loop_dir="$repo/.superloop/loops/$loop_id"
+  local usage_file="$loop_dir/usage.jsonl"
+
+  if [[ ! -f "$usage_file" ]]; then
+    echo "error: no usage data found for loop '$loop_id'" >&2
+    echo "       expected: $usage_file" >&2
+    return 1
+  fi
+
+  # Aggregate usage
+  local aggregated
+  aggregated=$(aggregate_usage "$usage_file")
+
+  if echo "$aggregated" | jq -e '.error' >/dev/null 2>&1; then
+    echo "error: $(echo "$aggregated" | jq -r '.error')" >&2
+    return 1
+  fi
+
+  # Calculate costs (try to get models from usage data)
+  local claude_model codex_model
+  claude_model=$(jq -s -r '[.[] | select(.runner == "claude") | .model][0] // "claude-sonnet-4-5"' "$usage_file" 2>/dev/null)
+  codex_model=$(jq -s -r '[.[] | select(.runner == "codex") | .model][0] // "gpt-5.2-codex"' "$usage_file" 2>/dev/null)
+
+  local with_costs
+  with_costs=$(calculate_aggregate_costs "$aggregated" "$claude_model" "$codex_model")
+
+  # JSON output mode
+  if [[ "$json_output" -eq 1 ]]; then
+    echo "$with_costs" | jq --arg loop "$loop_id" '. + {loop_id: $loop}'
+    return 0
+  fi
+
+  # Human-readable output
+  echo "Usage Summary: $loop_id"
+  echo "═══════════════════════════════════════════════════════════════"
+  echo ""
+
+  local total_iterations total_duration total_cost
+  total_iterations=$(echo "$with_costs" | jq -r '.total_iterations // 0')
+  total_duration=$(echo "$with_costs" | jq -r '.total_duration_ms // 0')
+  total_cost=$(echo "$with_costs" | jq -r '.total_cost_usd // 0')
+
+  printf "Total: %s iterations, %s, %s\n\n" \
+    "$total_iterations" \
+    "$(format_duration "$total_duration")" \
+    "$(format_cost "$total_cost")"
+
+  # Per-runner breakdown
+  local runners
+  runners=$(echo "$with_costs" | jq -r '.by_runner[].runner' 2>/dev/null)
+
+  for runner in $runners; do
+    local runner_data runner_cost runner_duration
+    runner_data=$(echo "$with_costs" | jq ".by_runner[] | select(.runner == \"$runner\")")
+    runner_cost=$(echo "$runner_data" | jq -r '.total_cost_usd // 0')
+    runner_duration=$(echo "$runner_data" | jq -r '.total_duration_ms // 0')
+
+    echo "[$runner] $(format_cost "$runner_cost"), $(format_duration "$runner_duration")"
+    echo "───────────────────────────────────────────────────────────────"
+
+    # Per-role breakdown
+    local roles
+    roles=$(echo "$runner_data" | jq -r '.by_role[].role')
+
+    for role in $roles; do
+      local role_data iters role_dur
+      role_data=$(echo "$runner_data" | jq ".by_role[] | select(.role == \"$role\")")
+      iters=$(echo "$role_data" | jq -r '.iterations')
+      role_dur=$(echo "$role_data" | jq -r '.duration_ms // 0')
+
+      # Token breakdown
+      local input output thinking cached
+      input=$(echo "$role_data" | jq -r '.usage.input_tokens // 0')
+      output=$(echo "$role_data" | jq -r '.usage.output_tokens // 0')
+
+      if [[ "$runner" == "claude" ]]; then
+        thinking=$(echo "$role_data" | jq -r '.usage.thinking_tokens // 0')
+        cached=$(echo "$role_data" | jq -r '.usage.cache_read_input_tokens // 0')
+      else
+        thinking=$(echo "$role_data" | jq -r '.usage.reasoning_output_tokens // 0')
+        cached=$(echo "$role_data" | jq -r '.usage.cached_input_tokens // 0')
+      fi
+
+      printf "  %-12s %dx  %s  in:%-6s out:%-6s" \
+        "$role" "$iters" "$(format_duration "$role_dur")" \
+        "$(format_tokens "$input")" "$(format_tokens "$output")"
+
+      if [[ "$thinking" -gt 0 ]]; then
+        printf " think:%-6s" "$(format_tokens "$thinking")"
+      fi
+      if [[ "$cached" -gt 0 ]]; then
+        printf " cache:%-6s" "$(format_tokens "$cached")"
+      fi
+      echo ""
+    done
+    echo ""
+  done
+}

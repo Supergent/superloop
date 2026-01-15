@@ -15,6 +15,7 @@ main() {
   local force=0
   local fast=0
   local dry_run=0
+  local json_output=0
   local approver=""
   local note=""
   local reject=0
@@ -39,6 +40,10 @@ main() {
         ;;
       --summary)
         summary=1
+        shift
+        ;;
+      --json)
+        json_output=1
         shift
         ;;
       --out)
@@ -101,6 +106,9 @@ main() {
       ;;
     status)
       status_cmd "$repo" "$summary" "$loop_id" "$config_path"
+      ;;
+    usage)
+      usage_cmd "$repo" "$loop_id" "$config_path" "$json_output"
       ;;
     approve)
       approve_cmd "$repo" "$loop_id" "$approver" "$note" "$reject"

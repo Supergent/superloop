@@ -3,7 +3,7 @@ set -euo pipefail
 # Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.3.0"
+VERSION="0.4.1"
 
 usage() {
   cat <<'USAGE'
@@ -14,6 +14,7 @@ Usage:
   superloop.sh list [--repo DIR] [--config FILE]
   superloop.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
   superloop.sh status [--repo DIR] [--summary] [--loop ID]
+  superloop.sh usage [--repo DIR] [--loop ID] [--json]
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   superloop.sh cancel [--repo DIR]
   superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
@@ -24,8 +25,9 @@ Options:
   --repo DIR       Repository root (default: current directory)
   --config FILE    Config file path (default: .superloop/config.json)
   --schema FILE    Schema file path (default: schema/config.schema.json)
-  --loop ID        Run only the loop with this id (or select loop for status/report)
+  --loop ID        Run only the loop with this id (or select loop for status/report/usage)
   --summary        Print latest gate/evidence snapshot from run-summary.json
+  --json           Output in JSON format (for usage command)
   --force          Overwrite existing .superloop files on init
   --fast           Use runner.fast_args (if set) instead of runner.args
   --dry-run        Read-only status summary from existing artifacts; no runner calls
@@ -4042,6 +4044,157 @@ calculate_aggregate_costs() {
   echo "$result" | jq --argjson cost "$total_cost" '. + {total_cost_usd: $cost}'
 }
 
+# -----------------------------------------------------------------------------
+# Usage Command
+# -----------------------------------------------------------------------------
+
+# Format duration in human-readable form
+format_duration() {
+  local ms="$1"
+  local seconds=$((ms / 1000))
+  local minutes=$((seconds / 60))
+  local hours=$((minutes / 60))
+
+  if [[ $hours -gt 0 ]]; then
+    printf "%dh %dm %ds" $hours $((minutes % 60)) $((seconds % 60))
+  elif [[ $minutes -gt 0 ]]; then
+    printf "%dm %ds" $minutes $((seconds % 60))
+  else
+    printf "%ds" $seconds
+  fi
+}
+
+# Format token count with K/M suffix
+format_tokens() {
+  local tokens="$1"
+  if [[ $tokens -ge 1000000 ]]; then
+    awk -v t="$tokens" 'BEGIN { printf "%.1fM", t/1000000 }'
+  elif [[ $tokens -ge 1000 ]]; then
+    awk -v t="$tokens" 'BEGIN { printf "%.1fK", t/1000 }'
+  else
+    echo "$tokens"
+  fi
+}
+
+# Usage command - display usage summary for a loop
+# Args: $1 = repo, $2 = loop_id, $3 = config_path, $4 = json_output (0|1)
+usage_cmd() {
+  local repo="$1"
+  local loop_id="$2"
+  local config_path="$3"
+  local json_output="${4:-0}"
+
+  # If no loop_id, try to find one
+  if [[ -z "$loop_id" ]]; then
+    # Get first loop from config
+    if [[ -f "$config_path" ]]; then
+      loop_id=$(jq -r '.loops[0].id // empty' "$config_path" 2>/dev/null || true)
+    fi
+    if [[ -z "$loop_id" ]]; then
+      echo "error: no loop specified and no loops in config" >&2
+      return 1
+    fi
+  fi
+
+  local loop_dir="$repo/.superloop/loops/$loop_id"
+  local usage_file="$loop_dir/usage.jsonl"
+
+  if [[ ! -f "$usage_file" ]]; then
+    echo "error: no usage data found for loop '$loop_id'" >&2
+    echo "       expected: $usage_file" >&2
+    return 1
+  fi
+
+  # Aggregate usage
+  local aggregated
+  aggregated=$(aggregate_usage "$usage_file")
+
+  if echo "$aggregated" | jq -e '.error' >/dev/null 2>&1; then
+    echo "error: $(echo "$aggregated" | jq -r '.error')" >&2
+    return 1
+  fi
+
+  # Calculate costs (try to get models from usage data)
+  local claude_model codex_model
+  claude_model=$(jq -s -r '[.[] | select(.runner == "claude") | .model][0] // "claude-sonnet-4-5"' "$usage_file" 2>/dev/null)
+  codex_model=$(jq -s -r '[.[] | select(.runner == "codex") | .model][0] // "gpt-5.2-codex"' "$usage_file" 2>/dev/null)
+
+  local with_costs
+  with_costs=$(calculate_aggregate_costs "$aggregated" "$claude_model" "$codex_model")
+
+  # JSON output mode
+  if [[ "$json_output" -eq 1 ]]; then
+    echo "$with_costs" | jq --arg loop "$loop_id" '. + {loop_id: $loop}'
+    return 0
+  fi
+
+  # Human-readable output
+  echo "Usage Summary: $loop_id"
+  echo "═══════════════════════════════════════════════════════════════"
+  echo ""
+
+  local total_iterations total_duration total_cost
+  total_iterations=$(echo "$with_costs" | jq -r '.total_iterations // 0')
+  total_duration=$(echo "$with_costs" | jq -r '.total_duration_ms // 0')
+  total_cost=$(echo "$with_costs" | jq -r '.total_cost_usd // 0')
+
+  printf "Total: %s iterations, %s, %s\n\n" \
+    "$total_iterations" \
+    "$(format_duration "$total_duration")" \
+    "$(format_cost "$total_cost")"
+
+  # Per-runner breakdown
+  local runners
+  runners=$(echo "$with_costs" | jq -r '.by_runner[].runner' 2>/dev/null)
+
+  for runner in $runners; do
+    local runner_data runner_cost runner_duration
+    runner_data=$(echo "$with_costs" | jq ".by_runner[] | select(.runner == \"$runner\")")
+    runner_cost=$(echo "$runner_data" | jq -r '.total_cost_usd // 0')
+    runner_duration=$(echo "$runner_data" | jq -r '.total_duration_ms // 0')
+
+    echo "[$runner] $(format_cost "$runner_cost"), $(format_duration "$runner_duration")"
+    echo "───────────────────────────────────────────────────────────────"
+
+    # Per-role breakdown
+    local roles
+    roles=$(echo "$runner_data" | jq -r '.by_role[].role')
+
+    for role in $roles; do
+      local role_data iters role_dur
+      role_data=$(echo "$runner_data" | jq ".by_role[] | select(.role == \"$role\")")
+      iters=$(echo "$role_data" | jq -r '.iterations')
+      role_dur=$(echo "$role_data" | jq -r '.duration_ms // 0')
+
+      # Token breakdown
+      local input output thinking cached
+      input=$(echo "$role_data" | jq -r '.usage.input_tokens // 0')
+      output=$(echo "$role_data" | jq -r '.usage.output_tokens // 0')
+
+      if [[ "$runner" == "claude" ]]; then
+        thinking=$(echo "$role_data" | jq -r '.usage.thinking_tokens // 0')
+        cached=$(echo "$role_data" | jq -r '.usage.cache_read_input_tokens // 0')
+      else
+        thinking=$(echo "$role_data" | jq -r '.usage.reasoning_output_tokens // 0')
+        cached=$(echo "$role_data" | jq -r '.usage.cached_input_tokens // 0')
+      fi
+
+      printf "  %-12s %dx  %s  in:%-6s out:%-6s" \
+        "$role" "$iters" "$(format_duration "$role_dur")" \
+        "$(format_tokens "$input")" "$(format_tokens "$output")"
+
+      if [[ "$thinking" -gt 0 ]]; then
+        printf " think:%-6s" "$(format_tokens "$thinking")"
+      fi
+      if [[ "$cached" -gt 0 ]]; then
+        printf " cache:%-6s" "$(format_tokens "$cached")"
+      fi
+      echo ""
+    done
+    echo ""
+  done
+}
+
 snapshot_file() {
   local file="$1"
   local snapshot="$2"
@@ -6962,6 +7115,7 @@ report_cmd() {
   local approval_file="$loop_dir/approval.json"
   local decisions_md="$loop_dir/decisions.md"
   local decisions_jsonl="$loop_dir/decisions.jsonl"
+  local usage_file="$loop_dir/usage.jsonl"
   local report_file="$out_path"
   if [[ -z "$report_file" ]]; then
     report_file="$loop_dir/report.html"
@@ -6973,7 +7127,7 @@ report_cmd() {
     die "missing python3/python for report generation"
   fi
 
-  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$reviewer_packet" "$approval_file" "$decisions_md" "$decisions_jsonl" "$report_file" <<'PY'
+  "$python_bin" - "$loop_id" "$summary_file" "$timeline_file" "$events_file" "$gate_summary" "$evidence_file" "$reviewer_packet" "$approval_file" "$decisions_md" "$decisions_jsonl" "$usage_file" "$report_file" <<'PY'
 import datetime
 import html
 import json
@@ -7011,6 +7165,88 @@ def json_block(value):
         return str(value)
 
 
+def read_jsonl(path):
+    if not path or not os.path.exists(path):
+        return []
+    entries = []
+    with open(path, "r") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
+    return entries
+
+
+def aggregate_usage(entries):
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "thinking_tokens": 0,
+        "reasoning_output_tokens": 0,
+        "cached_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_duration_ms": 0,
+    }
+    by_role = {}
+    by_runner = {}
+
+    for entry in entries:
+        usage = entry.get("usage", {})
+        cost = entry.get("cost_usd", 0) or 0
+        duration = entry.get("duration_ms", 0) or 0
+        role = entry.get("role", "unknown")
+        runner = entry.get("runner", "unknown")
+
+        totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+        totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+        totals["thinking_tokens"] += usage.get("thinking_tokens", 0) or 0
+        totals["reasoning_output_tokens"] += usage.get("reasoning_output_tokens", 0) or 0
+        totals["cached_input_tokens"] += usage.get("cached_input_tokens", 0) or 0
+        totals["cache_read_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+        totals["cache_creation_input_tokens"] += usage.get("cache_creation_input_tokens", 0) or 0
+        totals["total_cost_usd"] += cost
+        totals["total_duration_ms"] += duration
+
+        if role not in by_role:
+            by_role[role] = {"cost_usd": 0.0, "duration_ms": 0, "count": 0}
+        by_role[role]["cost_usd"] += cost
+        by_role[role]["duration_ms"] += duration
+        by_role[role]["count"] += 1
+
+        if runner not in by_runner:
+            by_runner[runner] = {"cost_usd": 0.0, "count": 0}
+        by_runner[runner]["cost_usd"] += cost
+        by_runner[runner]["count"] += 1
+
+    return totals, by_role, by_runner
+
+
+def format_duration(ms):
+    if ms < 1000:
+        return "{}ms".format(ms)
+    secs = ms / 1000
+    if secs < 60:
+        return "{:.1f}s".format(secs)
+    mins = secs / 60
+    if mins < 60:
+        return "{:.1f}m".format(mins)
+    hours = mins / 60
+    return "{:.1f}h".format(hours)
+
+
+def format_tokens(n):
+    if n >= 1000000:
+        return "{:.1f}M".format(n / 1000000)
+    if n >= 1000:
+        return "{:.1f}K".format(n / 1000)
+    return str(n)
+
+
 loop_id = sys.argv[1]
 summary_path = sys.argv[2]
 timeline_path = sys.argv[3]
@@ -7021,7 +7257,8 @@ reviewer_packet_path = sys.argv[7]
 approval_path = sys.argv[8]
 decisions_md_path = sys.argv[9]
 decisions_jsonl_path = sys.argv[10]
-out_path = sys.argv[11]
+usage_path = sys.argv[11]
+out_path = sys.argv[12]
 
 summary = read_json(summary_path)
 timeline = read_text(timeline_path)
@@ -7031,6 +7268,8 @@ reviewer_packet = read_text(reviewer_packet_path).strip()
 approval = read_json(approval_path)
 decisions_md = read_text(decisions_md_path).strip()
 decisions_jsonl = read_text(decisions_jsonl_path).strip()
+usage_entries = read_jsonl(usage_path)
+usage_totals, usage_by_role, usage_by_runner = aggregate_usage(usage_entries)
 
 events_lines = []
 if os.path.exists(events_path):
@@ -7055,6 +7294,61 @@ overview = [
     "</div>",
 ]
 sections.append("<h2>Overview</h2>" + "".join(overview))
+
+# Usage & Cost section
+if usage_entries:
+    usage_html = ["<div class='usage-grid'>"]
+
+    # Summary row
+    usage_html.append("<div class='usage-summary'>")
+    usage_html.append("<div class='usage-stat'><span class='label'>Total Cost</span><span class='value'>${:.4f}</span></div>".format(usage_totals["total_cost_usd"]))
+    usage_html.append("<div class='usage-stat'><span class='label'>Duration</span><span class='value'>{}</span></div>".format(format_duration(usage_totals["total_duration_ms"])))
+    usage_html.append("<div class='usage-stat'><span class='label'>Iterations</span><span class='value'>{}</span></div>".format(len(usage_entries)))
+    usage_html.append("</div>")
+
+    # Token breakdown
+    usage_html.append("<h3>Token Usage</h3>")
+    usage_html.append("<table class='usage-table'>")
+    usage_html.append("<tr><th>Type</th><th>Count</th></tr>")
+    usage_html.append("<tr><td>Input Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["input_tokens"])))
+    usage_html.append("<tr><td>Output Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["output_tokens"])))
+    if usage_totals["thinking_tokens"] > 0:
+        usage_html.append("<tr><td>Thinking Tokens (Claude)</td><td>{}</td></tr>".format(format_tokens(usage_totals["thinking_tokens"])))
+    if usage_totals["reasoning_output_tokens"] > 0:
+        usage_html.append("<tr><td>Reasoning Tokens (Codex)</td><td>{}</td></tr>".format(format_tokens(usage_totals["reasoning_output_tokens"])))
+    cache_tokens = usage_totals["cached_input_tokens"] + usage_totals["cache_read_input_tokens"]
+    if cache_tokens > 0:
+        usage_html.append("<tr><td>Cache Read Tokens</td><td>{}</td></tr>".format(format_tokens(cache_tokens)))
+    if usage_totals["cache_creation_input_tokens"] > 0:
+        usage_html.append("<tr><td>Cache Write Tokens</td><td>{}</td></tr>".format(format_tokens(usage_totals["cache_creation_input_tokens"])))
+    usage_html.append("</table>")
+
+    # Cost by role
+    if usage_by_role:
+        usage_html.append("<h3>Cost by Role</h3>")
+        usage_html.append("<table class='usage-table'>")
+        usage_html.append("<tr><th>Role</th><th>Runs</th><th>Duration</th><th>Cost</th></tr>")
+        for role in ["planner", "implementer", "tester", "reviewer"]:
+            if role in usage_by_role:
+                r = usage_by_role[role]
+                usage_html.append("<tr><td>{}</td><td>{}</td><td>{}</td><td>${:.4f}</td></tr>".format(
+                    role.capitalize(), r["count"], format_duration(r["duration_ms"]), r["cost_usd"]))
+        usage_html.append("</table>")
+
+    # Cost by runner
+    if usage_by_runner:
+        usage_html.append("<h3>Cost by Runner</h3>")
+        usage_html.append("<table class='usage-table'>")
+        usage_html.append("<tr><th>Runner</th><th>Runs</th><th>Cost</th></tr>")
+        for runner, r in sorted(usage_by_runner.items()):
+            usage_html.append("<tr><td>{}</td><td>{}</td><td>${:.4f}</td></tr>".format(
+                runner.capitalize(), r["count"], r["cost_usd"]))
+        usage_html.append("</table>")
+
+    usage_html.append("</div>")
+    sections.append("<h2>Usage &amp; Cost</h2>" + "\n".join(usage_html))
+else:
+    sections.append("<h2>Usage &amp; Cost</h2><p>No usage data found.</p>")
 
 if gate_summary:
     sections.append("<h2>Gate Summary</h2><pre>{}</pre>".format(escape_block(gate_summary)))
@@ -7133,6 +7427,47 @@ html_doc = """<!doctype html>
       padding: 12px;
       margin-bottom: 12px;
     }}
+    .usage-grid {{
+      background: #fff;
+      border: 1px solid #e2e2e2;
+      padding: 16px;
+    }}
+    .usage-summary {{
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e2e2e2;
+    }}
+    .usage-stat {{
+      display: flex;
+      flex-direction: column;
+    }}
+    .usage-stat .label {{
+      font-size: 12px;
+      color: #666;
+    }}
+    .usage-stat .value {{
+      font-size: 20px;
+      font-weight: bold;
+    }}
+    .usage-table {{
+      border-collapse: collapse;
+      margin: 8px 0 16px 0;
+    }}
+    .usage-table th,
+    .usage-table td {{
+      border: 1px solid #e2e2e2;
+      padding: 6px 12px;
+      text-align: left;
+    }}
+    .usage-table th {{
+      background: #f5f5f5;
+    }}
+    h3 {{
+      margin: 16px 0 8px 0;
+      font-size: 14px;
+    }}
   </style>
 </head>
 <body>
@@ -7166,6 +7501,7 @@ main() {
   local force=0
   local fast=0
   local dry_run=0
+  local json_output=0
   local approver=""
   local note=""
   local reject=0
@@ -7190,6 +7526,10 @@ main() {
         ;;
       --summary)
         summary=1
+        shift
+        ;;
+      --json)
+        json_output=1
         shift
         ;;
       --out)
@@ -7252,6 +7592,9 @@ main() {
       ;;
     status)
       status_cmd "$repo" "$summary" "$loop_id" "$config_path"
+      ;;
+    usage)
+      usage_cmd "$repo" "$loop_id" "$config_path" "$json_output"
       ;;
     approve)
       approve_cmd "$repo" "$loop_id" "$approver" "$note" "$reject"

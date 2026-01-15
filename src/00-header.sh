@@ -3,7 +3,7 @@ set -euo pipefail
 # Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.3.0"
+VERSION="0.4.1"
 
 usage() {
   cat <<'USAGE'
@@ -14,6 +14,7 @@ Usage:
   superloop.sh list [--repo DIR] [--config FILE]
   superloop.sh run [--repo DIR] [--config FILE] [--loop ID] [--fast] [--dry-run]
   superloop.sh status [--repo DIR] [--summary] [--loop ID]
+  superloop.sh usage [--repo DIR] [--loop ID] [--json]
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   superloop.sh cancel [--repo DIR]
   superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
@@ -24,8 +25,9 @@ Options:
   --repo DIR       Repository root (default: current directory)
   --config FILE    Config file path (default: .superloop/config.json)
   --schema FILE    Schema file path (default: schema/config.schema.json)
-  --loop ID        Run only the loop with this id (or select loop for status/report)
+  --loop ID        Run only the loop with this id (or select loop for status/report/usage)
   --summary        Print latest gate/evidence snapshot from run-summary.json
+  --json           Output in JSON format (for usage command)
   --force          Overwrite existing .superloop files on init
   --fast           Use runner.fast_args (if set) instead of runner.args
   --dry-run        Read-only status summary from existing artifacts; no runner calls
