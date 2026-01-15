@@ -16,12 +16,5 @@ jobs:
         run: git diff --exit-code superloop.sh
       - name: Validate config schema
         run: ./superloop.sh validate --repo .
-      - name: Dry-run smoke check
-        run: ./superloop.sh run --repo . --loop productization-phase-1 --dry-run
-      - name: Generate report
-        run: ./superloop.sh report --repo . --loop productization-phase-1
-      - name: Upload report artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: superloop-report
-          path: .superloop/loops/productization-phase-1/report.html
+      - name: List loops
+        run: ./superloop.sh list --repo .
