@@ -1,0 +1,6 @@
+{
+  "role_defaults": {
+    "planner": {"runner": "mock", "model": "mock", "thinking": "none"}
+  },
+  "loops": []
+}

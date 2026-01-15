@@ -1,0 +1,63 @@
+{
+  "runners": {
+    "mock": {
+      "command": ["tests/helpers/mock-runner.sh", "success"],
+      "args": [],
+      "prompt_mode": "stdin"
+    }
+  },
+  "role_defaults": {
+    "planner": {"runner": "mock", "model": "mock", "thinking": "max"},
+    "implementer": {"runner": "mock", "model": "mock", "thinking": "standard"},
+    "tester": {"runner": "mock", "model": "mock", "thinking": "standard"},
+    "reviewer": {"runner": "mock", "model": "mock", "thinking": "max"}
+  },
+  "loops": [{
+    "id": "full-feature",
+    "spec_file": ".superloop/specs/feature.md",
+    "completion_promise": "SUPERLOOP_COMPLETE",
+    "max_iterations": 20,
+    "checklists": [
+      {
+        "type": "file",
+        "path": ".superloop/specs/checklist.md"
+      }
+    ],
+    "tests": {
+      "mode": "on_promise",
+      "commands": ["npm test"]
+    },
+    "evidence": {
+      "enabled": true,
+      "require_on_completion": true,
+      "artifacts": [
+        {
+          "id": "test-report",
+          "path": "test-results.xml",
+          "description": "Test execution results"
+        }
+      ]
+    },
+    "approval": {
+      "enabled": true,
+      "require_on_completion": true
+    },
+    "reviewer_packet": {
+      "enabled": true
+    },
+    "timeouts": {
+      "enabled": true,
+      "default": 300,
+      "planner": 120,
+      "implementer": 300,
+      "tester": 300,
+      "reviewer": 120
+    },
+    "stuck": {
+      "enabled": true,
+      "threshold": 3,
+      "action": "report_and_stop",
+      "ignore": ["package-lock.json"]
+    }
+  }]
+}

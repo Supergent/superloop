@@ -1,0 +1,26 @@
+{
+  "runners": {
+    "mock": {
+      "command": ["tests/helpers/mock-runner.sh", "success"],
+      "args": [],
+      "prompt_mode": "stdin"
+    }
+  },
+  "role_defaults": {
+    "planner": {"runner": "mock", "model": "mock", "thinking": "none"},
+    "implementer": {"runner": "mock", "model": "mock", "thinking": "none"},
+    "tester": {"runner": "mock", "model": "mock", "thinking": "none"},
+    "reviewer": {"runner": "mock", "model": "mock", "thinking": "none"}
+  },
+  "loops": [{
+    "id": "test-feature",
+    "spec_file": ".superloop/specs/test.md",
+    "completion_promise": "SUPERLOOP_COMPLETE",
+    "max_iterations": 3,
+    "tests": {"mode": "off", "commands": []},
+    "evidence": {"enabled": false},
+    "approval": {"enabled": false},
+    "timeouts": {"enabled": false},
+    "stuck": {"enabled": false}
+  }]
+}

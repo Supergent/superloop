@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"msg_01ABC","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":1500,"output_tokens":800,"thinking_tokens":200}}}
+{"type":"assistant","message":{"id":"msg_01DEF","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":2000,"output_tokens":1200,"thinking_tokens":300}}}

@@ -1,0 +1,16 @@
+{
+  "status": "complete",
+  "loop_id": "test-loop",
+  "iteration": 8,
+  "phase": "reviewer",
+  "last_updated": "2026-01-15T02:00:00Z",
+  "started_at": "2026-01-15T00:00:00Z",
+  "completed_at": "2026-01-15T02:00:00Z",
+  "gates": {
+    "promise": "passed",
+    "tests": "passed",
+    "checklists": "passed",
+    "evidence": "passed",
+    "approval": "passed"
+  }
+}
