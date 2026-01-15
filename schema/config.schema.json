@@ -29,6 +29,30 @@
         }
       },
       "required": ["command", "args"]
+    },
+    "thinking_level": {
+      "type": "string",
+      "enum": ["none", "minimal", "low", "standard", "high", "max"],
+      "default": "standard",
+      "description": "Thinking/reasoning effort level. Translates to: Codex (reasoning_effort), Claude (thinking_mode + budget)"
+    },
+    "role_config": {
+      "type": "object",
+      "description": "Configuration for a single role",
+      "properties": {
+        "runner": {
+          "type": "string",
+          "description": "Runner type: 'codex', 'claude', or name from 'runners' registry"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model ID (e.g., 'gpt-5.2-codex', 'claude-sonnet-4-5-20250929')"
+        },
+        "thinking": {
+          "$ref": "#/definitions/thinking_level"
+        }
+      },
+      "required": ["runner"]
     }
   },
   "properties": {
@@ -44,9 +68,24 @@
       },
       "examples": [{
         "codex": {"command": ["codex", "exec"], "args": ["--full-auto", "-C", "{repo}", "-"]},
-        "claude-vanilla": {"command": ["claude-vanilla"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]},
-        "claude-glm-mantic": {"command": ["claude-glm-mantic"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]}
+        "claude": {"command": ["claude"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]}
       }]
+    },
+    "role_defaults": {
+      "type": "object",
+      "description": "Default model and thinking configuration per role. Used when loop doesn't specify.",
+      "properties": {
+        "planner": {"$ref": "#/definitions/role_config"},
+        "implementer": {"$ref": "#/definitions/role_config"},
+        "tester": {"$ref": "#/definitions/role_config"},
+        "reviewer": {"$ref": "#/definitions/role_config"}
+      },
+      "default": {
+        "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+        "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+        "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+        "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
+      }
     },
     "loops": {
       "type": "array",
@@ -322,26 +361,19 @@
               {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Simple list of roles using default runner"
+                "description": "Simple list of roles using default runner and role_defaults"
               },
               {
                 "type": "object",
-                "description": "Per-role runner configuration",
+                "description": "Per-role configuration with runner, model, and thinking level",
                 "additionalProperties": {
-                  "type": "object",
-                  "properties": {
-                    "runner": {
-                      "type": "string",
-                      "description": "Name of runner from 'runners' registry"
-                    }
-                  },
-                  "required": ["runner"]
+                  "$ref": "#/definitions/role_config"
                 },
                 "examples": [{
-                  "planner": {"runner": "codex"},
-                  "implementer": {"runner": "claude-vanilla"},
-                  "tester": {"runner": "claude-glm-mantic"},
-                  "reviewer": {"runner": "codex"}
+                  "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+                  "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+                  "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+                  "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
                 }]
               }
             ]

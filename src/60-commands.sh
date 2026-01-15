@@ -802,6 +802,92 @@ run_cmd() {
       fi
     }
 
+    # Helper to get model for a role (from role config, then role_defaults)
+    get_role_model() {
+      local role="$1"
+      local model=""
+      if [[ "$roles_type" == "object" ]]; then
+        model=$(jq -r --arg role "$role" '.[$role].model // empty' <<<"$roles_config_json")
+      fi
+      if [[ -z "$model" ]]; then
+        model=$(jq -r --arg role "$role" '.role_defaults[$role].model // empty' "$config_path")
+      fi
+      echo "$model"
+    }
+
+    # Helper to get thinking level for a role (from role config, then role_defaults)
+    get_role_thinking() {
+      local role="$1"
+      local thinking=""
+      if [[ "$roles_type" == "object" ]]; then
+        thinking=$(jq -r --arg role "$role" '.[$role].thinking // empty' <<<"$roles_config_json")
+      fi
+      if [[ -z "$thinking" ]]; then
+        thinking=$(jq -r --arg role "$role" '.role_defaults[$role].thinking // empty' "$config_path")
+      fi
+      echo "$thinking"
+    }
+
+    # Map thinking level to runner-specific flags
+    # Returns flags to append to command args
+    get_thinking_flags() {
+      local runner_type="$1"  # "codex" or "claude"
+      local thinking="$2"     # none|minimal|low|standard|high|max
+
+      if [[ -z "$thinking" || "$thinking" == "null" ]]; then
+        return 0
+      fi
+
+      case "$runner_type" in
+        codex)
+          # Map to Codex reasoning_effort
+          local effort=""
+          case "$thinking" in
+            none)     effort="none" ;;
+            minimal)  effort="minimal" ;;
+            low)      effort="low" ;;
+            standard) effort="medium" ;;
+            high)     effort="high" ;;
+            max)      effort="xhigh" ;;
+          esac
+          if [[ -n "$effort" ]]; then
+            echo "-c"
+            echo "model_reasoning_effort=\"$effort\""
+          fi
+          ;;
+        claude)
+          # Map to Claude thinking_mode and thinking_budget
+          local mode="" budget=""
+          case "$thinking" in
+            none)     mode="quick" ;;
+            minimal)  mode="quick" ;;
+            low)      mode="extended"; budget="4096" ;;
+            standard) mode="extended"; budget="8192" ;;
+            high)     mode="extended"; budget="16384" ;;
+            max)      mode="extended"; budget="32768" ;;
+          esac
+          if [[ -n "$mode" ]]; then
+            echo "--thinking-mode"
+            echo "$mode"
+          fi
+          if [[ -n "$budget" ]]; then
+            echo "--thinking-budget"
+            echo "$budget"
+          fi
+          ;;
+      esac
+    }
+
+    # Detect runner type from command
+    detect_runner_type_from_cmd() {
+      local cmd="$1"
+      case "$cmd" in
+        codex*) echo "codex" ;;
+        claude*) echo "claude" ;;
+        *) echo "unknown" ;;
+      esac
+    }
+
     local -a checklist_patterns=()
     while IFS= read -r line; do
       checklist_patterns+=("$line")
@@ -1302,9 +1388,34 @@ run_cmd() {
           role_runner_active_args=("${role_runner_fast_args[@]}")
         fi
 
+        # Inject model and thinking flags based on role config
+        local role_model role_thinking role_runner_type
+        role_model=$(get_role_model "$role")
+        role_thinking=$(get_role_thinking "$role")
+        role_runner_type=$(detect_runner_type_from_cmd "${role_runner_command[0]:-}")
+
+        # Inject --model flag
+        if [[ -n "$role_model" && "$role_model" != "null" ]]; then
+          role_runner_active_args=("--model" "$role_model" "${role_runner_active_args[@]}")
+        fi
+
+        # Inject thinking flags based on runner type
+        if [[ -n "$role_thinking" && "$role_thinking" != "null" ]]; then
+          local -a thinking_flags=()
+          while IFS= read -r flag; do
+            [[ -n "$flag" ]] && thinking_flags+=("$flag")
+          done < <(get_thinking_flags "$role_runner_type" "$role_thinking")
+          if [[ ${#thinking_flags[@]} -gt 0 ]]; then
+            role_runner_active_args=("${thinking_flags[@]}" "${role_runner_active_args[@]}")
+          fi
+        fi
+
         # Log which runner is being used for this role
-        if [[ -n "$role_runner_name" ]]; then
-          echo "[superloop] Role '$role' using runner: $role_runner_name (${role_runner_command[0]:-unknown})"
+        if [[ -n "$role_runner_name" || -n "$role_model" || -n "$role_thinking" ]]; then
+          local runner_info="${role_runner_command[0]:-unknown}"
+          [[ -n "$role_model" && "$role_model" != "null" ]] && runner_info="$runner_info, model=$role_model"
+          [[ -n "$role_thinking" && "$role_thinking" != "null" ]] && runner_info="$runner_info, thinking=$role_thinking"
+          echo "[superloop] Role '$role' using: $runner_info"
         fi
 
         local role_status=0

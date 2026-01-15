@@ -52,14 +52,27 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 
 ## Config
 
-`.superloop/config.json` controls runners and loops:
+`.superloop/config.json` controls runners, models, and loops:
 
 ```json
 {
-  "runner": {
-    "command": ["codex", "exec"],
-    "args": ["--full-auto", "-C", "{repo}", "-"],
-    "prompt_mode": "stdin"
+  "runners": {
+    "codex": {
+      "command": ["codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "claude": {
+      "command": ["claude"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "role_defaults": {
+    "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+    "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
   },
   "loops": [{
     "id": "my-feature",
@@ -97,12 +110,19 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "action": "report_and_stop",
       "ignore": []
     },
-    "roles": ["planner", "implementer", "tester", "reviewer"]
+    "roles": {
+      "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+      "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+      "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+      "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
+    }
   }]
 }
 ```
 
-This example passes schema validation. See `schema/config.schema.json` for all options.
+**Thinking levels**: `none`, `minimal`, `low`, `standard`, `high`, `max` - maps to Codex reasoning_effort or Claude thinking_budget.
+
+See `schema/config.schema.json` for all options.
 
 ## Commands
 

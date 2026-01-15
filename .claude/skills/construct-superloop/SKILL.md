@@ -747,54 +747,69 @@ Before finalizing, verify your spec against Superloop needs:
 
 ## Phase 4: Handoff
 
+### Model Reference
+
+Use pinned model IDs for production stability:
+
+**Claude Models:**
+| Model | ID | Use Case |
+|-------|-----|----------|
+| Opus 4.5 | `claude-opus-4-5-20251101` | Complex reasoning, planning |
+| Sonnet 4.5 | `claude-sonnet-4-5-20250929` | Balanced coding, implementation |
+| Haiku 4.5 | `claude-haiku-4-5-20251001` | Fast, cost-effective |
+
+**Codex Models:**
+| Model | ID | Use Case |
+|-------|-----|----------|
+| GPT-5.2-Codex | `gpt-5.2-codex` | State-of-the-art coding |
+| GPT-5.1-Codex-Max | `gpt-5.1-codex-max` | Strong reasoning |
+| GPT-5.1-Codex | `gpt-5.1-codex` | Standard coding |
+
+**Thinking Levels:**
+| Level | Codex Effect | Claude Effect |
+|-------|--------------|---------------|
+| `none` | No reasoning | Quick mode |
+| `minimal` | Minimal effort | Quick mode |
+| `low` | Low effort | Extended, 4k budget |
+| `standard` | Medium effort | Extended, 8k budget |
+| `high` | High effort | Extended, 16k budget |
+| `max` | XHigh effort | Extended, 32k budget |
+
 ### Runner Availability Check
 
 Check what's available:
 
 ```bash
-# Check configured runners
-cat .superloop/config.json 2>/dev/null | jq '.runners // empty'
-
 # Check PATH availability
 which codex 2>/dev/null && echo "codex: available"
-which claude-vanilla 2>/dev/null && echo "claude-vanilla: available"
-which claude-glm-mantic 2>/dev/null && echo "claude-glm-mantic: available"
-
-# Check env vars for GLM
-[ -n "$ZAI_API_KEY" ] && echo "ZAI_API_KEY: set"
-[ -n "$RELACE_API_KEY" ] && echo "RELACE_API_KEY: set"
+which claude 2>/dev/null && echo "claude: available"
 ```
 
-### Runner Recommendations
+### Default Model Configuration
 
-Default recommendations based on role needs:
-
-| Role | Recommended | Rationale |
-|------|-------------|-----------|
-| Planner | `codex` | Strong architectural reasoning, good at decomposition |
-| Implementer | `claude-vanilla` | Quality-focused implementation, thorough |
-| Tester | `claude-glm-mantic` | Cost-effective, semantic search helps exploration |
-| Reviewer | `codex` | Fresh perspective, different from implementer |
-
-Present recommendations and let user override:
+Present the recommended configuration:
 
 ```
-## Runner Recommendations
+## Model Configuration
 
-Based on availability and feature complexity:
+Recommended setup (balanced quality and cost):
 
-┌─ Runner Selection ──────────────────────────────────────┐
-│ Accept these runner assignments?                        │
+┌─ Model Selection ───────────────────────────────────────┐
+│ Accept these model assignments?                         │
 │                                                         │
-│ • Planner: codex (strong reasoning)                     │
-│ • Implementer: claude-vanilla (quality focus)           │
-│ • Tester: claude-glm-mantic (cost-effective)            │
-│ • Reviewer: codex (fresh perspective)                   │
+│ • Planner:     Codex gpt-5.2-codex (thinking: max)     │
+│ • Implementer: Claude claude-sonnet-4-5-20250929 (standard) │
+│ • Tester:      Claude claude-sonnet-4-5-20250929 (standard) │
+│ • Reviewer:    Codex gpt-5.2-codex (thinking: max)     │
 │                                                         │
-│ ○ Yes, use these recommendations                        │
-│ ○ Let me customize the assignments                      │
+│ ○ Yes, use these recommendations (Recommended)          │
+│ ○ All Claude (use claude for everything)                │
+│ ○ All Codex (use codex for everything)                  │
+│ ○ Let me customize per role                             │
 └─────────────────────────────────────────────────────────┘
 ```
+
+If user chooses "customize", ask per role using AskUserQuestion.
 
 ### Config Generation
 
@@ -808,16 +823,17 @@ Generate or update `.superloop/config.json`:
       "args": ["--full-auto", "-C", "{repo}", "-"],
       "prompt_mode": "stdin"
     },
-    "claude-vanilla": {
-      "command": ["claude-vanilla"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "claude-glm-mantic": {
-      "command": ["claude-glm-mantic"],
+    "claude": {
+      "command": ["claude"],
       "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
       "prompt_mode": "stdin"
     }
+  },
+  "role_defaults": {
+    "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+    "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
   },
   "loops": [
     {
@@ -840,7 +856,7 @@ Generate or update `.superloop/config.json`:
         "require_on_completion": false
       },
       "reviewer_packet": {
-        "enabled": false
+        "enabled": true
       },
       "timeouts": {
         "enabled": true,
@@ -851,7 +867,7 @@ Generate or update `.superloop/config.json`:
         "reviewer": 120
       },
       "stuck": {
-        "enabled": false,
+        "enabled": true,
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": []
@@ -864,10 +880,10 @@ Generate or update `.superloop/config.json`:
         "max_wait_seconds": 7200
       },
       "roles": {
-        "planner": {"runner": "codex"},
-        "implementer": {"runner": "claude-vanilla"},
-        "tester": {"runner": "claude-glm-mantic"},
-        "reviewer": {"runner": "codex"}
+        "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+        "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+        "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+        "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
       }
     }
   ]
@@ -884,16 +900,18 @@ After generating spec and config:
 **Spec created**: `.superloop/specs/<loop-id>.md`
 **Config updated**: `.superloop/config.json`
 
-**Runners assigned**:
-- Planner: codex
-- Implementer: claude-vanilla
-- Tester: claude-glm-mantic
-- Reviewer: codex
+**Role Configuration**:
+| Role | Runner | Model | Thinking |
+|------|--------|-------|----------|
+| Planner | codex | gpt-5.2-codex | max |
+| Implementer | claude | claude-sonnet-4-5-20250929 | standard |
+| Tester | claude | claude-sonnet-4-5-20250929 | standard |
+| Reviewer | codex | gpt-5.2-codex | max |
 
 **What happens next**:
 1. Planner reads your spec, creates PLAN.MD + PHASE_1.MD
 2. Implementer works through tasks, checking them off
-3. Tester validates the implementation
+3. Tester validates the implementation (verifies AC coverage)
 4. Reviewer approves or requests changes
 5. Loop continues until SUPERLOOP_COMPLETE
 
