@@ -768,12 +768,14 @@ Use pinned model IDs for production stability:
 **Thinking Levels:**
 | Level | Codex Effect | Claude Effect |
 |-------|--------------|---------------|
-| `none` | No reasoning | Quick mode |
-| `minimal` | Minimal effort | Quick mode |
-| `low` | Low effort | Extended, 4k budget |
-| `standard` | Medium effort | Extended, 8k budget |
-| `high` | High effort | Extended, 16k budget |
-| `max` | XHigh effort | Extended, 32k budget |
+| `none` | No reasoning | (use prompts) |
+| `minimal` | Minimal effort | (use prompts) |
+| `low` | Low effort | (use prompts) |
+| `standard` | Medium effort | (use prompts) |
+| `high` | High effort | (use prompts) |
+| `max` | XHigh effort | (use prompts) |
+
+*Note: Claude Code doesn't support thinking via CLI flags. Use trigger words in prompts: "think" < "think hard" < "think harder" < "ultrathink"*
 
 ### Runner Availability Check
 

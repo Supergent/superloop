@@ -5248,24 +5248,13 @@ run_cmd() {
           fi
           ;;
         claude)
-          # Map to Claude thinking_mode and thinking_budget
-          local mode="" budget=""
-          case "$thinking" in
-            none)     mode="quick" ;;
-            minimal)  mode="quick" ;;
-            low)      mode="extended"; budget="4096" ;;
-            standard) mode="extended"; budget="8192" ;;
-            high)     mode="extended"; budget="16384" ;;
-            max)      mode="extended"; budget="32768" ;;
-          esac
-          if [[ -n "$mode" ]]; then
-            echo "--thinking-mode"
-            echo "$mode"
-          fi
-          if [[ -n "$budget" ]]; then
-            echo "--thinking-budget"
-            echo "$budget"
-          fi
+          # Claude Code doesn't have CLI flags for thinking.
+          # Thinking is controlled via:
+          # - Tab key toggle (interactive)
+          # - Trigger words in prompts: "think" < "think hard" < "think harder" < "ultrathink"
+          # - Settings in ~/.claude/settings.json
+          # For now, we don't inject flags. Users should use trigger words in spec/prompts.
+          # TODO: Add prompt injection for thinking trigger words based on level
           ;;
       esac
     }

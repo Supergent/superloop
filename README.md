@@ -120,7 +120,9 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 }
 ```
 
-**Thinking levels**: `none`, `minimal`, `low`, `standard`, `high`, `max` - maps to Codex reasoning_effort or Claude thinking_budget.
+**Thinking levels**: `none`, `minimal`, `low`, `standard`, `high`, `max`
+- Codex: maps to `-c model_reasoning_effort` (none→xhigh)
+- Claude: not yet supported via CLI (use trigger words like "ultrathink" in prompts)
 
 See `schema/config.schema.json` for all options.
 

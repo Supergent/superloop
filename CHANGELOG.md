@@ -1,6 +1,27 @@
 # Changelog
 
+## 0.4.1 - 2026-01-14
+
+### Added
+- **Per-role model configuration**: Specify model per role (e.g., `gpt-5.2-codex`, `claude-sonnet-4-5-20250929`)
+- **Thinking level abstraction**: Unified `thinking` field (`none`|`minimal`|`low`|`standard`|`high`|`max`)
+  - Codex: maps to `-c model_reasoning_effort` (none → xhigh)
+  - Claude: not yet supported via CLI flags (use trigger words like "ultrathink" in prompts)
+- **Role defaults**: Top-level `role_defaults` for global model/thinking configuration
+- **Constructor model selection**: Handoff phase now configures model and thinking per role
+
+### Changed
+- Default role configuration:
+  - Planner: Codex gpt-5.2-codex, thinking=max
+  - Implementer: Claude claude-sonnet-4-5-20250929, thinking=standard
+  - Tester: Claude claude-sonnet-4-5-20250929, thinking=standard
+  - Reviewer: Codex gpt-5.2-codex, thinking=max
+
 ## 0.4.0 - 2026-01-14
+
+### Added
+- **Spec-driven testing**: Tester verifies AC coverage (each acceptance criterion has a test)
+- **ARCHITECTURE.md**: Documents design rationale (why separate roles, gates, phases, etc.)
 
 ### Changed
 - **Repository cleanup**: Removed 17,000+ lines of cruft
