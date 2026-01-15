@@ -126,6 +126,30 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 
 See `schema/config.schema.json` for all options.
 
+## Dashboard
+
+Superloop includes a **liquid dashboard** - a contextual UI that adapts to loop state:
+
+```bash
+cd packages/superloop-ui
+bun run dev
+```
+
+Then open `http://localhost:3333/liquid` to see:
+- **Automatic views** - UI morphs based on loop phase (planning, implementing, testing, reviewing)
+- **Gate status** - Real-time test/approval/checklist status
+- **Task progress** - Current phase tasks with completion tracking
+- **Cost tracking** - Token usage and cost breakdown
+
+**Custom views via Claude Code:**
+
+```
+/superloop-view show me what tests are failing
+/superloop-view how much has this cost so far?
+```
+
+The `/superloop-view` skill generates custom dashboard views for specific questions.
+
 ## Commands
 
 | Command | Description |
@@ -183,12 +207,15 @@ superloop/
 ├── scripts/
 │   ├── build.sh           # Assembles src/ into superloop.sh
 │   └── validation/        # Smoke test utilities
-├── packages/superloop-ui/ # UI framework (TypeScript/React)
+├── packages/
+│   ├── json-render-core/  # Generative UI framework (catalog, validation, actions)
+│   ├── json-render-react/ # React renderer for UITrees
+│   └── superloop-ui/      # Liquid dashboard and prototype viewer
 ├── .superloop/
 │   ├── config.json        # Loop configuration
 │   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
 │   └── templates/         # Spec template
-└── .claude/skills/        # Claude Code skills (/construct-superloop)
+└── .claude/skills/        # Claude Code skills (/construct-superloop, /superloop-view)
 ```
 
 ## Development

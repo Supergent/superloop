@@ -8,6 +8,7 @@ import { resolvePackageRoot } from "./lib/package-root.js";
 import { resolveLoopDir, resolveLoopsRoot, resolvePrototypesRoot } from "./lib/paths.js";
 import { buildPrototypesPayload } from "./lib/payload.js";
 import { watchPaths } from "./lib/watch.js";
+import { loadSuperloopContext } from "./liquid/context-loader.js";
 
 export type DevServerOptions = {
   repoRoot: string;
@@ -24,6 +25,10 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
   const webRoot = path.join(packageRoot, "src", "web");
   const distWebRoot = path.join(packageRoot, "dist", "web");
   const indexHtmlPath = path.join(webRoot, "index.html");
+  const liquidHtmlPath = path.join(webRoot, "liquid.html");
+
+  // Store for skill-generated override tree
+  let overrideTree: unknown = null;
 
   const clients = new Set<SseClient>();
 
@@ -57,6 +62,79 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
+      return;
+    }
+
+    // Liquid Dashboard API: Get current context
+    if (url.pathname === "/api/liquid/context") {
+      try {
+        const context = await loadSuperloopContext({
+          repoRoot: options.repoRoot,
+          loopId: options.loopId,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(context));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // Liquid Dashboard API: Get/Set override tree
+    if (url.pathname === "/api/liquid/override") {
+      if (req.method === "GET") {
+        if (overrideTree) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(overrideTree));
+        } else {
+          res.writeHead(204);
+          res.end();
+        }
+        return;
+      }
+      if (req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          try {
+            overrideTree = JSON.parse(body);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+          } catch {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Invalid JSON" }));
+          }
+        });
+        return;
+      }
+      if (req.method === "DELETE") {
+        overrideTree = null;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+    }
+
+    // Liquid Dashboard: Serve HTML
+    if (url.pathname === "/liquid" || url.pathname === "/liquid/") {
+      const html = await fs.readFile(liquidHtmlPath, "utf8");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+
+    // Liquid Dashboard: Serve JS bundle
+    if (url.pathname === "/liquid-main.js" || url.pathname === "/liquid-main.js.map") {
+      const filePath = path.join(distWebRoot, url.pathname.replace("/", ""));
+      if (!(await fileExists(filePath))) {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("Liquid dashboard bundle not ready. Waiting for build...");
+        return;
+      }
+      const contentType = url.pathname.endsWith(".map") ? "application/json" : "text/javascript";
+      res.writeHead(200, { "Content-Type": contentType });
+      res.end(await fs.readFile(filePath));
       return;
     }
 

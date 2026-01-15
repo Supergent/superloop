@@ -46,4 +46,14 @@ export default defineConfig([
     splitting: false,
     noExternal: [/./],
   },
+  {
+    entry: ["src/web/liquid-main.tsx"],
+    format: ["esm"],
+    platform: "browser",
+    sourcemap: true,
+    target: "es2020",
+    outDir: "dist/web",
+    splitting: false,
+    noExternal: [/./],
+  },
 ]);

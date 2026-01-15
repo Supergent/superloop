@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 - 2026-01-14
+
+### Added
+- **Liquid interfaces**: Contextual dashboard that adapts to loop state
+  - Default views auto-select based on phase (idle, progress, approval, stuck, complete)
+  - Gate status, task progress, cost tracking in real-time
+  - Access at `http://localhost:3333/liquid` when running dev server
+- **`/superloop-view` skill**: Generate custom dashboard views via natural language
+  - "Show me test failures" → AI generates focused UITree
+  - POSTs to `/api/liquid/override` to replace default view
+- **json-render packages**: Generative UI framework with guardrails
+  - `@json-render/core`: Catalog (Zod schemas), UITree structure, data binding, visibility conditions, actions
+  - `@json-render/react`: React renderer with context providers
+  - `generateSkillPrompt()`: Auto-generate documentation from catalogs for AI skills
+- **Superloop component catalog**: ~20 components for loop monitoring
+  - Layout: Stack, Grid, Card, Divider
+  - Status: GateStatus, GateSummary, IterationHeader, Badge, Alert, ProgressBar
+  - Data: TaskList, TestFailures, BlockerCard, CostSummary, KeyValue, KeyValueList
+  - Actions: Button, ActionBar (approve, reject, cancel, view logs)
+
+### Changed
+- Updated directory structure: `packages/` now contains json-render-core, json-render-react, superloop-ui
+- ARCHITECTURE.md: Added "Why Liquid Interfaces?" section
+
 ## 0.4.1 - 2026-01-14
 
 ### Added

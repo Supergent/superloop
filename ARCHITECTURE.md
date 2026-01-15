@@ -204,6 +204,59 @@ Iteration 3: Planner → Implementer → Tester → Reviewer (done!)
 - Incremental progress is observable
 - Can resume after interruption (rate limits, crashes)
 
+## Why Liquid Interfaces?
+
+The dashboard adapts to loop state automatically:
+
+```
+Loop idle      → "No active loop" with start instructions
+Planning       → Plan overview, phase breakdown
+Implementing   → Task list with progress bar, current phase
+Testing        → Test results, failures highlighted
+Reviewing      → Approval interface, gate summary
+Stuck          → Blocker analysis, recommendations
+Complete       → Success summary, cost breakdown
+```
+
+**Why "liquid"?**
+
+Traditional dashboards are static layouts. You design screens, wire up data. But loop monitoring has contextual needs:
+
+- During **implementing**, you care about task progress
+- During **testing**, you care about failures
+- When **stuck**, you care about blockers
+- When **complete**, you care about cost
+
+**Default views + skill override:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  80% of time: Default views (automatic, free, instant)      │
+│  - State-based view selection                               │
+│  - No AI needed, just conditionals                          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  20% of time: Custom queries (/superloop-view skill)        │
+│  - "Show me test failures for auth module"                  │
+│  - "What's costing the most?"                               │
+│  - AI generates UITree, dashboard renders it                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why json-render?**
+
+The dashboard uses json-render, a framework for AI-generated UIs with guardrails:
+
+- **Catalog** - Zod schemas define what components AI can generate
+- **UITree** - Flat JSON structure (easy for AI to produce correctly)
+- **Data binding** - `{ "path": "/loop/phase" }` for live data
+- **Visibility** - Conditional rendering based on state
+- **Actions** - Typed actions (approve, reject, view logs)
+
+The AI can only generate valid UIs because the catalog constrains it. No hallucinated components, no invalid props.
+
 ## Summary
 
 Superloop's design optimizes for:
@@ -215,5 +268,6 @@ Superloop's design optimizes for:
 | Adaptability | Incremental phases, conservative updates |
 | Human control | Spec authoring, approval gates, stuck escalation |
 | Efficiency | One phase at a time, minimal churn |
+| Observability | Liquid dashboard, contextual views, custom queries |
 
 The complexity exists to make AI agents **reliably useful**, not just impressively autonomous.

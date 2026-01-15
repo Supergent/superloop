@@ -18,13 +18,16 @@
   "dependencies": {
     "@biomejs/biome": "^1.9.4",
     "@inquirer/prompts": "^7.2.0",
+    "@json-render/core": "file:../json-render-core",
+    "@json-render/react": "file:../json-render-react",
     "blessed": "^0.1.81",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "framer-motion": "latest",
     "ora": "^8.1.1",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/blessed": "^0.1.25",

@@ -1,5 +1,16 @@
 .superloop/loops/
 .superloop/logs/
 .superloop/state.json
-packages/superloop-ui/dist/
 prose/
+
+# Build outputs
+**/dist/
+
+# Dependencies
+**/node_modules/
+
+# Lockfiles (optional - depends on preference)
+**/bun.lock
+
+# Turbo cache
+**/.turbo/
