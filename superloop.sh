@@ -1881,6 +1881,9 @@ run_role() {
   shift || true
   local iteration="${1:-0}"
   shift || true
+  # Optional: thinking env var (e.g., "MAX_THINKING_TOKENS=10000")
+  local thinking_env="${1:-}"
+  shift || true
   local -a runner_command=()
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--" ]]; then
@@ -1943,18 +1946,37 @@ run_role() {
   local max_retries="${SUPERLOOP_RATE_LIMIT_MAX_RETRIES:-3}"
   local retry_count=0
 
+  # Build env prefix array for command execution
+  local -a env_prefix=()
+  if [[ -n "$thinking_env" ]]; then
+    env_prefix+=("env" "$thinking_env")
+  fi
+
   while true; do
     status=0
     if [[ "${timeout_seconds:-0}" -gt 0 || "${inactivity_seconds:-0}" -gt 0 ]]; then
-      RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
-        run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      if [[ ${#env_prefix[@]} -gt 0 ]]; then
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+          "${env_prefix[@]}" run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      else
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+          run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      fi
       status=$?
     else
       set +e
       if [[ "$prompt_mode" == "stdin" ]]; then
-        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        if [[ ${#env_prefix[@]} -gt 0 ]]; then
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${env_prefix[@]}" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        else
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        fi
       else
-        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" | tee "$log_file"
+        if [[ ${#env_prefix[@]} -gt 0 ]]; then
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${env_prefix[@]}" "${cmd[@]}" | tee "$log_file"
+        else
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" | tee "$log_file"
+        fi
       fi
       status=${PIPESTATUS[0]}
       set -e
@@ -2775,14 +2797,16 @@ extract_claude_usage() {
   fi
 
   # Extract usage from assistant messages
+  # Includes thinking_tokens for extended thinking (billed separately from output_tokens)
   jq -s '
     [.[] | select(.type == "assistant" and .message.usage != null) | .message.usage] |
     if length == 0 then
-      {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+      {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     else
       {
         "input_tokens": (map(.input_tokens // 0) | add),
         "output_tokens": (map(.output_tokens // 0) | add),
+        "thinking_tokens": (map(.thinking_tokens // 0) | add),
         "cache_read_input_tokens": (map(.cache_read_input_tokens // 0) | add),
         "cache_creation_input_tokens": (map(.cache_creation_input_tokens // 0) | add)
       }
@@ -2802,14 +2826,21 @@ extract_codex_usage() {
   fi
 
   # Extract token_count events from Codex JSONL
+  # Structure: .payload.info.total_token_usage contains the cumulative counts
+  # We take the last token_count event which has the final totals
+  # Includes reasoning_output_tokens for reasoning effort (similar to Claude thinking_tokens)
   jq -s '
-    [.[] | select(.type == "event_msg" and .payload.type == "token_count") | .payload] |
+    [.[] | select(.type == "event_msg" and .payload.type == "token_count") | .payload.info.total_token_usage // .payload] |
     if length == 0 then
-      {"input_tokens": 0, "output_tokens": 0}
+      {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "reasoning_output_tokens": 0}
     else
+      # Take the last entry (cumulative totals) rather than summing
+      .[-1] |
       {
-        "input_tokens": (map(.input_tokens // 0) | add),
-        "output_tokens": (map(.output_tokens // 0) | add)
+        "input_tokens": (.input_tokens // 0),
+        "output_tokens": (.output_tokens // 0),
+        "cached_input_tokens": (.cached_input_tokens // 0),
+        "reasoning_output_tokens": (.reasoning_output_tokens // 0)
       }
     end
   ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
@@ -2968,7 +2999,13 @@ write_usage_event() {
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Build the event JSON - include session/thread IDs and model from globals
+  # Calculate cost if pricing functions are available
+  local cost_usd="0"
+  if type calculate_cost &>/dev/null && [[ -n "${USAGE_MODEL:-}" ]]; then
+    cost_usd=$(calculate_cost "$runner_type" "${USAGE_MODEL}" "$usage_json" 2>/dev/null || echo "0")
+  fi
+
+  # Build the event JSON - include session/thread IDs, model, and cost
   jq -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
@@ -2980,6 +3017,7 @@ write_usage_event() {
     --arg session_id "${USAGE_SESSION_ID:-}" \
     --arg thread_id "${USAGE_THREAD_ID:-}" \
     --arg model "${USAGE_MODEL:-}" \
+    --argjson cost "$cost_usd" \
     '{
       "timestamp": $ts,
       "iteration": $iter,
@@ -2987,6 +3025,7 @@ write_usage_event() {
       "duration_ms": $duration,
       "runner": $runner,
       "model": (if $model == "" then null else $model end),
+      "cost_usd": $cost,
       "session_id": (if $session_id == "" then null else $session_id end),
       "thread_id": (if $thread_id == "" then null else $thread_id end),
       "usage": $usage,
@@ -3713,6 +3752,294 @@ build_codex_resume_command() {
 extract_codex_thread_id() {
   local output="$1"
   echo "$output" | grep -oE '"thread_id":\s*"[^"]*"' | sed 's/"thread_id":\s*"//' | sed 's/"$//' | head -1 || true
+}
+
+# Pricing data and cost calculation for Claude and Codex models
+# Prices are per million tokens (MTok)
+# Last updated: 2026-01-14
+
+# -----------------------------------------------------------------------------
+# Pricing Tables (USD per Million Tokens)
+# -----------------------------------------------------------------------------
+
+# Get pricing for a model
+# Args: $1 = model_id (e.g., "claude-sonnet-4-5-20250929", "gpt-5.2-codex")
+# Output: JSON object with pricing per MTok
+get_model_pricing() {
+  local model="$1"
+
+  # Normalize model ID (remove date suffixes for matching)
+  local model_base
+  model_base=$(echo "$model" | sed -E 's/-[0-9]{8}$//')
+
+  case "$model_base" in
+    # Claude 4.5 models
+    claude-opus-4-5|claude-opus-4.5)
+      echo '{"input": 5, "output": 25, "thinking": 25, "cache_read": 0.50, "cache_write": 6.25}'
+      ;;
+    claude-sonnet-4-5|claude-sonnet-4.5)
+      echo '{"input": 3, "output": 15, "thinking": 15, "cache_read": 0.30, "cache_write": 3.75}'
+      ;;
+    claude-haiku-4-5|claude-haiku-4.5)
+      echo '{"input": 1, "output": 5, "thinking": 5, "cache_read": 0.10, "cache_write": 1.25}'
+      ;;
+
+    # Claude 4.x models
+    claude-opus-4|claude-opus-4.1)
+      echo '{"input": 15, "output": 75, "thinking": 75, "cache_read": 1.50, "cache_write": 18.75}'
+      ;;
+    claude-sonnet-4)
+      echo '{"input": 3, "output": 15, "thinking": 15, "cache_read": 0.30, "cache_write": 3.75}'
+      ;;
+
+    # OpenAI/Codex models
+    gpt-5.2-codex|gpt-5.2-codex-*)
+      echo '{"input": 1.75, "output": 14, "reasoning": 14, "cached_input": 0.18}'
+      ;;
+    gpt-5.1-codex|gpt-5.1-codex-*|gpt-5.1-codex-max|gpt-5.1-codex-mini)
+      echo '{"input": 1.25, "output": 10, "reasoning": 10, "cached_input": 0.125}'
+      ;;
+    gpt-5-codex|gpt-5-codex-*)
+      echo '{"input": 1.25, "output": 10, "reasoning": 10, "cached_input": 0.125}'
+      ;;
+
+    # Default fallback (use Sonnet 4.5 pricing as reasonable default)
+    *)
+      echo '{"input": 3, "output": 15, "thinking": 15, "reasoning": 15, "cache_read": 0.30, "cache_write": 3.75, "cached_input": 0.30}'
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
+# Cost Calculation
+# -----------------------------------------------------------------------------
+
+# Calculate cost for Claude usage
+# Args: $1 = model, $2 = usage_json (with input_tokens, output_tokens, thinking_tokens, cache_read_input_tokens, cache_creation_input_tokens)
+# Output: cost in USD (decimal)
+calculate_claude_cost() {
+  local model="$1"
+  local usage_json="$2"
+
+  local pricing
+  pricing=$(get_model_pricing "$model")
+
+  # Extract token counts (default to 0)
+  local input_tokens output_tokens thinking_tokens cache_read cache_write
+  input_tokens=$(echo "$usage_json" | jq -r '.input_tokens // 0')
+  output_tokens=$(echo "$usage_json" | jq -r '.output_tokens // 0')
+  thinking_tokens=$(echo "$usage_json" | jq -r '.thinking_tokens // 0')
+  cache_read=$(echo "$usage_json" | jq -r '.cache_read_input_tokens // 0')
+  cache_write=$(echo "$usage_json" | jq -r '.cache_creation_input_tokens // 0')
+
+  # Extract prices
+  local price_input price_output price_thinking price_cache_read price_cache_write
+  price_input=$(echo "$pricing" | jq -r '.input')
+  price_output=$(echo "$pricing" | jq -r '.output')
+  price_thinking=$(echo "$pricing" | jq -r '.thinking // .output')
+  price_cache_read=$(echo "$pricing" | jq -r '.cache_read // .input')
+  price_cache_write=$(echo "$pricing" | jq -r '.cache_write // .input')
+
+  # Calculate cost (tokens / 1M * price_per_MTok)
+  # Using awk for floating point math
+  awk -v input="$input_tokens" -v output="$output_tokens" -v thinking="$thinking_tokens" \
+      -v cache_read="$cache_read" -v cache_write="$cache_write" \
+      -v p_input="$price_input" -v p_output="$price_output" -v p_thinking="$price_thinking" \
+      -v p_cache_read="$price_cache_read" -v p_cache_write="$price_cache_write" \
+      'BEGIN {
+        cost = (input / 1000000 * p_input) + \
+               (output / 1000000 * p_output) + \
+               (thinking / 1000000 * p_thinking) + \
+               (cache_read / 1000000 * p_cache_read) + \
+               (cache_write / 1000000 * p_cache_write)
+        printf "%.6f\n", cost
+      }'
+}
+
+# Calculate cost for Codex usage
+# Args: $1 = model, $2 = usage_json (with input_tokens, output_tokens, reasoning_output_tokens, cached_input_tokens)
+# Output: cost in USD (decimal)
+calculate_codex_cost() {
+  local model="$1"
+  local usage_json="$2"
+
+  local pricing
+  pricing=$(get_model_pricing "$model")
+
+  # Extract token counts (default to 0)
+  local input_tokens output_tokens reasoning_tokens cached_tokens
+  input_tokens=$(echo "$usage_json" | jq -r '.input_tokens // 0')
+  output_tokens=$(echo "$usage_json" | jq -r '.output_tokens // 0')
+  reasoning_tokens=$(echo "$usage_json" | jq -r '.reasoning_output_tokens // 0')
+  cached_tokens=$(echo "$usage_json" | jq -r '.cached_input_tokens // 0')
+
+  # Extract prices
+  local price_input price_output price_reasoning price_cached
+  price_input=$(echo "$pricing" | jq -r '.input')
+  price_output=$(echo "$pricing" | jq -r '.output')
+  price_reasoning=$(echo "$pricing" | jq -r '.reasoning // .output')
+  price_cached=$(echo "$pricing" | jq -r '.cached_input // (.input * 0.1)')
+
+  # Calculate cost (tokens / 1M * price_per_MTok)
+  # Note: input_tokens from Codex is non-cached input, so we add cached separately
+  awk -v input="$input_tokens" -v output="$output_tokens" -v reasoning="$reasoning_tokens" \
+      -v cached="$cached_tokens" \
+      -v p_input="$price_input" -v p_output="$price_output" -v p_reasoning="$price_reasoning" \
+      -v p_cached="$price_cached" \
+      'BEGIN {
+        cost = (input / 1000000 * p_input) + \
+               (output / 1000000 * p_output) + \
+               (reasoning / 1000000 * p_reasoning) + \
+               (cached / 1000000 * p_cached)
+        printf "%.6f\n", cost
+      }'
+}
+
+# Calculate cost based on runner type
+# Args: $1 = runner_type (claude|codex), $2 = model, $3 = usage_json
+# Output: cost in USD (decimal)
+calculate_cost() {
+  local runner_type="$1"
+  local model="$2"
+  local usage_json="$3"
+
+  case "$runner_type" in
+    claude)
+      calculate_claude_cost "$model" "$usage_json"
+      ;;
+    codex|openai)
+      calculate_codex_cost "$model" "$usage_json"
+      ;;
+    *)
+      # Unknown runner, return 0
+      echo "0"
+      ;;
+  esac
+}
+
+# Format cost as human-readable string
+# Args: $1 = cost (decimal USD)
+# Output: formatted string (e.g., "$0.0042", "$1.23")
+format_cost() {
+  local cost="$1"
+
+  awk -v cost="$cost" 'BEGIN {
+    if (cost < 0.01) {
+      printf "$%.4f\n", cost
+    } else if (cost < 1) {
+      printf "$%.3f\n", cost
+    } else {
+      printf "$%.2f\n", cost
+    }
+  }'
+}
+
+# -----------------------------------------------------------------------------
+# Aggregate Usage Summary
+# -----------------------------------------------------------------------------
+
+# Aggregate usage from JSONL file
+# Args: $1 = usage_file (path to usage.jsonl)
+# Output: JSON summary with totals per runner, per role, and overall
+aggregate_usage() {
+  local usage_file="$1"
+
+  if [[ ! -f "$usage_file" ]]; then
+    echo '{"error": "usage file not found"}'
+    return 1
+  fi
+
+  jq -s '
+    # Group by runner type
+    group_by(.runner) |
+    map({
+      runner: .[0].runner,
+      total_duration_ms: (map(.duration_ms) | add),
+      total_cost_usd: 0,
+      by_role: (group_by(.role) | map({
+        role: .[0].role,
+        iterations: length,
+        duration_ms: (map(.duration_ms) | add),
+        usage: (
+          if .[0].runner == "claude" then
+            {
+              input_tokens: (map(.usage.input_tokens // 0) | add),
+              output_tokens: (map(.usage.output_tokens // 0) | add),
+              thinking_tokens: (map(.usage.thinking_tokens // 0) | add),
+              cache_read_input_tokens: (map(.usage.cache_read_input_tokens // 0) | add),
+              cache_creation_input_tokens: (map(.usage.cache_creation_input_tokens // 0) | add)
+            }
+          else
+            {
+              input_tokens: (map(.usage.input_tokens // 0) | add),
+              output_tokens: (map(.usage.output_tokens // 0) | add),
+              reasoning_output_tokens: (map(.usage.reasoning_output_tokens // 0) | add),
+              cached_input_tokens: (map(.usage.cached_input_tokens // 0) | add)
+            }
+          end
+        )
+      })),
+      totals: (
+        if .[0].runner == "claude" then
+          {
+            input_tokens: (map(.usage.input_tokens // 0) | add),
+            output_tokens: (map(.usage.output_tokens // 0) | add),
+            thinking_tokens: (map(.usage.thinking_tokens // 0) | add),
+            cache_read_input_tokens: (map(.usage.cache_read_input_tokens // 0) | add),
+            cache_creation_input_tokens: (map(.usage.cache_creation_input_tokens // 0) | add)
+          }
+        else
+          {
+            input_tokens: (map(.usage.input_tokens // 0) | add),
+            output_tokens: (map(.usage.output_tokens // 0) | add),
+            reasoning_output_tokens: (map(.usage.reasoning_output_tokens // 0) | add),
+            cached_input_tokens: (map(.usage.cached_input_tokens // 0) | add)
+          }
+        end
+      )
+    }) |
+    {
+      by_runner: .,
+      total_duration_ms: (map(.total_duration_ms) | add),
+      total_iterations: ([.[].by_role[].iterations] | add)
+    }
+  ' "$usage_file" 2>/dev/null || echo '{"error": "failed to aggregate usage"}'
+}
+
+# Calculate total cost from aggregated usage
+# Args: $1 = aggregated_json (from aggregate_usage), $2 = default_claude_model, $3 = default_codex_model
+# Output: JSON with costs added
+calculate_aggregate_costs() {
+  local aggregated="$1"
+  local claude_model="${2:-claude-sonnet-4-5}"
+  local codex_model="${3:-gpt-5.2-codex}"
+
+  local total_cost=0
+  local result="$aggregated"
+
+  # Process each runner
+  for runner in $(echo "$aggregated" | jq -r '.by_runner[].runner'); do
+    local runner_totals model cost
+    runner_totals=$(echo "$aggregated" | jq -r ".by_runner[] | select(.runner == \"$runner\") | .totals")
+
+    if [[ "$runner" == "claude" ]]; then
+      model="$claude_model"
+      cost=$(calculate_claude_cost "$model" "$runner_totals")
+    else
+      model="$codex_model"
+      cost=$(calculate_codex_cost "$model" "$runner_totals")
+    fi
+
+    total_cost=$(awk -v t="$total_cost" -v c="$cost" 'BEGIN { printf "%.6f", t + c }')
+
+    # Update runner cost in result
+    result=$(echo "$result" | jq --arg runner "$runner" --argjson cost "$cost" '
+      .by_runner |= map(if .runner == $runner then .total_cost_usd = $cost else . end)
+    ')
+  done
+
+  # Add total cost
+  echo "$result" | jq --argjson cost "$total_cost" '. + {total_cost_usd: $cost}'
 }
 
 snapshot_file() {
@@ -5067,16 +5394,21 @@ run_cmd() {
   }
 
   # For backward compatibility, set up default runner variables
-  local -a runner_command=("${default_runner_command[@]}")
-  local -a runner_args=("${default_runner_args[@]}")
-  local -a runner_fast_args=("${default_runner_fast_args[@]}")
+  # Use ${array[@]+"${array[@]}"} to safely handle empty arrays with set -u
+  local -a runner_command=()
+  [[ ${#default_runner_command[@]} -gt 0 ]] && runner_command=("${default_runner_command[@]}")
+  local -a runner_args=()
+  [[ ${#default_runner_args[@]} -gt 0 ]] && runner_args=("${default_runner_args[@]}")
+  local -a runner_fast_args=()
+  [[ ${#default_runner_fast_args[@]} -gt 0 ]] && runner_fast_args=("${default_runner_fast_args[@]}")
   local runner_prompt_mode="$default_runner_prompt_mode"
 
   if [[ "${dry_run:-0}" -ne 1 && ${#runner_command[@]} -gt 0 ]]; then
     need_exec "${runner_command[0]}"
   fi
 
-  local -a runner_active_args=("${runner_args[@]}")
+  local -a runner_active_args=()
+  [[ ${#runner_args[@]} -gt 0 ]] && runner_active_args=("${runner_args[@]}")
   if [[ "${fast_mode:-0}" -eq 1 ]]; then
     if [[ ${#runner_fast_args[@]} -gt 0 ]]; then
       runner_active_args=("${runner_fast_args[@]}")
@@ -5248,14 +5580,43 @@ run_cmd() {
           fi
           ;;
         claude)
-          # Claude Code doesn't have CLI flags for thinking.
-          # Thinking is controlled via:
-          # - Tab key toggle (interactive)
-          # - Trigger words in prompts: "think" < "think hard" < "think harder" < "ultrathink"
-          # - Settings in ~/.claude/settings.json
-          # For now, we don't inject flags. Users should use trigger words in spec/prompts.
-          # TODO: Add prompt injection for thinking trigger words based on level
+          # Claude Code thinking is controlled via MAX_THINKING_TOKENS env var.
+          # Use get_thinking_env() to get the env var prefix for command execution.
+          # No CLI flags for thinking.
           ;;
+      esac
+    }
+
+    # Get environment variables for thinking (returns VAR=value to prefix command)
+    # Used for Claude where thinking is controlled via MAX_THINKING_TOKENS env var
+    get_thinking_env() {
+      local runner_type="$1"  # "codex" or "claude"
+      local thinking="$2"     # none|minimal|low|standard|high|max
+
+      if [[ -z "$thinking" || "$thinking" == "null" ]]; then
+        return 0
+      fi
+
+      case "$runner_type" in
+        claude)
+          # Map thinking level to MAX_THINKING_TOKENS (per-request budget)
+          # - 0 = disabled
+          # - 1024 = minimum
+          # - 32000 = recommended max for real-time (above this, use batch)
+          local tokens=""
+          case "$thinking" in
+            none)     tokens="0" ;;
+            minimal)  tokens="1024" ;;
+            low)      tokens="4096" ;;
+            standard) tokens="10000" ;;
+            high)     tokens="20000" ;;
+            max)      tokens="32000" ;;
+          esac
+          if [[ -n "$tokens" ]]; then
+            echo "MAX_THINKING_TOKENS=$tokens"
+          fi
+          ;;
+        # Codex uses CLI flags, not env vars - handled by get_thinking_flags
       esac
     }
 
@@ -5780,7 +6141,8 @@ run_cmd() {
           role_runner_active_args=("--model" "$role_model" "${role_runner_active_args[@]}")
         fi
 
-        # Inject thinking flags based on runner type
+        # Inject thinking flags based on runner type (for Codex CLI flags)
+        local role_thinking_env=""
         if [[ -n "$role_thinking" && "$role_thinking" != "null" ]]; then
           local -a thinking_flags=()
           while IFS= read -r flag; do
@@ -5789,6 +6151,8 @@ run_cmd() {
           if [[ ${#thinking_flags[@]} -gt 0 ]]; then
             role_runner_active_args=("${thinking_flags[@]}" "${role_runner_active_args[@]}")
           fi
+          # Get thinking env vars (for Claude MAX_THINKING_TOKENS)
+          role_thinking_env=$(get_thinking_env "$role_runner_type" "$role_thinking")
         fi
 
         # Log which runner is being used for this role
@@ -5805,7 +6169,7 @@ run_cmd() {
           run_openprose_role "$repo" "$loop_dir" "$prompt_dir" "$log_dir" "$last_messages_dir" "$role_log" "$last_message_file" "$implementer_report" "$role_timeout_seconds" "$role_runner_prompt_mode" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         else
-          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$role_runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
+          run_role "$repo" "$role" "$prompt_file" "$last_message_file" "$role_log" "$role_timeout_seconds" "$role_runner_prompt_mode" "$timeout_inactivity" "$usage_file" "$iteration" "$role_thinking_env" "${role_runner_command[@]}" -- "${role_runner_active_args[@]}"
           role_status=$?
         fi
         set -e

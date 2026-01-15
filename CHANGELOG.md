@@ -6,8 +6,16 @@
 - **Per-role model configuration**: Specify model per role (e.g., `gpt-5.2-codex`, `claude-sonnet-4-5-20250929`)
 - **Thinking level abstraction**: Unified `thinking` field (`none`|`minimal`|`low`|`standard`|`high`|`max`)
   - Codex: maps to `-c model_reasoning_effort` (none → xhigh)
-  - Claude: not yet supported via CLI flags (use trigger words like "ultrathink" in prompts)
+  - Claude: maps to `MAX_THINKING_TOKENS` env var (0 → 32000 per request)
+- **Basic test suite**: 13 bats tests covering version, validate, list, status, init, dry-run
 - **Role defaults**: Top-level `role_defaults` for global model/thinking configuration
+- **Improved token tracking**: Now captures reasoning/thinking tokens for accurate cost tracking
+  - Claude: `thinking_tokens` (billed separately from output_tokens)
+  - Codex: `reasoning_output_tokens`, `cached_input_tokens`
+- **Cost calculation**: Automatic USD cost per role based on model pricing
+  - Pricing table for Claude (Opus/Sonnet/Haiku 4.5, 4.x) and Codex (gpt-5.x)
+  - Includes cache read/write pricing differentials
+  - Each usage event now includes `cost_usd` field
 - **Constructor model selection**: Handoff phase now configures model and thinking per role
 
 ### Changed
