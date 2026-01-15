@@ -152,6 +152,14 @@ vim src/*.sh
 git diff --exit-code superloop.sh
 ```
 
+## Design
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the rationale behind Superloop's design decisions:
+- Why separate roles (Planner, Implementer, Tester, Reviewer)
+- Why one phase at a time
+- Why gates and the promise system
+- Why atomic tasks with checkboxes
+
 ## License
 
 MIT
