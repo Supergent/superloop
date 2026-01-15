@@ -16,6 +16,15 @@
   - Pricing table for Claude (Opus/Sonnet/Haiku 4.5, 4.x) and Codex (gpt-5.x)
   - Includes cache read/write pricing differentials
   - Each usage event now includes `cost_usd` field
+- **Usage command**: `superloop.sh usage --loop ID` shows token/cost summary
+  - Aggregates input, output, thinking/reasoning, and cache tokens
+  - Shows cost breakdown by role (planner, implementer, tester, reviewer)
+  - Shows cost breakdown by runner (claude, codex)
+  - `--json` flag for machine-readable output
+- **HTML report usage section**: Report now includes Usage & Cost section
+  - Summary stats (total cost, duration, iterations)
+  - Token breakdown table
+  - Cost by role and runner tables
 - **Constructor model selection**: Handoff phase now configures model and thinking per role
 
 ### Changed

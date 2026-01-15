@@ -136,6 +136,8 @@ See `schema/config.schema.json` for all options.
 | `run --fast` | Use `runner.fast_args` if configured |
 | `status --repo DIR` | Print current state |
 | `status --summary` | Print gate/evidence snapshot |
+| `usage --loop ID` | Show token usage and cost summary |
+| `usage --json` | Machine-readable usage output |
 | `approve --loop ID` | Record approval for pending gate |
 | `cancel` | Stop and clear state |
 | `validate` | Check config against schema |
@@ -165,8 +167,9 @@ test-status.json     # Pass/fail status
 evidence.json        # Artifact hashes
 gate-summary.txt     # Gate statuses
 events.jsonl         # Event stream
+usage.jsonl          # Token usage and cost per role
 timeline.md          # Human-readable timeline
-report.html          # Visual report
+report.html          # Visual report (includes usage/cost section)
 logs/iter-N/         # Per-iteration logs
 ```
 
