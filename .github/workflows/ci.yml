@@ -29,3 +29,27 @@ jobs:
           bats-version: 1.10.0
       - name: Run tests
         run: bats tests/
+
+  package-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+      - name: Install dependencies - json-render-core
+        run: cd packages/json-render-core && bun install
+      - name: Install dependencies - json-render-react
+        run: cd packages/json-render-react && bun install
+      - name: Install dependencies - superloop-ui
+        run: cd packages/superloop-ui && bun install
+      - name: Run tests - json-render-core
+        run: cd packages/json-render-core && bun run test:coverage
+      - name: Run tests - json-render-react
+        run: cd packages/json-render-react && bun run test:coverage
+      - name: Run tests - superloop-ui
+        run: cd packages/superloop-ui && bun run test:coverage
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          directory: ./packages/*/coverage
+          fail_ci_if_error: false

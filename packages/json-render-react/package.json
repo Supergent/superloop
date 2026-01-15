@@ -30,7 +30,11 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "@json-render/core": "file:../json-render-core"
@@ -38,7 +42,14 @@
   "devDependencies": {
     "@types/react": "^18.3.3",
     "tsup": "^8.0.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "@vitest/ui": "^1.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "jsdom": "^23.0.0"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
