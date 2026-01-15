@@ -13,6 +13,7 @@ PARTS=(
   "30-runner.sh"
   "35-usage.sh"
   "36-usage-limits.sh"
+  "37-pricing.sh"
   "40-gates.sh"
   "50-events.sh"
   "60-commands.sh"

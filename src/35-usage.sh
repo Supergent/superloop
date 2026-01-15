@@ -112,14 +112,16 @@ extract_claude_usage() {
   fi
 
   # Extract usage from assistant messages
+  # Includes thinking_tokens for extended thinking (billed separately from output_tokens)
   jq -s '
     [.[] | select(.type == "assistant" and .message.usage != null) | .message.usage] |
     if length == 0 then
-      {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+      {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     else
       {
         "input_tokens": (map(.input_tokens // 0) | add),
         "output_tokens": (map(.output_tokens // 0) | add),
+        "thinking_tokens": (map(.thinking_tokens // 0) | add),
         "cache_read_input_tokens": (map(.cache_read_input_tokens // 0) | add),
         "cache_creation_input_tokens": (map(.cache_creation_input_tokens // 0) | add)
       }
@@ -139,14 +141,21 @@ extract_codex_usage() {
   fi
 
   # Extract token_count events from Codex JSONL
+  # Structure: .payload.info.total_token_usage contains the cumulative counts
+  # We take the last token_count event which has the final totals
+  # Includes reasoning_output_tokens for reasoning effort (similar to Claude thinking_tokens)
   jq -s '
-    [.[] | select(.type == "event_msg" and .payload.type == "token_count") | .payload] |
+    [.[] | select(.type == "event_msg" and .payload.type == "token_count") | .payload.info.total_token_usage // .payload] |
     if length == 0 then
-      {"input_tokens": 0, "output_tokens": 0}
+      {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "reasoning_output_tokens": 0}
     else
+      # Take the last entry (cumulative totals) rather than summing
+      .[-1] |
       {
-        "input_tokens": (map(.input_tokens // 0) | add),
-        "output_tokens": (map(.output_tokens // 0) | add)
+        "input_tokens": (.input_tokens // 0),
+        "output_tokens": (.output_tokens // 0),
+        "cached_input_tokens": (.cached_input_tokens // 0),
+        "reasoning_output_tokens": (.reasoning_output_tokens // 0)
       }
     end
   ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
@@ -305,7 +314,13 @@ write_usage_event() {
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Build the event JSON - include session/thread IDs and model from globals
+  # Calculate cost if pricing functions are available
+  local cost_usd="0"
+  if type calculate_cost &>/dev/null && [[ -n "${USAGE_MODEL:-}" ]]; then
+    cost_usd=$(calculate_cost "$runner_type" "${USAGE_MODEL}" "$usage_json" 2>/dev/null || echo "0")
+  fi
+
+  # Build the event JSON - include session/thread IDs, model, and cost
   jq -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
@@ -317,6 +332,7 @@ write_usage_event() {
     --arg session_id "${USAGE_SESSION_ID:-}" \
     --arg thread_id "${USAGE_THREAD_ID:-}" \
     --arg model "${USAGE_MODEL:-}" \
+    --argjson cost "$cost_usd" \
     '{
       "timestamp": $ts,
       "iteration": $iter,
@@ -324,6 +340,7 @@ write_usage_event() {
       "duration_ms": $duration,
       "runner": $runner,
       "model": (if $model == "" then null else $model end),
+      "cost_usd": $cost,
       "session_id": (if $session_id == "" then null else $session_id end),
       "thread_id": (if $thread_id == "" then null else $thread_id end),
       "usage": $usage,
