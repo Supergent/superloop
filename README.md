@@ -231,6 +231,33 @@ vim src/*.sh
 git diff --exit-code superloop.sh
 ```
 
+## Testing
+
+Superloop has comprehensive test coverage across TypeScript packages and bash orchestration:
+
+- **470+ passing tests** (215 BATS + 256 TypeScript)
+- **70%+ overall coverage**, 90%+ on critical paths
+- **Zero API calls** - all tests use mocks for deterministic, fast execution
+
+```bash
+# Run TypeScript tests
+cd packages/json-render-core && npm test
+cd packages/json-render-react && npm test
+cd packages/superloop-ui && npm test
+
+# Run BATS integration tests
+bats tests/*.bats
+
+# With coverage
+npm run test:coverage
+```
+
+See [TESTING.md](TESTING.md) for detailed information on:
+- Test structure and organization
+- Running tests and generating coverage reports
+- Writing new tests
+- CI/CD integration
+
 ## Design
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the rationale behind Superloop's design decisions:
