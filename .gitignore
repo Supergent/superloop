@@ -14,3 +14,4 @@ prose/
 
 # Turbo cache
 **/.turbo/
+coverage/
