@@ -482,6 +482,9 @@ run_role() {
   shift || true
   local iteration="${1:-0}"
   shift || true
+  # Optional: thinking env var (e.g., "MAX_THINKING_TOKENS=10000")
+  local thinking_env="${1:-}"
+  shift || true
   local -a runner_command=()
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--" ]]; then
@@ -544,18 +547,37 @@ run_role() {
   local max_retries="${SUPERLOOP_RATE_LIMIT_MAX_RETRIES:-3}"
   local retry_count=0
 
+  # Build env prefix array for command execution
+  local -a env_prefix=()
+  if [[ -n "$thinking_env" ]]; then
+    env_prefix+=("env" "$thinking_env")
+  fi
+
   while true; do
     status=0
     if [[ "${timeout_seconds:-0}" -gt 0 || "${inactivity_seconds:-0}" -gt 0 ]]; then
-      RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
-        run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      if [[ ${#env_prefix[@]} -gt 0 ]]; then
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+          "${env_prefix[@]}" run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      else
+        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+          run_command_with_timeout "$prompt_file" "$log_file" "$timeout_seconds" "$prompt_mode" "$inactivity_seconds" "${cmd[@]}"
+      fi
       status=$?
     else
       set +e
       if [[ "$prompt_mode" == "stdin" ]]; then
-        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        if [[ ${#env_prefix[@]} -gt 0 ]]; then
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${env_prefix[@]}" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        else
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" < "$prompt_file" | tee "$log_file"
+        fi
       else
-        RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" | tee "$log_file"
+        if [[ ${#env_prefix[@]} -gt 0 ]]; then
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${env_prefix[@]}" "${cmd[@]}" | tee "$log_file"
+        else
+          RUNNER_RATE_LIMIT_FILE="$rate_limit_file" "${cmd[@]}" | tee "$log_file"
+        fi
       fi
       status=${PIPESTATUS[0]}
       set -e

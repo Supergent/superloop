@@ -122,7 +122,7 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 
 **Thinking levels**: `none`, `minimal`, `low`, `standard`, `high`, `max`
 - Codex: maps to `-c model_reasoning_effort` (none→xhigh)
-- Claude: not yet supported via CLI (use trigger words like "ultrathink" in prompts)
+- Claude: maps to `MAX_THINKING_TOKENS` env var (0→32000 per request)
 
 See `schema/config.schema.json` for all options.
 

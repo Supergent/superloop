@@ -765,17 +765,17 @@ Use pinned model IDs for production stability:
 | GPT-5.1-Codex-Max | `gpt-5.1-codex-max` | Strong reasoning |
 | GPT-5.1-Codex | `gpt-5.1-codex` | Standard coding |
 
-**Thinking Levels:**
+**Thinking Levels (per-request budget):**
 | Level | Codex Effect | Claude Effect |
 |-------|--------------|---------------|
-| `none` | No reasoning | (use prompts) |
-| `minimal` | Minimal effort | (use prompts) |
-| `low` | Low effort | (use prompts) |
-| `standard` | Medium effort | (use prompts) |
-| `high` | High effort | (use prompts) |
-| `max` | XHigh effort | (use prompts) |
+| `none` | No reasoning | 0 tokens |
+| `minimal` | Minimal effort | 1,024 tokens |
+| `low` | Low effort | 4,096 tokens |
+| `standard` | Medium effort | 10,000 tokens |
+| `high` | High effort | 20,000 tokens |
+| `max` | XHigh effort | 32,000 tokens |
 
-*Note: Claude Code doesn't support thinking via CLI flags. Use trigger words in prompts: "think" < "think hard" < "think harder" < "ultrathink"*
+*Note: Codex uses `-c model_reasoning_effort`, Claude uses `MAX_THINKING_TOKENS` env var. Budget is per request, not cumulative.*
 
 ### Runner Availability Check
 
