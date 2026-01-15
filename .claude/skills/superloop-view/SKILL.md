@@ -387,6 +387,161 @@ Group of action buttons.
 
 **Available actions**: `approve_loop`, `reject_loop`, `cancel_loop`, `view_artifact`, `view_logs`, `refresh`
 
+## Tool UI Components
+
+Rich display components for agent outputs. These are ported from [tool-ui](https://github.com/assistant-ui/tool-ui).
+
+### ApprovalCard
+Binary confirmation for agent actions.
+```json
+{
+  "type": "ApprovalCard",
+  "props": {
+    "title": "Deploy to Production",
+    "description": "This will deploy v2.1.0 to all servers",
+    "approveLabel": "Deploy",
+    "rejectLabel": "Cancel",
+    "variant": "warning"
+  }
+}
+```
+Props: `title`, `description`, `approveLabel`, `rejectLabel`, `variant` ("default" | "warning" | "danger")
+
+### CodeBlock
+Syntax-highlighted code with Shiki.
+```json
+{
+  "type": "CodeBlock",
+  "props": {
+    "code": "function hello() {\n  console.log('world');\n}",
+    "language": "javascript",
+    "title": "example.js",
+    "showLineNumbers": true
+  }
+}
+```
+Props: `code`, `language`, `title`, `showLineNumbers`, `highlightLines`, `maxHeight`
+
+### DataTable
+Sortable table with mobile card layout.
+```json
+{
+  "type": "DataTable",
+  "props": {
+    "columns": [
+      { "key": "name", "label": "Name", "sortable": true },
+      { "key": "status", "label": "Status" }
+    ],
+    "data": [
+      { "id": "1", "name": "Task A", "status": "done" },
+      { "id": "2", "name": "Task B", "status": "pending" }
+    ],
+    "defaultSort": { "by": "name", "direction": "asc" }
+  }
+}
+```
+Props: `columns`, `data`, `rowIdKey`, `layout` ("auto" | "table" | "cards"), `defaultSort`, `emptyMessage`
+
+### Image
+Responsive image with metadata.
+```json
+{
+  "type": "Image",
+  "props": {
+    "src": "https://example.com/image.jpg",
+    "alt": "Screenshot",
+    "title": "App Screenshot",
+    "caption": "Version 2.0 UI",
+    "ratio": "16:9"
+  }
+}
+```
+Props: `src`, `alt`, `title`, `caption`, `ratio` ("auto" | "1:1" | "4:3" | "16:9" | "3:2"), `fit` ("cover" | "contain")
+
+### LinkPreview
+Rich link card with favicon and description.
+```json
+{
+  "type": "LinkPreview",
+  "props": {
+    "href": "https://github.com/example/repo",
+    "title": "Example Repository",
+    "description": "A great open source project",
+    "image": "https://example.com/og.jpg",
+    "domain": "github.com",
+    "favicon": "https://github.com/favicon.ico"
+  }
+}
+```
+Props: `href`, `title`, `description`, `image`, `domain`, `favicon`, `ratio`
+
+### OptionList
+Single or multi-select choices.
+```json
+{
+  "type": "OptionList",
+  "props": {
+    "title": "Select a framework",
+    "options": [
+      { "id": "react", "label": "React", "description": "Popular UI library" },
+      { "id": "vue", "label": "Vue", "description": "Progressive framework" }
+    ],
+    "mode": "single",
+    "selectedIds": ["react"]
+  }
+}
+```
+Props: `title`, `options`, `mode` ("single" | "multi"), `selectedIds`, `disabled`
+
+### Plan
+Step-by-step workflow with expandable details.
+```json
+{
+  "type": "Plan",
+  "props": {
+    "title": "Deployment Plan",
+    "steps": [
+      { "id": "1", "title": "Build", "status": "complete", "description": "npm run build" },
+      { "id": "2", "title": "Test", "status": "in_progress", "description": "Running tests..." },
+      { "id": "3", "title": "Deploy", "status": "pending" }
+    ]
+  }
+}
+```
+Props: `title`, `steps` (array with id, title, status, description), `showProgress`
+
+Step status values: `pending`, `in_progress`, `complete`, `skipped`, `failed`
+
+### Terminal
+Command-line output with ANSI color support.
+```json
+{
+  "type": "Terminal",
+  "props": {
+    "title": "Build Output",
+    "content": "$ npm run build\n\u001b[32mSuccess!\u001b[0m Built in 2.3s",
+    "maxHeight": "300px"
+  }
+}
+```
+Props: `title`, `content`, `maxHeight`, `showCopy`
+
+### Video
+Video playback with controls.
+```json
+{
+  "type": "Video",
+  "props": {
+    "src": "https://example.com/demo.mp4",
+    "poster": "https://example.com/poster.jpg",
+    "title": "Demo Video",
+    "ratio": "16:9",
+    "controls": true
+  }
+}
+```
+Props: `src`, `poster`, `title`, `ratio`, `autoPlay`, `muted`, `controls`, `loop`
+
 ---
 
 # PART 3: READING SUPERLOOP STATE
@@ -653,6 +808,15 @@ User asks: "How much has this cost so far?"
 | See blockers | BlockerCard (repeated) |
 | Take action | ActionBar or Button |
 | See key metrics | KeyValueList |
+| Display code | CodeBlock |
+| Show tabular data | DataTable |
+| Preview a link | LinkPreview |
+| Display images | Image |
+| Show video | Video |
+| Show command output | Terminal |
+| Get user confirmation | ApprovalCard |
+| Offer choices | OptionList |
+| Show workflow steps | Plan |
 
 ---
 

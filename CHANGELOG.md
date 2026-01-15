@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1 - 2026-01-14
+
+### Added
+- **Tool UI component library**: 9 components ported from [tool-ui](https://github.com/assistant-ui/tool-ui)
+  - ApprovalCard: Binary confirmation for agent actions
+  - CodeBlock: Syntax-highlighted code with line numbers and copy button (powered by Shiki)
+  - DataTable: Sortable columns with mobile accordion layout
+  - Image: Responsive images with aspect ratios and metadata
+  - LinkPreview: Rich link cards with favicon and description
+  - OptionList: Single/multi-select choices with keyboard navigation
+  - Plan: Step-by-step workflows with expandable details
+  - Terminal: Command-line output with ANSI color support
+  - Video: Video playback with controls and poster images
+- **Tailwind CSS infrastructure**: Native Tailwind styling for all components
+  - CSS variable theming matching existing design tokens
+  - Dark mode by default
+  - PostCSS build pipeline
+- **shadcn/ui primitives**: Button, Card, Badge, Accordion, Table, Tooltip, and more
+- **Unified component registry**: `unifiedRegistry` merges Superloop + Tool UI components
+  - `toolUICatalog` with Zod schemas for all Tool UI components
+  - `unifiedCatalog` combines both catalogs for AI skill generation
+
 ## 0.5.0 - 2026-01-14
 
 ### Added

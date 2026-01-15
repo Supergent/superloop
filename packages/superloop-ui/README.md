@@ -1,66 +1,219 @@
-# Superloop UI Prototyping Framework
+# Superloop UI
 
-Superloop UI is a rapid prototyping toolkit that treats ASCII mockups as the single source of truth and renders them across web, CLI, and TUI surfaces.
+Superloop UI provides the web dashboard and component library for Superloop's **Liquid Interfaces** — contextual dashboards that adapt to loop state.
 
-## Quick start
+## Quick Start
 
 ```bash
-# From the repo root
 cd packages/superloop-ui
 bun install
 bun run dev
 ```
 
-In another terminal, create a prototype:
+Access the dashboard at `http://localhost:3333/liquid`.
+
+## Architecture
+
+Superloop UI is built on three layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Liquid Dashboard                    │
+│         (React app at /liquid endpoint)             │
+├─────────────────────────────────────────────────────┤
+│              json-render Framework                   │
+│   (UITree → React with Zod schemas & data binding)  │
+├─────────────────────────────────────────────────────┤
+│              Component Libraries                     │
+│   ┌──────────────────┐  ┌──────────────────────┐   │
+│   │ Superloop Catalog │  │  Tool UI Catalog    │   │
+│   │ (~20 components)  │  │  (9 components)     │   │
+│   └──────────────────┘  └──────────────────────┘   │
+├─────────────────────────────────────────────────────┤
+│              UI Primitives (shadcn/ui)              │
+│        Tailwind CSS + Radix UI + Lucide Icons       │
+└─────────────────────────────────────────────────────┘
+```
+
+## Component Catalogs
+
+### Superloop Components
+
+Domain-specific components for loop monitoring:
+
+| Component | Description |
+|-----------|-------------|
+| `IterationHeader` | Loop status with phase and iteration |
+| `GateStatus` | Single gate indicator |
+| `GateSummary` | All gates in one row |
+| `TaskList` | Checklist from PHASE files |
+| `TestFailures` | Failing tests with details |
+| `BlockerCard` | Blocker with severity |
+| `CostSummary` | Token usage and cost breakdown |
+| `ActionBar` | Approve/reject/cancel buttons |
+
+### Tool UI Components
+
+Rich display components ported from [assistant-ui/tool-ui](https://github.com/assistant-ui/tool-ui):
+
+| Component | Description |
+|-----------|-------------|
+| `ApprovalCard` | Binary confirmation for agent actions |
+| `CodeBlock` | Syntax-highlighted code (Shiki) |
+| `DataTable` | Sortable table with mobile cards |
+| `Image` | Responsive images with metadata |
+| `LinkPreview` | Rich link cards |
+| `OptionList` | Single/multi-select choices |
+| `Plan` | Step-by-step workflows |
+| `Terminal` | Command output with ANSI colors |
+| `Video` | Video playback with controls |
+
+### Layout & Typography
+
+Shared components from both catalogs:
+
+- **Layout**: `Stack`, `Grid`, `Card`, `Divider`
+- **Typography**: `Heading`, `Text`, `Badge`, `Alert`
+- **Data Display**: `KeyValue`, `KeyValueList`, `ProgressBar`
+- **Interactive**: `Button`
+
+## json-render UITrees
+
+Views are defined as flat JSON structures:
+
+```json
+{
+  "root": "main",
+  "elements": {
+    "main": {
+      "type": "Stack",
+      "props": { "gap": 16 },
+      "children": ["header", "content"]
+    },
+    "header": {
+      "type": "Heading",
+      "props": { "level": 1, "children": "Dashboard" }
+    },
+    "content": {
+      "type": "DataTable",
+      "props": {
+        "columns": [
+          { "key": "name", "label": "Name", "sortable": true },
+          { "key": "status", "label": "Status" }
+        ],
+        "data": [
+          { "name": "Task 1", "status": "done" },
+          { "name": "Task 2", "status": "pending" }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Data Binding
+
+Use `{ "path": "/some/path" }` for runtime data:
+
+```json
+{
+  "type": "Text",
+  "props": {
+    "children": { "path": "/loop/phase" }
+  }
+}
+```
+
+### Visibility Conditions
+
+Control when elements render:
+
+```json
+{
+  "type": "Alert",
+  "props": { "variant": "error", "children": "Tests failing!" },
+  "visibility": {
+    "conditions": [{ "path": "/gates/tests", "op": "eq", "value": "failed" }]
+  }
+}
+```
+
+## Development
+
+### Build
 
 ```bash
-bun run src/cli.ts generate workgrid
+bun run build           # Full build (CSS + JS + assets)
+bun run build:css       # Tailwind CSS only
+bun run build:js        # TypeScript compilation
 ```
 
-## CLI commands
-
-- `superloop-ui generate <view>`: Create a new prototype version in `.superloop/ui/prototypes/<view>/`.
-- `superloop-ui refine <view>`: Clone the latest version to a new timestamped file.
-- `superloop-ui list`: List existing prototypes and versions.
-- `superloop-ui render <view> --renderer cli|tui`: Render a prototype in the terminal.
-- `superloop-ui dev`: Launch the WorkGrid web UI with live refresh.
-- `superloop-ui export <view>`: Export a simple HTML/CSS scaffold with the rendered ASCII.
-
-## File conventions
-
-- Prototypes live under `.superloop/ui/prototypes/<view-name>/`.
-- Single-file prototypes at `.superloop/ui/prototypes/<view-name>.txt` are also supported.
-- Each version is a timestamped `.txt` file, for example `20240102-154233.txt`.
-- Optional metadata is stored in `meta.json` inside the view directory.
-- Use ASCII only (no Unicode box drawing) for max compatibility.
-
-## Data bindings
-
-Inject Superloop loop data into mockups with moustache bindings:
+### Project Structure
 
 ```
-Iteration: {{iteration}}
-Tests: {{test_status}}
-Promise: {{promise}}
+src/
+├── liquid/
+│   ├── Dashboard.tsx       # Main dashboard component
+│   ├── components/         # Superloop components
+│   ├── tool-ui/            # Tool UI components
+│   │   ├── shared/         # Action buttons, utilities
+│   │   └── *.tsx           # Individual components
+│   ├── superloop-catalog.ts
+│   ├── tool-ui-catalog.ts
+│   └── unified-catalog.ts
+├── ui/                     # shadcn/ui primitives
+├── lib/                    # Utilities (cn, etc.)
+├── styles/
+│   └── globals.css         # Tailwind + CSS variables
+└── web/
+    └── liquid.html         # HTML template
 ```
 
-Bindings are populated from `.superloop/loops/<id>/run-summary.json` when available.
+### Adding Components
 
-## Prompting Claude Code
+1. Create component in `src/liquid/tool-ui/YourComponent.tsx`
+2. Add to registry in `src/liquid/tool-ui/index.ts`
+3. Add Zod schema to `src/liquid/tool-ui-catalog.ts`
+4. Component will be available via `unifiedRegistry`
 
-When asking Claude Code to generate a mockup, be explicit about the view name,
-ASCII-only constraints, and the save location.
+## API
 
-Example prompt:
+### Override Endpoint
 
+POST custom UITrees to replace the default view:
+
+```bash
+curl -X POST http://localhost:3333/api/liquid/override \
+  -H "Content-Type: application/json" \
+  -d '{"root":"main","elements":{...}}'
 ```
-Generate a TUI mockup for the WorkGrid view.
-Constraints:
-- ASCII only (no Unicode box drawing).
-- 80x24 minimum, 120x40 maximum.
-- Include placeholders like {{iteration}} and {{test_status}}.
-Output:
-- Save to .superloop/ui/prototypes/workgrid/<timestamp>.txt
+
+### Save Versioned View
+
+```bash
+curl -X POST http://localhost:3333/api/liquid/views/my-view \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tree": {"root":"main","elements":{...}},
+    "prompt": "Show test failures"
+  }'
 ```
 
-See `docs/ai-prompting.md` for more prompt templates and guardrails.
+### Clear Override
+
+```bash
+curl -X DELETE http://localhost:3333/api/liquid/override
+```
+
+## Exports
+
+```typescript
+// Component registries
+import { unifiedRegistry, toolUIRegistry } from "superloop-ui";
+
+// Catalogs for AI skill generation
+import { unifiedCatalog, toolUICatalog, superloopCatalog } from "superloop-ui";
+
+// Individual components
+import { DataTable, CodeBlock, Terminal } from "superloop-ui/tool-ui";
+```
