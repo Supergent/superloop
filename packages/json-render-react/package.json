@@ -41,6 +41,9 @@
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "tsup": "^8.0.2",
     "typescript": "^5.4.5",
     "vitest": "^1.0.0",
