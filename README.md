@@ -64,18 +64,45 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
   "loops": [{
     "id": "my-feature",
     "spec_file": ".superloop/specs/my-feature.md",
-    "completion_promise": "READY",
+    "completion_promise": "SUPERLOOP_COMPLETE",
     "max_iterations": 20,
+    "checklists": [],
     "tests": {
       "mode": "on_promise",
       "commands": ["npm test"]
+    },
+    "evidence": {
+      "enabled": false,
+      "require_on_completion": false,
+      "artifacts": []
+    },
+    "approval": {
+      "enabled": false,
+      "require_on_completion": false
+    },
+    "reviewer_packet": {
+      "enabled": true
+    },
+    "timeouts": {
+      "enabled": true,
+      "default": 300,
+      "planner": 120,
+      "implementer": 300,
+      "tester": 300,
+      "reviewer": 120
+    },
+    "stuck": {
+      "enabled": true,
+      "threshold": 3,
+      "action": "report_and_stop",
+      "ignore": []
     },
     "roles": ["planner", "implementer", "tester", "reviewer"]
   }]
 }
 ```
 
-See `schema/config.schema.json` for the full schema.
+This example passes schema validation. See `schema/config.schema.json` for all options.
 
 ## Commands
 
