@@ -18,3 +18,14 @@ jobs:
         run: ./superloop.sh validate --repo .
       - name: List loops
         run: ./superloop.sh list --repo .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup bats
+        uses: mig4/setup-bats@v1
+        with:
+          bats-version: 1.10.0
+      - name: Run tests
+        run: bats tests/
