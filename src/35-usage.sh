@@ -238,7 +238,7 @@ extract_claude_model() {
 
   # Extract model from first assistant message
   local model
-  model=$(jq -r '[.[] | select(.type == "assistant" and .message.model != null) | .message.model][0] // empty' "$session_file" 2>/dev/null)
+  model=$(jq -s -r '[.[] | select(.type == "assistant" and .message.model != null) | .message.model][0] // empty' "$session_file" 2>/dev/null)
 
   if [[ -n "$model" ]]; then
     echo "$model"
@@ -282,14 +282,14 @@ extract_codex_model() {
 
   # Try to find model in session metadata or messages
   local model
-  model=$(jq -r '[.[] | select(.model != null) | .model][0] // empty' "$session_file" 2>/dev/null)
+  model=$(jq -s -r '[.[] | select(.model != null) | .model][0] // empty' "$session_file" 2>/dev/null)
 
   if [[ -n "$model" ]]; then
     echo "$model"
     return 0
   fi
 
-  # Try alternate structure
+  # Try alternate structure (without -s for single JSON object)
   model=$(jq -r '.model // empty' "$session_file" 2>/dev/null | head -1)
 
   if [[ -n "$model" ]]; then
@@ -321,7 +321,7 @@ write_usage_event() {
   fi
 
   # Build the event JSON - include session/thread IDs, model, and cost
-  jq -n \
+  jq -c -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
     --arg role "$role" \
