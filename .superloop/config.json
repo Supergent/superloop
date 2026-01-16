@@ -8,14 +8,14 @@
     },
     "codex2": {
       "command": ["orb", "-m", "codex2", "codex", "exec"],
-      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--full-auto", "--sandbox", "danger-full-access", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "--sandbox", "danger-full-access", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "codex3": {
       "command": ["orb", "-m", "codex3", "codex", "exec"],
-      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--full-auto", "--sandbox", "danger-full-access", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "--sandbox", "danger-full-access", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "codex4": {
@@ -32,7 +32,7 @@
     },
     "claude-vanilla": {
       "command": ["claude"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "args": ["--dangerously-skip-permissions", "--print", "-"],
       "prompt_mode": "stdin"
     }
   },

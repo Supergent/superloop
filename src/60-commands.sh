@@ -789,10 +789,14 @@ run_cmd() {
       done < <(jq -r '.roles[]?' <<<"$loop_json")
     elif [[ "$roles_type" == "object" ]]; then
       # New object format: {"planner": {"runner": "codex"}, ...}
+      # Use canonical order, not alphabetical keys
       roles_config_json=$(jq -c '.roles' <<<"$loop_json")
-      while IFS= read -r line; do
-        roles+=("$line")
-      done < <(jq -r '.roles | keys[]' <<<"$loop_json")
+      local canonical_order=(planner implementer tester reviewer)
+      for role in "${canonical_order[@]}"; do
+        if jq -e --arg role "$role" '.roles | has($role)' <<<"$loop_json" >/dev/null 2>&1; then
+          roles+=("$role")
+        fi
+      done
     fi
 
     if [[ ${#roles[@]} -eq 0 ]]; then
