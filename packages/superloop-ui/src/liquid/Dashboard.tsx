@@ -17,7 +17,7 @@ import type { UITree, Action } from "@json-render/core";
 import { superloopRegistry, unifiedRegistry } from "./components/index.js";
 import { selectDefaultView } from "./views/defaults.js";
 import { type SuperloopContext, emptyContext } from "./views/types.js";
-import type { LiquidView, ViewVersion } from "./storage.js";
+import type { LiquidView, ViewVersion } from "./storage-types.js";
 
 // ===================
 // Types
@@ -497,25 +497,16 @@ function VersionSelector({ view, selectedVersionId, onSelect }: VersionSelectorP
 }
 
 // ===================
-// Export
+// Export (browser-safe only)
 // ===================
 
 export { type SuperloopContext } from "./views/types.js";
-export { loadSuperloopContext } from "./context-loader.js";
 export { selectDefaultView } from "./views/defaults.js";
 export { superloopCatalog } from "./catalog.js";
 export { toolUICatalog } from "./tool-ui-catalog.js";
 export { unifiedCatalog } from "./unified-catalog.js";
 export { superloopRegistry, unifiedRegistry } from "./components/index.js";
 export { toolUIRegistry } from "./tool-ui/index.js";
-export type { LiquidView, ViewVersion } from "./storage.js";
-export {
-  listViews,
-  loadView,
-  loadActiveTree,
-  saveVersion,
-  setActiveVersion,
-  loadVersion,
-  deleteVersion,
-  deleteView,
-} from "./storage.js";
+export type { LiquidView, ViewVersion } from "./storage-types.js";
+
+// Node.js-only exports are available from "./context-loader.js" and "./storage.js" directly

@@ -1,4 +1,10 @@
 import { defineConfig } from "tsup";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const reactPath = path.join(__dirname, "node_modules/react");
+const reactDomPath = path.join(__dirname, "node_modules/react-dom");
 
 export default defineConfig([
   {
@@ -45,6 +51,16 @@ export default defineConfig([
     outDir: "dist/web",
     splitting: false,
     noExternal: [/./],
+    esbuildOptions(options) {
+      // Dedupe React to prevent multiple instances from nested packages
+      options.alias = {
+        "react": reactPath,
+        "react-dom": reactDomPath,
+        "react/jsx-runtime": path.join(reactPath, "jsx-runtime"),
+        "react/jsx-dev-runtime": path.join(reactPath, "jsx-dev-runtime"),
+        "react-dom/client": path.join(reactDomPath, "client"),
+      };
+    },
   },
   {
     entry: ["src/web/liquid-main.tsx"],
@@ -55,5 +71,15 @@ export default defineConfig([
     outDir: "dist/web",
     splitting: false,
     noExternal: [/./],
+    esbuildOptions(options) {
+      // Dedupe React to prevent multiple instances from nested packages
+      options.alias = {
+        "react": reactPath,
+        "react-dom": reactDomPath,
+        "react/jsx-runtime": path.join(reactPath, "jsx-runtime"),
+        "react/jsx-dev-runtime": path.join(reactPath, "jsx-dev-runtime"),
+        "react-dom/client": path.join(reactDomPath, "client"),
+      };
+    },
   },
 ]);
