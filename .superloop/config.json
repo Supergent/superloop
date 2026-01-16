@@ -1,9 +1,96 @@
 {
-  "runner": {
-    "command": ["codex", "exec"],
-    "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-    "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-    "prompt_mode": "stdin"
+  "runners": {
+    "codex": {
+      "command": ["orb", "-m", "codex2", "codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "codex2": {
+      "command": ["orb", "-m", "codex2", "codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "codex3": {
+      "command": ["orb", "-m", "codex3", "codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "codex4": {
+      "command": ["orb", "-m", "codex4", "codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "codex5": {
+      "command": ["orb", "-m", "codex5", "codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "claude-vanilla": {
+      "command": ["claude"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    }
   },
-  "loops": []
+  "loops": [
+    {
+      "id": "valet-mvp",
+      "spec_file": ".superloop/specs/valet-mvp.md",
+      "max_iterations": 20,
+      "completion_promise": "SUPERLOOP_COMPLETE",
+      "checklists": [],
+      "tests": {
+        "mode": "on_promise",
+        "commands": [
+          "npm test",
+          "npm run test:mole",
+          "npm run test:agent"
+        ]
+      },
+      "evidence": {
+        "enabled": false,
+        "require_on_completion": false,
+        "artifacts": []
+      },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": false
+      },
+      "reviewer_packet": {
+        "enabled": false
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 300,
+        "planner": 180,
+        "implementer": 1800,
+        "tester": 300,
+        "reviewer": 120
+      },
+      "stuck": {
+        "enabled": true,
+        "threshold": 3,
+        "action": "report_and_stop",
+        "ignore": []
+      },
+      "roles": {
+        "planner": {
+          "runner": "codex2"
+        },
+        "implementer": {
+          "runner": "claude-vanilla"
+        },
+        "tester": {
+          "runner": "claude-vanilla"
+        },
+        "reviewer": {
+          "runner": "codex3"
+        }
+      }
+    }
+  ]
 }
