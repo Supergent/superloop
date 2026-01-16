@@ -593,6 +593,22 @@ After exploration, present to user:
 - What are the acceptance criteria?
 - Any specific test scenarios?
 
+### Question Format: Single vs Multiple Choice
+
+**You must deliberately choose** between single and multiple choice for each question:
+
+- **Single choice (default, multiSelect: false)**: Use when options are mutually exclusive
+  - Example: "Which authentication method?" (can only pick one)
+  - Example: "Which database?" (can only use one primary DB)
+  - Display: Radio buttons (○)
+
+- **Multiple choice (multiSelect: true)**: Use when multiple selections make sense
+  - Example: "Which features should be included?" (can enable several)
+  - Example: "Which validation rules to apply?" (can combine multiple)
+  - Display: Checkboxes (☐)
+
+**Important**: The default is single choice. You must explicitly set `multiSelect: true` when you want to allow multiple selections.
+
 ### Example Question Flow
 
 ```
@@ -606,6 +622,7 @@ at src/middleware/auth.ts. Let me understand your requirements:
 │ ○ OAuth 2.0 (third-party providers)                     │
 │ ○ API keys (service-to-service)                         │
 └─────────────────────────────────────────────────────────┘
+[Single choice - options are mutually exclusive]
 
 [User answers: JWT]
 
@@ -618,6 +635,18 @@ Follow-up questions about JWT implementation:
 │ ○ localStorage (convenient but XSS vulnerable)          │
 │ ○ Memory only (most secure, lost on refresh)            │
 └─────────────────────────────────────────────────────────┘
+[Single choice - only one storage location]
+
+Constructor: Now, what security features should be included?
+
+┌─ Security Features ─────────────────────────────────────┐
+│ Which security features do you want to include?         │
+│ ☐ Rate limiting on auth endpoints                       │
+│ ☐ Token refresh mechanism                               │
+│ ☐ IP-based restrictions                                 │
+│ ☐ Multi-factor authentication                           │
+└─────────────────────────────────────────────────────────┘
+[Multiple choice (multiSelect: true) - can select multiple features]
 
 [Continues until user says "finalize"]
 ```
