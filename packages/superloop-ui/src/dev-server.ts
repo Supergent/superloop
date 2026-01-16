@@ -23,6 +23,7 @@ export type DevServerOptions = {
   port: number;
   host: string;
   open: boolean;
+  watch?: boolean;
 };
 
 type SseClient = http.ServerResponse;
@@ -290,10 +291,15 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     openBrowser(address);
   }
 
-  const buildProcess = spawn("bunx", ["tsup", "--watch", "--config", "tsup.config.ts"], {
-    cwd: packageRoot,
-    stdio: "inherit",
-  });
+  const shouldWatch = options.watch !== false;
+  let buildProcess: ReturnType<typeof spawn> | null = null;
+
+  if (shouldWatch) {
+    buildProcess = spawn("bunx", ["tsup", "--watch", "--config", "tsup.config.ts"], {
+      cwd: packageRoot,
+      stdio: "inherit",
+    });
+  }
 
   const broadcast = async () => {
     const payload = await buildPrototypesPayload({
@@ -330,7 +336,7 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     for (const client of clients) {
       client.end();
     }
-    buildProcess.kill();
+    buildProcess?.kill();
     server.close();
   };
 

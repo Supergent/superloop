@@ -6,6 +6,7 @@ export async function devCommand(params: {
   port: number;
   host: string;
   open: boolean;
+  watch?: boolean;
 }): Promise<void> {
   await startDevServer({
     repoRoot: params.repoRoot,
@@ -13,5 +14,6 @@ export async function devCommand(params: {
     port: params.port,
     host: params.host,
     open: params.open,
+    watch: params.watch,
   });
 }

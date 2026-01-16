@@ -9,8 +9,8 @@
   "scripts": {
     "build:css": "bunx postcss src/styles/globals.css -o dist/web/styles.css",
     "build:js": "bunx tsup",
-    "build": "bun install && bun run build:css && bun run build:js && node dist/build-assets.js",
-    "dev": "bun install && bun run src/cli.ts dev",
+    "build": "bun install && bun run build:js && bun run build:css && node dist/build-assets.js",
+    "dev": "bun install && bun run build:js && bun run build:css && bun run src/cli.ts dev",
     "postinstall": "node scripts/ensure-biome-bin.cjs",
     "start": "node dist/cli.js",
     "typecheck": "bun install && bunx tsc --noEmit",

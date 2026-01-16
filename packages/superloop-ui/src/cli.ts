@@ -96,6 +96,7 @@ program
   .option("-p, --port <port>", "Port", "5173")
   .option("--host <host>", "Host", "localhost")
   .option("--no-open", "Disable auto-open in browser")
+  .option("--no-watch", "Disable file watching (use pre-built assets)")
   .action(async (options) => {
     const repoRoot = resolveRepoRoot(program.opts().repo);
     const port = Number(options.port);
@@ -105,6 +106,7 @@ program
       port: Number.isNaN(port) ? 5173 : port,
       host: options.host,
       open: options.open,
+      watch: options.watch,
     });
   });
 

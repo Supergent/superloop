@@ -13,7 +13,6 @@ export default defineConfig([
     platform: "node",
     sourcemap: true,
     target: "node20",
-    clean: true,
     banner: {
       js: "#!/usr/bin/env node",
     },
