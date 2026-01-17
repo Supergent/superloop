@@ -22,7 +22,7 @@ import { isOnboardingComplete, completeOnboarding } from './lib/onboarding';
 import { getAllKeys } from './lib/keys';
 import { ConfirmationRequiredError, approveCommand, revokeApproval } from './lib/agentPolicy';
 import { classifyIntent, intentToPrompt, detectConfirmation } from './lib/voice/intent';
-import { getSetting } from './lib/settings';
+import { getSetting, useSettings, DEFAULT_DISK_WARNING_THRESHOLD, DEFAULT_DISK_CRITICAL_THRESHOLD } from './lib/settings';
 import type { StreamMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { MoleAnalyzeResult, MoleCleanResult, MoleOptimizeResult } from './lib/moleTypes';
 
@@ -36,12 +36,25 @@ interface ConfirmState {
 }
 
 function App() {
+  // Settings
+  const { settings } = useSettings();
+
   // Onboarding state
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
 
   // Status polling and health
-  const { metrics, loading, error, lastUpdate } = useStatusPolling();
-  const health = metrics ? computeHealthState(metrics) : null;
+  const { metrics, loading, error, offline, lastUpdate } = useStatusPolling();
+
+  // Compute health with custom thresholds from settings (guard against NaN)
+  const parsedWarningThreshold = parseInt(settings.diskWarningThreshold || '', 10);
+  const parsedCriticalThreshold = parseInt(settings.diskCriticalThreshold || '', 10);
+  const diskWarningThreshold = !isNaN(parsedWarningThreshold) && parsedWarningThreshold > 0
+    ? parsedWarningThreshold
+    : DEFAULT_DISK_WARNING_THRESHOLD;
+  const diskCriticalThreshold = !isNaN(parsedCriticalThreshold) && parsedCriticalThreshold > 0
+    ? parsedCriticalThreshold
+    : DEFAULT_DISK_CRITICAL_THRESHOLD;
+  const health = metrics ? computeHealthState(metrics, diskWarningThreshold, diskCriticalThreshold) : null;
 
   // Activity log state
   const [activityEntries, setActivityEntries] = useState<ActivityLogEntry[]>([]);
@@ -116,6 +129,18 @@ function App() {
     };
   }, [loadApiKeys]);
 
+  // Listen for auth updates and reload API keys (refresh llm-proxy key)
+  useEffect(() => {
+    const handleAuthUpdate = () => {
+      loadApiKeys();
+    };
+
+    window.addEventListener('auth-updated', handleAuthUpdate);
+    return () => {
+      window.removeEventListener('auth-updated', handleAuthUpdate);
+    };
+  }, [loadApiKeys]);
+
   // Configure agent when llm-proxy API key changes
   useEffect(() => {
     // Always configure agent, even when key is cleared/empty
@@ -165,12 +190,12 @@ function App() {
     setOnboardingComplete(true);
   };
 
-  // Update tray whenever health or lastUpdate changes
+  // Update tray whenever health, lastUpdate, or isAiWorking changes
   useEffect(() => {
     if (health) {
-      updateTray(health, lastUpdate).catch(console.error);
+      updateTray(health, lastUpdate, isAiWorking).catch(console.error);
     }
-  }, [health, lastUpdate]);
+  }, [health, lastUpdate, isAiWorking]);
 
   // Load initial activity log
   useEffect(() => {
@@ -235,17 +260,14 @@ function App() {
   // Optimize action handler
   const handleOptimize = async () => {
     try {
-      // First, run dry-run to get preview
+      // First, run dry-run to get preview (always uses privileged execution)
       const dryRunResult = await optimizeSystem({ dryRun: true });
 
       const details = [
         `Tasks to perform: ${dryRunResult.tasksCompleted.length}`,
         ...dryRunResult.tasksCompleted.map((task) => `• ${task.name}`),
+        '⚠️ Requires administrator privileges',
       ];
-
-      if (dryRunResult.requiresSudo) {
-        details.push('⚠️ Requires administrator privileges');
-      }
 
       setConfirmState({
         open: true,
@@ -256,6 +278,7 @@ function App() {
         action: async () => {
           setIsPerformingAction(true);
           try {
+            // Execute optimization (always uses privileged execution)
             const result = await optimizeSystem({ dryRun: false });
             const completedTasks = result.tasksCompleted.filter((t) => t.success).length;
             await logAuditEvent(
@@ -339,7 +362,28 @@ function App() {
   const handleFinalTranscript = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
-    // Block voice actions if llmProxyApiKey is missing
+    // Block voice actions if offline
+    if (offline) {
+      console.error('Cannot process voice input: offline');
+      const errorMsg = 'Voice features are unavailable while offline. Please check your connection.';
+      setAiResponse(errorMsg);
+      if (vapiPublicKey) {
+        await ttsActions.speak(errorMsg);
+      }
+      return;
+    }
+
+    // Block voice actions if offline or llmProxyApiKey is missing
+    if (offline) {
+      console.error('Cannot process voice input: offline');
+      const errorMsg = 'You appear to be offline. Please check your internet connection.';
+      setAiResponse(errorMsg);
+      if (vapiPublicKey) {
+        await ttsActions.speak(errorMsg);
+      }
+      return;
+    }
+
     if (!llmProxyApiKey) {
       console.error('Cannot process voice input: llm-proxy API key is missing');
       const errorMsg = 'Please configure your API key in settings to use voice features.';
@@ -590,6 +634,8 @@ function App() {
                   revokeApproval(command);
                 } catch (retryError) {
                   console.error('Error on retry:', retryError);
+                  // Revoke the approval on retry failure so later runs require fresh confirmation
+                  revokeApproval(command);
                   const errorMsg = 'Sorry, I encountered an error processing your request.';
                   setAiResponse(errorMsg);
                   if (vapiPublicKey) {
@@ -605,84 +651,18 @@ function App() {
             setIsAiWorking(false);
           } catch (dryRunError) {
             console.error('Error running dry-run preview:', dryRunError);
-            // Fall back to showing confirmation without preview
-            const details: string[] = [
-              `Command: ${command}`,
-              `Failed to run dry-run preview: ${dryRunError instanceof Error ? dryRunError.message : String(dryRunError)}`,
-              decision.reason || '',
-            ];
-
-            setPendingVoiceQuery({ prompt: text, command });
-
-            setConfirmState({
-              open: true,
-              title: 'Confirm Command',
-              message: 'The agent wants to execute the following command:',
-              details,
-              actionType: 'agent-command',
-              action: async () => {
-                // Same retry logic as above
-                approveCommand(command);
-                setPendingVoiceQuery(null);
-                setIsAiWorking(true);
-                setAiResponse('');
-
-                try {
-                  const retryTextChunks: string[] = [];
-                  const retryIntent = classifyIntent(text);
-                  const retryEnhancedPrompt = intentToPrompt(retryIntent);
-
-                  for await (const message of queryAgent({
-                    prompt: retryEnhancedPrompt,
-                    sessionId: currentSessionId,
-                    timeout: 120000,
-                    onMessage: (msg: StreamMessage) => {
-                      if (msg.type === 'text') {
-                        retryTextChunks.push(msg.text);
-                        setAiResponse(retryTextChunks.join(''));
-                      }
-                    },
-                  })) {
-                    if (message.type === 'session_id') {
-                      setCurrentSessionId(message.sessionId);
-                    }
-                  }
-
-                  const fullResponse = retryTextChunks.join('');
-                  if (fullResponse) {
-                    setConversationTurns(prev => [...prev, {
-                      id: `assistant-${Date.now()}`,
-                      timestamp: Date.now(),
-                      role: 'assistant',
-                      text: fullResponse,
-                    }]);
-                  }
-
-                  if (fullResponse && vapiPublicKey) {
-                    await ttsActions.speak(fullResponse);
-                  }
-
-                  await logAuditEvent(
-                    'command_approved',
-                    'voice interaction retry',
-                    { reason: `User: "${text}" (after confirmation)` }
-                  );
-
-                  // Consume the approval after successful execution
-                  revokeApproval(command);
-                } catch (retryError) {
-                  console.error('Error on retry:', retryError);
-                  const errorMsg = 'Sorry, I encountered an error processing your request.';
-                  setAiResponse(errorMsg);
-                  if (vapiPublicKey) {
-                    await ttsActions.speak(errorMsg);
-                  }
-                } finally {
-                  setIsAiWorking(false);
-                }
-              },
-            });
-
+            // Block execution when dry-run fails
+            setPendingVoiceQuery(null);
+            const errorMsg = `Cannot proceed with destructive command: dry-run preview failed. ${dryRunError instanceof Error ? dryRunError.message : String(dryRunError)}`;
+            setAiResponse(errorMsg);
+            if (vapiPublicKey) {
+              await ttsActions.speak(errorMsg);
+            }
+            await logAuditEvent(
+              'command_rejected',
+              command,
+              { reason: `Dry-run preview failed: ${dryRunError instanceof Error ? dryRunError.message : String(dryRunError)}` }
+            );
             setIsAiWorking(false);
           }
         } else {
@@ -749,10 +729,11 @@ function App() {
                 );
 
                 // Consume the approval after successful execution
-                const { revokeApproval } = await import('./lib/agentPolicy');
                 revokeApproval(command);
               } catch (retryError) {
                 console.error('Error on retry:', retryError);
+                // Revoke the approval on retry failure so later runs require fresh confirmation
+                revokeApproval(command);
                 const errorMsg = 'Sorry, I encountered an error processing your request.';
                 setAiResponse(errorMsg);
                 if (vapiPublicKey) {
@@ -779,7 +760,7 @@ function App() {
     } finally {
       setIsAiWorking(false);
     }
-  }, [currentSessionId, vapiPublicKey, llmProxyApiKey, ttsActions, pendingVoiceQuery, confirmState]);
+  }, [currentSessionId, vapiPublicKey, llmProxyApiKey, ttsActions, pendingVoiceQuery, confirmState, offline]);
 
   // Global shortcut for voice activation (Cmd+Shift+Space)
   useGlobalShortcut({
@@ -790,7 +771,7 @@ function App() {
         voiceInputRef.current.toggle();
       }
     },
-    enabled: !!assemblyAiApiKey && voiceEnabled, // Only enable if API key is configured and voice is enabled
+    enabled: !!assemblyAiApiKey && !!llmProxyApiKey && voiceEnabled && !offline, // Only enable if all API keys are configured, voice is enabled, and online
   });
 
   // Show loading state while checking onboarding
@@ -819,6 +800,7 @@ function App() {
         metrics={metrics}
         loading={loading}
         error={error}
+        offline={offline}
         aiWorking={isAiWorking}
         aiResponse={aiResponse}
         metricsSlot={metrics ? <MetricsDisplay metrics={metrics} /> : null}
@@ -839,7 +821,7 @@ function App() {
               onVoiceEnd={handleVoiceEnd}
               onInterimTranscript={handleInterimTranscript}
               onFinalTranscript={handleFinalTranscript}
-              disabled={isPerformingAction || isAiWorking || !voiceEnabled || !llmProxyApiKey}
+              disabled={isPerformingAction || isAiWorking || !voiceEnabled || !llmProxyApiKey || offline}
             />
             <VoicePlaybackControls
               state={ttsState}
@@ -861,7 +843,7 @@ function App() {
         details={confirmState.details}
         onConfirm={handleConfirm}
         onCancel={handleCancel}
-        destructive={confirmState.actionType === 'clean'}
+        destructive={confirmState.actionType === 'clean' || confirmState.actionType === 'optimize' || confirmState.actionType === 'agent-command'}
       />
     </div>
   );

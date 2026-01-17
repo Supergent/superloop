@@ -23,11 +23,17 @@ export async function updateTrayTooltip(
 }
 
 /**
- * Update the tray icon based on health status
+ * Update the tray icon based on health status and AI working state
  */
-export async function updateTrayIcon(status: HealthStatus): Promise<void> {
+export async function updateTrayIcon(
+  status: HealthStatus,
+  isAiWorking?: boolean
+): Promise<void> {
   try {
-    await invoke('update_tray_icon', { status });
+    await invoke('update_tray_icon', {
+      status,
+      isAiWorking: isAiWorking || false
+    });
   } catch (error) {
     console.error('Failed to update tray icon:', error);
   }
@@ -91,10 +97,11 @@ function getStatusLabel(status: HealthStatus): string {
  */
 export async function updateTray(
   health: SystemHealth,
-  lastUpdate?: string | null
+  lastUpdate?: string | null,
+  isAiWorking?: boolean
 ): Promise<void> {
   await Promise.all([
     updateTrayTooltip(health, lastUpdate),
-    updateTrayIcon(health.status),
+    updateTrayIcon(health.status, isAiWorking),
   ]);
 }
