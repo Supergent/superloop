@@ -37,8 +37,11 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@convex-dev/better-auth": "^0.10.10",
     "@tauri-apps/plugin-global-shortcut": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
+    "better-auth": "^1.4.14",
+    "convex": "^1.31.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   }
