@@ -1240,11 +1240,13 @@ EOF
         # Check if this phase has unchecked tasks
         local unchecked_count=0
         if [[ -f "$phase_file" ]]; then
-          unchecked_count=$(grep -c '\[ \]' "$phase_file" 2>/dev/null || echo "0")
+          unchecked_count=$(grep -c '\[ \]' "$phase_file" 2>/dev/null) || unchecked_count=0
+          [[ -z "$unchecked_count" || ! "$unchecked_count" =~ ^[0-9]+$ ]] && unchecked_count=0
         fi
         local checked_count=0
         if [[ -f "$phase_file" ]]; then
-          checked_count=$(grep -c '\[x\]' "$phase_file" 2>/dev/null || echo "0")
+          checked_count=$(grep -c '\[x\]' "$phase_file" 2>/dev/null) || checked_count=0
+          [[ -z "$checked_count" || ! "$checked_count" =~ ^[0-9]+$ ]] && checked_count=0
         fi
         local status_marker=""
         if [[ $unchecked_count -eq 0 && $checked_count -gt 0 ]]; then
