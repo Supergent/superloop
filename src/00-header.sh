@@ -311,6 +311,28 @@ compute_signature() {
         hash="unhashed"
       fi
       entries+=("$file:$hash")
+    elif [[ -d "$full" ]]; then
+      # For untracked directories, enumerate contents recursively
+      # Exclude common large directories that don't indicate meaningful progress
+      while IFS= read -r -d '' subfile; do
+        local relpath="${subfile#$repo/}"
+        if should_ignore "$relpath" "${ignore_patterns[@]}"; then
+          continue
+        fi
+        local subhash
+        subhash=$(hash_file "$subfile" 2>/dev/null || true)
+        if [[ -z "$subhash" ]]; then
+          subhash="unhashed"
+        fi
+        entries+=("$relpath:$subhash")
+      done < <(find "$full" -type f \
+        -not -path "*/node_modules/*" \
+        -not -path "*/.git/*" \
+        -not -path "*/target/*" \
+        -not -path "*/dist/*" \
+        -not -path "*/__pycache__/*" \
+        -not -path "*/.venv/*" \
+        -print0 2>/dev/null)
     else
       entries+=("$file:missing")
     fi
