@@ -51,9 +51,20 @@ If PLAN.MD does not exist or is empty, create the full feature plan:
 1. [ ] {Atomic task}
 2. [ ] {Atomic task}
 
+## P1.T Tests
+1. [ ] Set up test framework (vitest/jest) if not present
+2. [ ] Add `test` script to package.json
+3. [ ] Write tests for {feature implemented in this phase}
+
 ## P1.V Validation
-1. [ ] {Validation criterion}
+1. [ ] All tests pass (`npm test` exits 0)
+2. [ ] {Manual validation criterion if needed}
 ```
+
+**IMPORTANT:** Every phase MUST include a `P{n}.T Tests` section. The implementer will:
+- Set up the test framework in Phase 1 (or first applicable phase)
+- Write automated tests for all new functionality
+- Ensure `npm test` (or equivalent) passes before phase completion
 
 ### Subsequent Iterations
 
@@ -84,6 +95,16 @@ Example:
    1. [ ] Implement JWT validation
    2. [ ] Add role-based access check
 3. [ ] Wire endpoint in `src/routes/index.ts`
+
+## P1.T Tests
+1. [ ] Install vitest and configure in `vite.config.ts`
+2. [ ] Add `"test": "vitest run"` script to `package.json`
+3. [ ] Create `src/api/__tests__/users.test.ts` with tests for GET /users
+4. [ ] Create `src/middleware/__tests__/auth.test.ts` with JWT validation tests
+
+## P1.V Validation
+1. [ ] All tests pass (`npm test` exits 0)
+2. [ ] API returns 401 for unauthenticated requests
 ```
 
 ## Rules
