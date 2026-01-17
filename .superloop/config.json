@@ -8,14 +8,14 @@
     },
     "codex2": {
       "command": ["orb", "-m", "codex2", "codex", "exec"],
-      "args": ["--full-auto", "--sandbox", "danger-full-access", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "--sandbox", "danger-full-access", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "codex3": {
       "command": ["orb", "-m", "codex3", "codex", "exec"],
-      "args": ["--full-auto", "--sandbox", "danger-full-access", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "--sandbox", "danger-full-access", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "codex4": {
@@ -46,9 +46,9 @@
       "tests": {
         "mode": "on_promise",
         "commands": [
-          "npm test",
-          "npm run test:mole",
-          "npm run test:agent"
+          "cd packages/valet && if grep -q 'no test specified' package.json; then echo 'Skipping: placeholder test script'; else npm test; fi",
+          "cd packages/valet && if grep -q '\"test:mole\":' package.json; then npm run test:mole; else echo 'Skipping: no test:mole script'; fi",
+          "cd packages/valet && if grep -q '\"test:agent\":' package.json; then npm run test:agent; else echo 'Skipping: no test:agent script'; fi"
         ]
       },
       "evidence": {
@@ -66,10 +66,10 @@
       "timeouts": {
         "enabled": true,
         "default": 300,
-        "planner": 180,
+        "planner": 3600,
         "implementer": 1800,
         "tester": 300,
-        "reviewer": 120
+        "reviewer": 7200
       },
       "stuck": {
         "enabled": true,

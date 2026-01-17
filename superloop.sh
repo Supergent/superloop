@@ -2925,7 +2925,7 @@ extract_claude_model() {
 
   # Extract model from first assistant message
   local model
-  model=$(jq -r '[.[] | select(.type == "assistant" and .message.model != null) | .message.model][0] // empty' "$session_file" 2>/dev/null)
+  model=$(jq -s -r '[.[] | select(.type == "assistant" and .message.model != null) | .message.model][0] // empty' "$session_file" 2>/dev/null)
 
   if [[ -n "$model" ]]; then
     echo "$model"
@@ -2969,14 +2969,14 @@ extract_codex_model() {
 
   # Try to find model in session metadata or messages
   local model
-  model=$(jq -r '[.[] | select(.model != null) | .model][0] // empty' "$session_file" 2>/dev/null)
+  model=$(jq -s -r '[.[] | select(.model != null) | .model][0] // empty' "$session_file" 2>/dev/null)
 
   if [[ -n "$model" ]]; then
     echo "$model"
     return 0
   fi
 
-  # Try alternate structure
+  # Try alternate structure (without -s for single JSON object)
   model=$(jq -r '.model // empty' "$session_file" 2>/dev/null | head -1)
 
   if [[ -n "$model" ]]; then
@@ -3008,7 +3008,7 @@ write_usage_event() {
   fi
 
   # Build the event JSON - include session/thread IDs, model, and cost
-  jq -n \
+  jq -c -n \
     --arg ts "$timestamp" \
     --argjson iter "$iteration" \
     --arg role "$role" \
@@ -5661,10 +5661,14 @@ run_cmd() {
       done < <(jq -r '.roles[]?' <<<"$loop_json")
     elif [[ "$roles_type" == "object" ]]; then
       # New object format: {"planner": {"runner": "codex"}, ...}
+      # Use canonical order, not alphabetical keys
       roles_config_json=$(jq -c '.roles' <<<"$loop_json")
-      while IFS= read -r line; do
-        roles+=("$line")
-      done < <(jq -r '.roles | keys[]' <<<"$loop_json")
+      local canonical_order=(planner implementer tester reviewer)
+      for role in "${canonical_order[@]}"; do
+        if jq -e --arg role "$role" '.roles | has($role)' <<<"$loop_json" >/dev/null 2>&1; then
+          roles+=("$role")
+        fi
+      done
     fi
 
     if [[ ${#roles[@]} -eq 0 ]]; then
