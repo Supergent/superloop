@@ -57,16 +57,21 @@ export function useAssemblyAIStreaming(
   });
 
   const wsRef = useRef<WebSocket | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
 
   // Cleanup function
   const cleanup = useCallback(() => {
-    // Stop media recorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+    // Stop audio processing
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
     }
-    mediaRecorderRef.current = null;
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
 
     // Stop media stream tracks
     if (mediaStreamRef.current) {
@@ -96,41 +101,58 @@ export function useAssemblyAIStreaming(
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
-      // Create WebSocket connection to AssemblyAI
+      // Create AudioContext first to determine actual sample rate
+      // On macOS/WebKit, the browser may ignore the requested sample rate
+      // and use the hardware's default (typically 44.1kHz or 48kHz)
+      const requestedSampleRate = config.sampleRate || 16000;
+      const audioContext = new AudioContext({ sampleRate: requestedSampleRate });
+      audioContextRef.current = audioContext;
+
+      // Use the actual sample rate from AudioContext (may differ from requested)
+      const sampleRate = audioContext.sampleRate;
+
+      // Create WebSocket connection to AssemblyAI (Universal-Streaming v3)
+      // v3 uses different parameters than v2:
+      // - encoding: audio format (pcm_s16le or pcm_mulaw)
+      // - min_end_of_turn_silence_when_confident: silence when semantic model is confident
+      // - max_turn_silence: maximum silence before triggering end of turn
+      // - end_of_turn_confidence_threshold: controls semantic vs acoustic detection
+      const encoding = config.encoding || 'pcm_s16le';
+      const silenceThreshold = config.endUtteranceSilenceThreshold || 2000;
+      const confidenceThreshold = silenceThreshold >= 3000 ? 0.7 : 0.4;
+
       const ws = new WebSocket(
-        `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=${config.sampleRate || 16000}`
+        `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&encoding=${encoding}&min_end_of_turn_silence_when_confident=${silenceThreshold}&max_turn_silence=${silenceThreshold}&end_of_turn_confidence_threshold=${confidenceThreshold}&token=${config.apiKey}`
       );
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setState(prev => ({ ...prev, isConnected: true }));
+        setState(prev => ({ ...prev, isConnected: true, isRecording: true }));
 
-        // Send authentication token
-        ws.send(JSON.stringify({
-          audio_data: null,
-          token: config.apiKey,
-        }));
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
-        // Start recording
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'audio/webm',
-        });
-        mediaRecorderRef.current = mediaRecorder;
+        processor.onaudioprocess = (e) => {
+          // Only send audio if WebSocket is open
+          if (ws.readyState !== WebSocket.OPEN) return;
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            // Convert blob to base64 and send to AssemblyAI
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const base64Audio = (reader.result as string).split(',')[1];
-              ws.send(JSON.stringify({ audio_data: base64Audio }));
-            };
-            reader.readAsDataURL(event.data);
+          const inputData = e.inputBuffer.getChannelData(0);
+
+          // Convert Float32Array to Int16Array (PCM s16le)
+          const pcmData = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            // Clamp to [-1, 1] and convert to 16-bit integer
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
           }
+
+          // Send binary PCM data to WebSocket
+          ws.send(pcmData.buffer);
         };
 
-        mediaRecorder.start(100); // Send data every 100ms
-        setState(prev => ({ ...prev, isRecording: true }));
+        source.connect(processor);
+        processor.connect(audioContext.destination);
 
         // Emit activation state change
         emitActivationStateChange('listening');
@@ -139,41 +161,44 @@ export function useAssemblyAIStreaming(
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
-        if (data.message_type === 'PartialTranscript') {
+        if (data.type === 'Begin') {
+          // Session started message
+          console.log('AssemblyAI session started:', data.id, 'expires:', data.expires_at);
+        } else if (data.type === 'Turn' && data.transcript) {
+          // Universal-Streaming uses immutable Turn messages
+          // end_of_turn=true means this is a complete utterance (like FinalTranscript)
+          // end_of_turn=false means more words coming (like PartialTranscript)
+          const isFinal = data.end_of_turn === true;
+          const confidence = data.end_of_turn_confidence || 0;
+
           const transcript: TranscriptEvent = {
-            text: data.text,
-            isFinal: false,
-            confidence: data.confidence,
+            text: data.transcript,
+            isFinal,
+            confidence,
           };
 
-          setState(prev => ({
-            ...prev,
-            interimTranscript: data.text,
-          }));
+          if (isFinal) {
+            setState(prev => ({
+              ...prev,
+              finalTranscript: prev.finalTranscript + ' ' + data.transcript,
+              interimTranscript: '',
+            }));
 
-          // Emit interim transcript event
-          emitInterimTranscript(transcript);
-          onInterimTranscript?.(transcript);
-        } else if (data.message_type === 'FinalTranscript') {
-          const transcript: TranscriptEvent = {
-            text: data.text,
-            isFinal: true,
-            confidence: data.confidence,
-          };
+            // Emit final transcript event
+            emitFinalTranscript(transcript);
+            // Emit processing state after final transcript
+            emitActivationStateChange('processing');
+            onFinalTranscript?.(transcript);
+          } else {
+            setState(prev => ({
+              ...prev,
+              interimTranscript: data.transcript,
+            }));
 
-          setState(prev => ({
-            ...prev,
-            finalTranscript: prev.finalTranscript + ' ' + data.text,
-            interimTranscript: '',
-          }));
-
-          // Emit final transcript event
-          emitFinalTranscript(transcript);
-          // Emit processing state after final transcript
-          emitActivationStateChange('processing');
-          onFinalTranscript?.(transcript);
-        } else if (data.message_type === 'SessionBegins') {
-          console.log('AssemblyAI session started:', data);
+            // Emit interim transcript event
+            emitInterimTranscript(transcript);
+            onInterimTranscript?.(transcript);
+          }
         }
       };
 
@@ -199,11 +224,8 @@ export function useAssemblyAIStreaming(
       };
 
       ws.onclose = () => {
-        setState(prev => ({
-          ...prev,
-          isConnected: false,
-          isRecording: false,
-        }));
+        // Invoke cleanup to stop audio processing/MediaStream and reset state
+        cleanup();
 
         // Emit idle state when connection closes
         emitActivationStateChange('idle');
@@ -229,7 +251,7 @@ export function useAssemblyAIStreaming(
       onError?.(err);
       cleanup();
     }
-  }, [config.apiKey, config.sampleRate, onInterimTranscript, onFinalTranscript, onError, cleanup]);
+  }, [config.apiKey, config.sampleRate, config.encoding, config.endUtteranceSilenceThreshold, onInterimTranscript, onFinalTranscript, onError, cleanup]);
 
   // Stop streaming
   const stop = useCallback(() => {

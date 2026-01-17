@@ -47,6 +47,7 @@ export function useVapiTts(
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const currentTextRef = useRef<string | null>(null);
 
   // Initialize audio context for muting
   useEffect(() => {
@@ -71,6 +72,14 @@ export function useVapiTts(
   // Speak text using Vapi
   const speak = useCallback(async (text: string) => {
     try {
+      // Stop any existing audio before starting new playback
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current = null;
+      }
+
+      currentTextRef.current = text;
       setState(prev => ({ ...prev, error: null, currentText: text }));
 
       // Call Vapi TTS API to get audio URL
@@ -82,7 +91,7 @@ export function useVapiTts(
         },
         body: JSON.stringify({
           text,
-          voice: config.voice || 'default',
+          voice: config.voice || 'en-US-Neural2-J',
           model: config.model || 'tts-1',
         }),
       });
@@ -194,26 +203,35 @@ export function useVapiTts(
       setState(prev => ({ ...prev, isPaused: false, isPlaying: true }));
       emitEvent({
         type: 'resumed',
-        text: state.currentText || undefined,
+        text: currentTextRef.current || undefined,
         timestamp: Date.now(),
       });
     }
-  }, [emitEvent, state.currentText]);
+  }, [emitEvent]);
 
   // Stop playback
   const stop = useCallback(() => {
     if (audioRef.current) {
+      const currentText = currentTextRef.current;
+      // Remove onpause handler to prevent it from setting isPaused=true during stop
+      audioRef.current.onpause = null;
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
+      currentTextRef.current = null;
       setState(prev => ({
         ...prev,
         isPlaying: false,
         isPaused: false,
         currentText: null,
       }));
+      emitEvent({
+        type: 'stopped',
+        text: currentText || undefined,
+        timestamp: Date.now(),
+      });
       audioRef.current = null;
     }
-  }, []);
+  }, [emitEvent]);
 
   // Mute audio
   const mute = useCallback(() => {
