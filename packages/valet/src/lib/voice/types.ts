@@ -21,7 +21,7 @@ export interface TranscriptEvent {
  */
 export interface PlaybackEvent {
   /** Type of playback event */
-  type: 'started' | 'paused' | 'resumed' | 'completed' | 'error';
+  type: 'started' | 'paused' | 'resumed' | 'stopped' | 'completed' | 'error';
   /** The text being spoken */
   text?: string;
   /** Error message if type is 'error' */

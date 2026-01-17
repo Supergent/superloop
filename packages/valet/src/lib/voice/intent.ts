@@ -154,6 +154,10 @@ const INTENT_PATTERNS = {
     /system status/i,
     /health check/i,
     /check (?:my )?mac/i,
+    /why (?:is|'s) (?:my )?mac (?:so )?slow/i,
+    /(?:my )?mac (?:is|feels|seems) slow/i,
+    /(?:my )?mac (?:is|'s) running slow/i,
+    /slow (?:mac|performance)/i,
   ],
   clean: [
     /clean (?:my )?mac/i,
@@ -297,7 +301,7 @@ export function intentToPrompt(intent: VoiceIntent): string {
       return `${transcript}\n\nPlease run 'mo status' and explain the Mac's health status in a friendly, conversational way.`;
 
     case 'clean':
-      return `${transcript}\n\nPlease help me clean my Mac. First run 'mo clean --dry-run' to preview what will be cleaned, then explain what you found and ask for confirmation before running the actual cleanup.`;
+      return `${transcript}\n\nPlease help me clean my Mac. First run 'mo analyze' to understand what's using space, then run 'mo clean --dry-run' to preview what will be cleaned. Explain what you found and ask for confirmation before running the actual cleanup.`;
 
     case 'optimize':
       return `${transcript}\n\nPlease help me optimize my Mac. First run 'mo optimize --dry-run' to preview the optimizations, then explain what will be done and ask for confirmation.`;

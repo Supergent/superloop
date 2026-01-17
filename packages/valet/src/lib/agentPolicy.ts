@@ -158,6 +158,29 @@ export function getActiveApprovals(): CommandApproval[] {
 // ============================================================================
 
 /**
+ * Check if a command has a standalone dry-run flag
+ * @param normalized - Normalized command string
+ * @returns true if the command has --dry-run or standalone -n flag
+ */
+function hasDryRunFlag(normalized: string): boolean {
+  const parts = normalized.split(/\s+/);
+
+  // Reject --dry-run=<value> forms (e.g., --dry-run=false) first
+  // If ANY --dry-run=<value> flag is present, treat as unsafe
+  if (parts.some(part => part.startsWith('--dry-run='))) {
+    return false;
+  }
+
+  // Check for standalone --dry-run flag (not --dry-run=<value>)
+  if (parts.includes('--dry-run')) {
+    return true;
+  }
+
+  // Check for standalone -n flag (not part of another flag like --no-confirmation)
+  return parts.includes('-n');
+}
+
+/**
  * Classify a Mole command based on its potential impact
  */
 export function classifyCommand(command: string): CommandClassification {
@@ -173,8 +196,8 @@ export function classifyCommand(command: string): CommandClassification {
   // Check if it's a destructive command
   for (const destructiveCmd of DESTRUCTIVE_COMMANDS) {
     if (normalized.startsWith(destructiveCmd)) {
-      // If it has --dry-run, it's safe
-      if (normalized.includes('--dry-run') || normalized.includes('-n')) {
+      // If it has --dry-run or standalone -n AND the command supports dry-run, it's safe
+      if (hasDryRunFlag(normalized) && supportsDryRun(command)) {
         return 'safe';
       }
       return 'destructive';
@@ -207,21 +230,25 @@ export function toDryRunCommand(command: string): string {
   const normalized = normalizeCommand(command);
 
   // Don't add --dry-run if it already has it
-  if (normalized.includes('--dry-run') || normalized.includes('-n')) {
+  if (hasDryRunFlag(normalized)) {
     return command;
   }
 
   // Add --dry-run flag before any existing flags
   const parts = command.trim().split(/\s+/);
-  const baseCmd = parts[0]; // 'mo'
-  const subCmd = parts[1]; // 'clean', 'optimize', etc.
 
-  if (parts.length === 2) {
+  // Strip any invalid --dry-run=<value> tokens
+  const filteredParts = parts.filter(part => !part.startsWith('--dry-run='));
+
+  const baseCmd = filteredParts[0]; // 'mo'
+  const subCmd = filteredParts[1]; // 'clean', 'optimize', etc.
+
+  if (filteredParts.length === 2) {
     return `${baseCmd} ${subCmd} --dry-run`;
   }
 
   // Insert --dry-run after subcommand
-  return `${baseCmd} ${subCmd} --dry-run ${parts.slice(2).join(' ')}`;
+  return `${baseCmd} ${subCmd} --dry-run ${filteredParts.slice(2).join(' ')}`;
 }
 
 /**
@@ -229,7 +256,7 @@ export function toDryRunCommand(command: string): string {
  */
 export function isDryRun(command: string): boolean {
   const normalized = normalizeCommand(command);
-  return normalized.includes('--dry-run') || normalized.includes('-n');
+  return hasDryRunFlag(normalized);
 }
 
 // ============================================================================
@@ -260,8 +287,8 @@ export function evaluatePolicy(command: string): PolicyDecision {
     const isDry = isDryRun(command);
     const canDryRun = supportsDryRun(command);
 
-    // If it's a dry-run, allow it
-    if (isDry) {
+    // If it's a dry-run AND the command supports dry-run, allow it
+    if (isDry && canDryRun) {
       return {
         allowed: true,
         classification: 'safe', // Dry-run is safe

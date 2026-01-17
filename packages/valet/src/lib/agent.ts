@@ -119,14 +119,22 @@ function createCommandValidationHook() {
 
       // Reject shell operators that could chain commands or redirect output
       // This prevents bypassing the whitelist via: mo status; rm -rf ~
+      // However, we need to allow these characters when they appear inside quoted strings
+      // e.g., mo uninstall "Slack (Beta)" is safe because the parentheses are quoted
+
+      // First, strip out quoted strings so we can check for operators outside quotes
+      const withoutQuotedStrings = trimmedCommand
+        .replace(/"[^"]*"/g, '""')  // Replace double-quoted strings with empty quotes
+        .replace(/'[^']*'/g, "''");  // Replace single-quoted strings with empty quotes
+
       const dangerousPatterns = [
-        /[;&|`$(){}[\]<>]/,  // Shell operators and command substitution
-        /\n/,                 // Newlines (command chaining)
-        /\\\s*\n/,            // Line continuation
+        /[;&|`${}[\]<>]/,  // Shell operators and command substitution (parentheses allowed for quoted app names)
+        /\n/,              // Newlines (command chaining)
+        /\\\s*\n/,         // Line continuation
       ];
 
       for (const pattern of dangerousPatterns) {
-        if (pattern.test(trimmedCommand)) {
+        if (pattern.test(withoutQuotedStrings)) {
           const error = new Error(
             `Security violation: Shell operators not allowed in commands. Attempted command: ${trimmedCommand}`
           );
