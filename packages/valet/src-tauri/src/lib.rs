@@ -38,10 +38,17 @@ fn update_tray_tooltip(app: tauri::AppHandle, tooltip: String) -> Result<(), Str
   Ok(())
 }
 
-/// Update tray icon based on health status
+/// Update tray icon based on health status and AI working state
 #[tauri::command]
-fn update_tray_icon(app: tauri::AppHandle, status: String) -> Result<(), String> {
+fn update_tray_icon(app: tauri::AppHandle, status: String, is_ai_working: bool) -> Result<(), String> {
   if let Some(tray) = app.tray_by_id("main") {
+    // If AI is working, show AI-active indicator using title overlay
+    // This provides a visually distinct indicator without requiring animated assets
+    if is_ai_working {
+      tray.set_title(Some("🤖")).map_err(|e| e.to_string())?;
+      return Ok(());
+    }
+
     // Update tray icon based on health status using icon assets
     // Icon files should be placed in src-tauri/icons/ directory:
     // - icon-good.png (green) for healthy state
@@ -99,6 +106,7 @@ pub fn run() {
       update_tray_icon,
       mole::ensure_mole_installed_command,
       mole::get_home_dir,
+      mole::run_privileged_optimize,
       workspace::workspace_path,
       workspace::ensure_workspace_command,
       audit::log_audit_event,

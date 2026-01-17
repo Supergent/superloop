@@ -162,25 +162,26 @@ export async function uninstallApp(appName: string): Promise<MoleUninstallResult
 // mo optimize
 // ============================================================================
 
-export async function optimizeSystem(options?: { dryRun?: boolean }): Promise<MoleOptimizeResult> {
+/**
+ * Run mo optimize with admin privileges using osascript prompt
+ * This should be used when optimize requires sudo access
+ */
+export async function optimizeSystemPrivileged(options?: { dryRun?: boolean }): Promise<MoleOptimizeResult> {
   try {
-    const args = ['optimize'];
     const isDryRun = options?.dryRun !== false; // Default to dry run for safety
-
-    if (isDryRun) {
-      args.push('--dry-run');
-    }
-
-    const result = await executeMoleCommand(args);
-
-    if (result.code !== 0 || hasError(result.stderr)) {
-      throw new Error(extractErrorMessage(result.stderr || result.stdout));
-    }
-
-    return parseOptimizeOutput(result.stdout, isDryRun);
+    const output = await invoke<string>('run_privileged_optimize', { dryRun: isDryRun });
+    return parseOptimizeOutput(output, isDryRun);
   } catch (error) {
-    throw createMoleError('optimize', error);
+    throw createMoleError('optimize (privileged)', error);
   }
+}
+
+/**
+ * Run mo optimize - always uses privileged execution for consistency
+ * Delegates to optimizeSystemPrivileged
+ */
+export async function optimizeSystem(options?: { dryRun?: boolean }): Promise<MoleOptimizeResult> {
+  return optimizeSystemPrivileged(options);
 }
 
 // ============================================================================
@@ -263,6 +264,7 @@ export const mole = {
   cleanSystem,
   uninstallApp,
   optimizeSystem,
+  optimizeSystemPrivileged,
   purgeDeveloperArtifacts,
   cleanupInstallers,
 };

@@ -4,6 +4,7 @@ use std::process::Command;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PermissionStatus {
     pub microphone: bool,
+    #[serde(rename = "fullDiskAccess")]
     pub full_disk_access: bool,
     pub accessibility: bool,
 }
@@ -73,10 +74,17 @@ fn check_microphone_permission() -> bool {
 fn check_full_disk_access() -> bool {
     #[cfg(target_os = "macos")]
     {
-        // Try to read a protected file that requires Full Disk Access
-        // ~/Library/Safari/History.db is a good test file
-        let test_path = format!("{}/Library/Safari/History.db", std::env::var("HOME").unwrap_or_default());
-        std::fs::metadata(&test_path).is_ok()
+        // Try multiple protected files that require Full Disk Access
+        // This avoids relying on Safari-specific files
+        let home = std::env::var("HOME").unwrap_or_default();
+        let test_paths = vec![
+            format!("{}/Library/Safari/History.db", home),
+            format!("{}/Library/Mail", home),
+            format!("{}/Library/Messages", home),
+        ];
+
+        // If any of these protected paths can be accessed, Full Disk Access is granted
+        test_paths.iter().any(|path| std::fs::metadata(path).is_ok())
     }
 
     #[cfg(not(target_os = "macos"))]

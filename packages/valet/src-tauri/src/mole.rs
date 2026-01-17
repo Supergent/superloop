@@ -149,3 +149,34 @@ pub fn get_home_dir() -> Result<String, String> {
         .ok_or_else(|| "Failed to get home directory".to_string())?;
     Ok(home.to_string_lossy().to_string())
 }
+
+/// Tauri command to run mo optimize with admin privileges
+#[tauri::command]
+pub async fn run_privileged_optimize(app: AppHandle, dry_run: bool) -> Result<String, String> {
+    let mole_path = ensure_mole_installed(&app)?;
+
+    // Build the command args
+    let mut args = vec!["optimize".to_string()];
+    if dry_run {
+        args.push("--dry-run".to_string());
+    }
+
+    // Use osascript to prompt for admin privileges and run the command
+    let script = format!(
+        r#"do shell script "{} {}" with administrator privileges"#,
+        mole_path.to_string_lossy(),
+        args.join(" ")
+    );
+
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .map_err(|e| format!("Failed to execute privileged command: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
