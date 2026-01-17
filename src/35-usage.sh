@@ -18,7 +18,8 @@ detect_runner_type() {
 
   if [[ "${cmd[0]}" == "claude" ]] || [[ "$cmd_str" == *"/claude "* ]] || [[ "$cmd_str" == *"/claude" ]]; then
     echo "claude"
-  elif [[ "${cmd[0]}" == "codex" ]] || [[ "$cmd_str" == *"/codex "* ]] || [[ "$cmd_str" == *"/codex" ]]; then
+  elif [[ "${cmd[0]}" == "codex" ]] || [[ "$cmd_str" == *"/codex "* ]] || [[ "$cmd_str" == *"/codex" ]] || [[ "$cmd_str" == *" codex "* ]] || [[ "$cmd_str" == *" codex" ]]; then
+    # Also match "orb -m codex2 codex exec" style commands
     echo "codex"
   else
     echo "unknown"

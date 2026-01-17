@@ -524,13 +524,20 @@ run_role() {
     CURRENT_RUNNER_TYPE="$runner_type"
 
     if [[ "$runner_type" == "claude" ]]; then
-      # prepare_tracked_command generates USAGE_SESSION_ID and injects --session-id
+      # Generate session ID in parent shell (not subshell) so it persists
+      USAGE_SESSION_ID=$(generate_session_id)
+
+      # Inject --session-id after the 'claude' command
       local -a tracked_cmd=()
-      while IFS= read -r line; do
-        tracked_cmd+=("$line")
-      done < <(prepare_tracked_command "$runner_type" "${cmd[@]}")
+      local session_id_injected=0
+      for arg in "${cmd[@]}"; do
+        tracked_cmd+=("$arg")
+        if [[ $session_id_injected -eq 0 && ("$arg" == "claude" || "$arg" == */claude) ]]; then
+          tracked_cmd+=("--session-id" "$USAGE_SESSION_ID")
+          session_id_injected=1
+        fi
+      done
       cmd=("${tracked_cmd[@]}")
-      # USAGE_SESSION_ID is now set globally by prepare_tracked_command
     fi
 
     # Start usage tracking
