@@ -3,6 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { useSettings } from '../../lib/settings';
 import { setAutostart } from '../../lib/autostart';
 import { ApiKeysModal } from './ApiKeysModal';
+import { getCurrentUserId } from '../../lib/auth';
+import { convexClient, isConvexConfigured } from '../../lib/convex';
+import { api } from '../../../convex/_generated/api';
 
 interface SettingsPanelProps {
   onClose?: () => void;
@@ -32,8 +35,65 @@ export function SettingsPanel({ onClose, onKeysChanged }: SettingsPanelProps) {
     settings.autoStart === 'true'
   );
 
+  // Alert thresholds (in GB)
+  const [diskWarningThreshold, setDiskWarningThreshold] = useState(
+    parseInt(settings.diskWarningThreshold || '20', 10)
+  );
+  const [diskCriticalThreshold, setDiskCriticalThreshold] = useState(
+    parseInt(settings.diskCriticalThreshold || '10', 10)
+  );
+
+  // Local input state for thresholds (allows multi-digit typing)
+  const [diskWarningInput, setDiskWarningInput] = useState(
+    settings.diskWarningThreshold || '20'
+  );
+  const [diskCriticalInput, setDiskCriticalInput] = useState(
+    settings.diskCriticalThreshold || '10'
+  );
+
   // API keys modal state
   const [showApiKeysModal, setShowApiKeysModal] = useState(false);
+
+  // Subscription status from backend
+  const [subscriptionStatus, setSubscriptionStatus] = useState<{
+    status: string;
+    trialStartedAt?: number;
+    trialEndsAt?: number;
+    subscriptionEndsAt?: number;
+  } | null>(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+
+  // Fetch subscription status from backend
+  useEffect(() => {
+    const fetchSubscriptionStatus = async () => {
+      if (!isConvexConfigured()) {
+        return; // Fall back to localStorage
+      }
+
+      try {
+        setSubscriptionLoading(true);
+        const userId = await getCurrentUserId();
+
+        if (!userId) {
+          return; // Not authenticated, use localStorage
+        }
+
+        const status = await convexClient.query(api.auth.getSubscriptionStatus, {
+          userId: userId as any, // Convex ID type
+        });
+
+        if (status) {
+          setSubscriptionStatus(status as any);
+        }
+      } catch (error) {
+        console.error('Failed to fetch subscription status:', error);
+      } finally {
+        setSubscriptionLoading(false);
+      }
+    };
+
+    fetchSubscriptionStatus();
+  }, []);
 
   // Update local state when settings change
   useEffect(() => {
@@ -41,6 +101,10 @@ export function SettingsPanel({ onClose, onKeysChanged }: SettingsPanelProps) {
     setMonitoringFrequency(parseInt(settings.monitoringFrequency || '30', 10));
     setNotificationMode(settings.notificationMode || 'critical');
     setAutoStart(settings.autoStart === 'true');
+    setDiskWarningThreshold(parseInt(settings.diskWarningThreshold || '20', 10));
+    setDiskCriticalThreshold(parseInt(settings.diskCriticalThreshold || '10', 10));
+    setDiskWarningInput(settings.diskWarningThreshold || '20');
+    setDiskCriticalInput(settings.diskCriticalThreshold || '10');
   }, [settings]);
 
   const handleVoiceToggle = async (checked: boolean) => {
@@ -83,6 +147,42 @@ export function SettingsPanel({ onClose, onKeysChanged }: SettingsPanelProps) {
     } catch (error) {
       console.error('Failed to update autostart:', error);
     }
+  };
+
+  const handleDiskWarningThresholdBlur = async () => {
+    const value = parseInt(diskWarningInput, 10);
+    // Prevent NaN/empty values from being persisted - revert to previous valid value
+    if (isNaN(value) || value <= 0) {
+      console.warn('Warning threshold must be a valid positive number');
+      setDiskWarningInput(diskWarningThreshold.toString());
+      return;
+    }
+    // Ensure warning threshold is greater than critical threshold
+    if (value <= diskCriticalThreshold) {
+      console.warn('Warning threshold must be greater than critical threshold');
+      setDiskWarningInput(diskWarningThreshold.toString());
+      return;
+    }
+    setDiskWarningThreshold(value);
+    await updateSetting('diskWarningThreshold', value.toString());
+  };
+
+  const handleDiskCriticalThresholdBlur = async () => {
+    const value = parseInt(diskCriticalInput, 10);
+    // Prevent NaN/empty values from being persisted - revert to previous valid value
+    if (isNaN(value) || value <= 0) {
+      console.warn('Critical threshold must be a valid positive number');
+      setDiskCriticalInput(diskCriticalThreshold.toString());
+      return;
+    }
+    // Ensure critical threshold is less than warning threshold
+    if (value >= diskWarningThreshold) {
+      console.warn('Critical threshold must be less than warning threshold');
+      setDiskCriticalInput(diskCriticalThreshold.toString());
+      return;
+    }
+    setDiskCriticalThreshold(value);
+    await updateSetting('diskCriticalThreshold', value.toString());
   };
 
   if (loading) {
@@ -175,6 +275,45 @@ export function SettingsPanel({ onClose, onKeysChanged }: SettingsPanelProps) {
           </div>
         </section>
 
+        {/* Alert Thresholds Settings */}
+        <section className="settings-section">
+          <h3 className="section-title">Alert Thresholds</h3>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label htmlFor="disk-warning-threshold">Disk Warning (GB)</label>
+              <span className="setting-description">
+                Show warning when free disk space falls below this amount
+              </span>
+            </div>
+            <input
+              id="disk-warning-threshold"
+              type="number"
+              min="1"
+              max="1000"
+              value={diskWarningInput}
+              onChange={(e) => setDiskWarningInput(e.target.value)}
+              onBlur={handleDiskWarningThresholdBlur}
+            />
+          </div>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label htmlFor="disk-critical-threshold">Disk Critical (GB)</label>
+              <span className="setting-description">
+                Show critical alert when free disk space falls below this amount
+              </span>
+            </div>
+            <input
+              id="disk-critical-threshold"
+              type="number"
+              min="1"
+              max="1000"
+              value={diskCriticalInput}
+              onChange={(e) => setDiskCriticalInput(e.target.value)}
+              onBlur={handleDiskCriticalThresholdBlur}
+            />
+          </div>
+        </section>
+
         {/* General Settings */}
         <section className="settings-section">
           <h3 className="section-title">General</h3>
@@ -191,6 +330,153 @@ export function SettingsPanel({ onClose, onKeysChanged }: SettingsPanelProps) {
               checked={autoStart}
               onChange={(e) => handleAutoStartToggle(e.target.checked)}
             />
+          </div>
+        </section>
+
+        {/* Account & Subscription Section */}
+        <section className="settings-section">
+          <h3 className="section-title">Account & Subscription</h3>
+          <div className="account-info">
+            <div className="account-row">
+              <span className="account-label">Email:</span>
+              <span className="account-value">
+                {localStorage.getItem('valet_user_email') || 'Not signed in'}
+              </span>
+            </div>
+            <div className="account-row">
+              <span className="account-label">Status:</span>
+              <span className="account-value trial-badge">
+                {(() => {
+                  if (subscriptionLoading) {
+                    return 'Loading...';
+                  }
+
+                  // Use backend status if available
+                  if (subscriptionStatus) {
+                    if (subscriptionStatus.status === 'active') {
+                      return '✓ Subscribed';
+                    }
+                    if (subscriptionStatus.status === 'trial' && subscriptionStatus.trialEndsAt) {
+                      const isExpired = Date.now() > subscriptionStatus.trialEndsAt;
+                      return isExpired ? '⚠️ Trial Expired' : '✓ Free Trial Active';
+                    }
+                    if (subscriptionStatus.status === 'expired') {
+                      return '⚠️ Trial Expired';
+                    }
+                    return '⚠️ No Active Subscription';
+                  }
+
+                  // Fall back to localStorage
+                  const trialStartStr = localStorage.getItem('valet_trial_start');
+                  const parsedTime = trialStartStr ? parseInt(trialStartStr, 10) : NaN;
+                  const trialStartTime = !isNaN(parsedTime) ? parsedTime : Date.now();
+                  const endDate = new Date(trialStartTime);
+                  endDate.setDate(endDate.getDate() + 7);
+                  const isExpired = endDate.getTime() < Date.now();
+                  return isExpired ? '⚠️ Trial Expired' : '✓ Free Trial Active';
+                })()}
+              </span>
+            </div>
+            <div className="account-row">
+              <span className="account-label">
+                {subscriptionStatus?.status === 'active' ? 'Subscription Ends:' : 'Trial Ends:'}
+              </span>
+              <span className="account-value">
+                {(() => {
+                  // Use backend status if available
+                  if (subscriptionStatus) {
+                    const endTime = subscriptionStatus.status === 'active'
+                      ? subscriptionStatus.subscriptionEndsAt
+                      : subscriptionStatus.trialEndsAt;
+
+                    if (!endTime) return 'N/A';
+
+                    const endDate = new Date(endTime);
+                    return endDate.toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric'
+                    });
+                  }
+
+                  // Fall back to localStorage
+                  const trialStartStr = localStorage.getItem('valet_trial_start');
+                  const parsedTime = trialStartStr ? parseInt(trialStartStr, 10) : NaN;
+                  const trialStartTime = !isNaN(parsedTime) ? parsedTime : Date.now();
+                  const endDate = new Date(trialStartTime);
+                  endDate.setDate(endDate.getDate() + 7);
+                  return endDate.toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric'
+                  });
+                })()}
+              </span>
+            </div>
+            <div className="account-row">
+              <span className="account-label">Price:</span>
+              <span className="account-value">
+                {subscriptionStatus?.status === 'active' ? '$29/year' : '$29/year after trial'}
+              </span>
+            </div>
+          </div>
+          <div className="account-actions">
+            {(() => {
+              // Determine if subscription is expired
+              let isExpired = false;
+
+              if (subscriptionStatus) {
+                if (subscriptionStatus.status === 'trial' && subscriptionStatus.trialEndsAt) {
+                  isExpired = Date.now() > subscriptionStatus.trialEndsAt;
+                } else if (subscriptionStatus.status === 'expired') {
+                  isExpired = true;
+                } else if (subscriptionStatus.status === 'active' && subscriptionStatus.subscriptionEndsAt) {
+                  isExpired = Date.now() > subscriptionStatus.subscriptionEndsAt;
+                }
+              } else {
+                // Fall back to localStorage
+                const trialStartStr = localStorage.getItem('valet_trial_start');
+                const parsedTime = trialStartStr ? parseInt(trialStartStr, 10) : NaN;
+                const trialStartTime = !isNaN(parsedTime) ? parsedTime : Date.now();
+                const endDate = new Date(trialStartTime);
+                endDate.setDate(endDate.getDate() + 7);
+                isExpired = endDate.getTime() < Date.now();
+              }
+
+              if (isExpired) {
+                return (
+                  <>
+                    <div className="expired-trial-message">
+                      Your trial has expired. Subscribe to continue using Valet's voice assistant features.
+                    </div>
+                    <button
+                      className="settings-button primary"
+                      onClick={async () => {
+                        // TODO: Integrate with Stripe payment flow
+                        // For now, open Stripe Checkout or billing portal
+                        console.log('Subscribe clicked');
+                        alert('Subscription flow coming soon!');
+                      }}
+                    >
+                      Subscribe Now ($29/year)
+                    </button>
+                  </>
+                );
+              }
+
+              return (
+                <button
+                  className="settings-button secondary"
+                  onClick={async () => {
+                    // TODO: Open Stripe billing portal when available
+                    console.log('Manage account clicked');
+                    alert('Account management coming soon!');
+                  }}
+                >
+                  Manage Account
+                </button>
+              );
+            })()}
           </div>
         </section>
 

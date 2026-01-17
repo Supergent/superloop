@@ -6,6 +6,8 @@ export interface Settings {
   monitoringFrequency: string;
   notificationMode: string;
   autoStart: string;
+  diskWarningThreshold: string;  // GB, default 20
+  diskCriticalThreshold: string; // GB, default 10
   [key: string]: string;
 }
 
@@ -49,10 +51,39 @@ export async function deleteSetting(key: string): Promise<void> {
 /**
  * Get all settings
  */
+/**
+ * Default alert thresholds (in GB)
+ */
+export const DEFAULT_DISK_WARNING_THRESHOLD = 20;
+export const DEFAULT_DISK_CRITICAL_THRESHOLD = 10;
+
 export async function getAllSettings(): Promise<Settings> {
   try {
     const settings = await invoke<Record<string, string>>('get_all_settings_command');
-    return settings as Settings;
+
+    // Sanitize disk threshold settings - fallback to defaults when invalid
+    const warningThreshold = parseFloat(settings.diskWarningThreshold || '');
+    const criticalThreshold = parseFloat(settings.diskCriticalThreshold || '');
+
+    const sanitizedWarningThreshold =
+      !isNaN(warningThreshold) && warningThreshold > 0
+        ? warningThreshold.toString()
+        : DEFAULT_DISK_WARNING_THRESHOLD.toString();
+
+    const sanitizedCriticalThreshold =
+      !isNaN(criticalThreshold) && criticalThreshold > 0
+        ? criticalThreshold.toString()
+        : DEFAULT_DISK_CRITICAL_THRESHOLD.toString();
+
+    return {
+      ...settings,
+      voiceEnabled: settings.voiceEnabled || 'true',
+      monitoringFrequency: settings.monitoringFrequency || '30',
+      notificationMode: settings.notificationMode || 'critical',
+      autoStart: settings.autoStart || 'false',
+      diskWarningThreshold: sanitizedWarningThreshold,
+      diskCriticalThreshold: sanitizedCriticalThreshold,
+    };
   } catch (error) {
     console.error('Failed to get all settings:', error);
     return {
@@ -60,6 +91,8 @@ export async function getAllSettings(): Promise<Settings> {
       monitoringFrequency: '30',
       notificationMode: 'critical',
       autoStart: 'false',
+      diskWarningThreshold: DEFAULT_DISK_WARNING_THRESHOLD.toString(),
+      diskCriticalThreshold: DEFAULT_DISK_CRITICAL_THRESHOLD.toString(),
     };
   }
 }
@@ -73,6 +106,8 @@ export function useSettings() {
     monitoringFrequency: '30',
     notificationMode: 'critical',
     autoStart: 'false',
+    diskWarningThreshold: DEFAULT_DISK_WARNING_THRESHOLD.toString(),
+    diskCriticalThreshold: DEFAULT_DISK_CRITICAL_THRESHOLD.toString(),
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
