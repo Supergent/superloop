@@ -6,6 +6,7 @@ interface MenubarDropdownProps {
   metrics: MoleStatusMetrics | null;
   loading: boolean;
   error: string | null;
+  offline?: boolean;
   aiWorking?: boolean;
   aiResponse?: string;
   metricsSlot?: React.ReactNode;
@@ -19,6 +20,7 @@ export function MenubarDropdown({
   metrics,
   loading,
   error,
+  offline = false,
   aiWorking = false,
   aiResponse,
   metricsSlot,
@@ -77,6 +79,14 @@ export function MenubarDropdown({
         <div className="dropdown-error">
           <span className="error-icon">⚠️</span>
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Offline Indicator */}
+      {offline && (
+        <div className="dropdown-offline">
+          <span className="offline-icon">📡</span>
+          <span>Offline - Voice features unavailable</span>
         </div>
       )}
 

@@ -71,6 +71,18 @@ export function MoleCheck({ onNext, onBack }: MoleCheckProps) {
               <div className="status-icon">✗</div>
               <p>Failed to install Mole</p>
               {errorMessage && <p className="error-message">{errorMessage}</p>}
+
+              <div className="install-guidance">
+                <p className="guidance-title">Install Mole via Homebrew:</p>
+                <code className="install-command">brew install mole</code>
+                <p className="guidance-note">
+                  If you don't have Homebrew installed, visit{' '}
+                  <a href="https://brew.sh" target="_blank" rel="noopener noreferrer">
+                    brew.sh
+                  </a>
+                </p>
+              </div>
+
               <button className="btn-secondary" onClick={handleRetry}>
                 Retry
               </button>

@@ -4,7 +4,7 @@ import { formatBytes } from '../../lib/formatters';
 import type { MoleStatusMetrics, MoleAnalyzeResult } from '../../lib/moleTypes';
 
 interface FirstScanProps {
-  onNext: () => void;
+  onNext: (data?: { metrics: MoleStatusMetrics; diskAnalysis: MoleAnalyzeResult }) => void;
   onBack: () => void;
 }
 
@@ -48,7 +48,12 @@ export function FirstScan({ onNext, onBack }: FirstScanProps) {
   };
 
   const handleFinish = () => {
-    onNext();
+    // Pass scan data to next screen if available
+    if (metrics && diskAnalysis) {
+      onNext({ metrics, diskAnalysis });
+    } else {
+      onNext();
+    }
   };
 
   return (

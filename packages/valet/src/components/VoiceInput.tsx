@@ -64,11 +64,13 @@ export const VoiceInput = forwardRef<VoiceInputRef, VoiceInputProps>(({
   );
 
   const handleStart = useCallback(async () => {
-    if (!state.isRecording) {
-      await actions.start();
-      onVoiceStart?.();
+    if (disabled || !state.isRecording) {
+      if (!disabled && !state.isRecording) {
+        await actions.start();
+        onVoiceStart?.();
+      }
     }
-  }, [state.isRecording, actions, onVoiceStart]);
+  }, [disabled, state.isRecording, actions, onVoiceStart]);
 
   const handleStop = useCallback(() => {
     if (state.isRecording) {
@@ -79,11 +81,13 @@ export const VoiceInput = forwardRef<VoiceInputRef, VoiceInputProps>(({
 
   const handleToggle = useCallback(async () => {
     if (state.isRecording) {
+      // Always allow stopping, even when disabled
       handleStop();
-    } else {
+    } else if (!disabled) {
+      // Only allow starting when not disabled
       await handleStart();
     }
-  }, [state.isRecording, handleStart, handleStop]);
+  }, [disabled, state.isRecording, handleStart, handleStop]);
 
   // Expose programmatic controls via ref
   useImperativeHandle(ref, () => ({

@@ -85,6 +85,22 @@
   font-size: var(--font-size-lg);
 }
 
+/* Offline Indicator */
+.dropdown-offline {
+  padding: var(--section-padding);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  background: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+  font-size: var(--font-size-sm);
+}
+
+.offline-icon {
+  font-size: var(--font-size-lg);
+}
+
 /* Dropdown Sections */
 .dropdown-section {
   padding: var(--section-padding);

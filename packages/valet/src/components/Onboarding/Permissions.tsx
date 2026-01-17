@@ -28,7 +28,11 @@ export function Permissions({ onNext, onBack }: PermissionsProps) {
     setIsChecking(true);
     try {
       const status = await invoke<PermissionStatus>('check_permissions_command');
-      setPermissions(status);
+      setPermissions({
+        microphone: status.microphone,
+        fullDiskAccess: status.fullDiskAccess,
+        accessibility: status.accessibility,
+      });
     } catch (error) {
       console.error('Failed to check permissions:', error);
     } finally {

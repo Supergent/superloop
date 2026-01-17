@@ -20,7 +20,8 @@ export function VoiceConversation({
   showTimestamps = false,
 }: VoiceConversationProps) {
   // Show most recent turns (reverse chronological)
-  const displayTurns = turns.slice(-maxTurns);
+  // When maxTurns is 0, show empty state
+  const displayTurns = maxTurns === 0 ? [] : turns.slice(-maxTurns);
 
   if (displayTurns.length === 0) {
     return (
