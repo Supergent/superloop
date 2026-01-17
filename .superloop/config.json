@@ -20,14 +20,14 @@
     },
     "codex4": {
       "command": ["orb", "-m", "codex4", "codex", "exec"],
-      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "codex5": {
       "command": ["orb", "-m", "codex5", "codex", "exec"],
-      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
+      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "claude-vanilla": {
@@ -82,7 +82,7 @@
       },
       "roles": {
         "planner": {
-          "runner": "codex2"
+          "runner": "codex4"
         },
         "implementer": {
           "runner": "claude-vanilla"
@@ -91,7 +91,7 @@
           "runner": "claude-vanilla"
         },
         "reviewer": {
-          "runner": "codex3"
+          "runner": "codex5"
         }
       }
     }
