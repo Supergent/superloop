@@ -69,10 +69,27 @@ If PLAN.MD does not exist or is empty, create the full feature plan:
 ### Subsequent Iterations
 
 1. Read the current PLAN.MD and active PHASE file.
-2. Review iteration notes for blockers or test failures.
-3. If current phase has unchecked tasks, no changes needed.
-4. If current phase is complete (all `[x]`), create the next PHASE file.
+2. **Read the reviewer report** (`review.md`) for findings:
+   - Look for `## Findings` section with HIGH/MEDIUM severity bugs
+   - These are implementation defects that MUST be fixed
+3. **Read the test report** (`test-report.md`) for gaps:
+   - Look for `## AC Coverage` with ❌ items that should have tests
+   - Look for `## Quality Issues Found` for test failures
+4. **Decision logic:**
+   - If reviewer found HIGH/MEDIUM bugs → Add `P{n}.F Fixes` section to current phase with fix tasks
+   - If tester found missing coverage for implemented features → Add test tasks
+   - If current phase has only unchecked manual validation tasks (marked `Manual:`) → Phase implementation is complete, create next PHASE file
+   - If current phase has unchecked implementation tasks → No changes needed
+   - If current phase is fully complete → Create next PHASE file
 5. Update PLAN.MD only if scope, decisions, or architecture must change.
+
+**IMPORTANT:** Reviewer findings are NOT optional. If the reviewer identified bugs with file paths and line numbers, you MUST create fix tasks. Example:
+
+```markdown
+## P1.F Fixes (from reviewer findings)
+1. [ ] Fix agent timeout handling in `packages/valet/src/lib/agent.ts:190-252` - timeoutPromise is never awaited
+2. [ ] Fix monitoring interval config in `packages/valet/src-tauri/src/monitoring.rs:125-136` - config changes don't update ticker
+```
 
 ## Atomic Task Format
 
