@@ -145,3 +145,17 @@ export async function getKeyStatus(): Promise<{
     llmProxy,
   };
 }
+
+/**
+ * Store per-user llm-proxy key after authentication
+ * This is called after successful auth to persist the provisioned API key
+ */
+export async function storeLlmProxyKeyAfterAuth(apiKey: string): Promise<void> {
+  try {
+    await storeKey(KEY_NAMES.LLM_PROXY, apiKey);
+    console.log('Per-user llm-proxy key stored in Keychain');
+  } catch (error) {
+    console.error('Failed to store per-user llm-proxy key:', error);
+    throw error;
+  }
+}

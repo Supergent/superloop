@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Welcome } from './Welcome';
+import { AccountCreation } from './AccountCreation';
 import { MoleCheck } from './MoleCheck';
 import { Permissions } from './Permissions';
 import { Shortcut } from './Shortcut';
 import { FirstScan } from './FirstScan';
+import { TrialResults } from './TrialResults';
+import type { MoleStatusMetrics, MoleAnalyzeResult } from '../../lib/moleTypes';
 
-export type OnboardingStep = 'welcome' | 'mole-check' | 'permissions' | 'shortcut' | 'first-scan' | 'complete';
+export type OnboardingStep = 'welcome' | 'account-creation' | 'mole-check' | 'permissions' | 'shortcut' | 'first-scan' | 'trial-results' | 'complete';
 
 interface OnboardingFlowProps {
   onComplete: () => void;
@@ -13,10 +16,19 @@ interface OnboardingFlowProps {
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('welcome');
+  const [scanData, setScanData] = useState<{ metrics: MoleStatusMetrics; diskAnalysis: MoleAnalyzeResult } | null>(null);
 
-  const handleNext = () => {
+  const handleNext = (data?: { metrics: MoleStatusMetrics; diskAnalysis: MoleAnalyzeResult }) => {
+    // Store scan data if provided
+    if (data) {
+      setScanData(data);
+    }
+
     switch (currentStep) {
       case 'welcome':
+        setCurrentStep('account-creation');
+        break;
+      case 'account-creation':
         setCurrentStep('mole-check');
         break;
       case 'mole-check':
@@ -29,6 +41,9 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         setCurrentStep('first-scan');
         break;
       case 'first-scan':
+        setCurrentStep('trial-results');
+        break;
+      case 'trial-results':
         setCurrentStep('complete');
         onComplete();
         break;
@@ -37,8 +52,11 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const handleBack = () => {
     switch (currentStep) {
-      case 'mole-check':
+      case 'account-creation':
         setCurrentStep('welcome');
+        break;
+      case 'mole-check':
+        setCurrentStep('account-creation');
         break;
       case 'permissions':
         setCurrentStep('mole-check');
@@ -49,6 +67,9 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       case 'first-scan':
         setCurrentStep('shortcut');
         break;
+      case 'trial-results':
+        setCurrentStep('first-scan');
+        break;
     }
   };
 
@@ -56,6 +77,9 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     <div className="onboarding-flow">
       {currentStep === 'welcome' && (
         <Welcome onNext={handleNext} />
+      )}
+      {currentStep === 'account-creation' && (
+        <AccountCreation onNext={handleNext} onBack={handleBack} />
       )}
       {currentStep === 'mole-check' && (
         <MoleCheck onNext={handleNext} onBack={handleBack} />
@@ -68,6 +92,14 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       )}
       {currentStep === 'first-scan' && (
         <FirstScan onNext={handleNext} onBack={handleBack} />
+      )}
+      {currentStep === 'trial-results' && (
+        <TrialResults
+          onNext={handleNext}
+          onBack={handleBack}
+          metrics={scanData?.metrics}
+          diskAnalysis={scanData?.diskAnalysis}
+        />
       )}
     </div>
   );
