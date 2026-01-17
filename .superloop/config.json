@@ -77,6 +77,9 @@
         "action": "report_and_stop",
         "ignore": []
       },
+      "git": {
+        "commit_strategy": "per_iteration"
+      },
       "roles": {
         "planner": {
           "runner": "codex2"

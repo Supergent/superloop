@@ -5906,6 +5906,10 @@ run_cmd() {
       stuck_enabled="false"
     fi
 
+    # Git auto-commit configuration
+    local commit_strategy
+    commit_strategy=$(jq -r '.git.commit_strategy // "never"' <<<"$loop_json")
+
     if [[ "$reviewer_packet_enabled" != "true" ]]; then
       reviewer_packet=""
     fi
@@ -6753,6 +6757,11 @@ run_cmd() {
         --arg approval "$approval_status" \
         '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence, approval: $approval}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
+
+      # Auto-commit iteration changes if configured
+      if [[ "$commit_strategy" != "never" ]]; then
+        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" || true
+      fi
 
       append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
       write_timeline "$run_summary_file" "$timeline_file"
