@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { useApiKeys } from '../useApiKeys';
 import { mockInvoke, mockKeychain } from '../../test/setup';
 
@@ -93,7 +93,9 @@ describe('useApiKeys', () => {
     });
 
     // Save a key
-    await result.current.saveKey('assemblyai', 'new-assembly-key');
+    await act(async () => {
+      await result.current.saveKey('assemblyai', 'new-assembly-key');
+    });
 
     // Wait for save to complete
     await waitFor(() => {
@@ -121,7 +123,9 @@ describe('useApiKeys', () => {
     expect(result.current.keys.assemblyAi).toBe('test-assembly-key');
 
     // Delete the key
-    await result.current.removeKey('assemblyai');
+    await act(async () => {
+      await result.current.removeKey('assemblyai');
+    });
 
     // Wait for deletion to complete
     await waitFor(() => {
@@ -161,9 +165,11 @@ describe('useApiKeys', () => {
     mockInvoke.mockRejectedValueOnce(new Error('Keychain write failed'));
 
     // Try to save a key
-    await expect(
-      result.current.saveKey('assemblyai', 'new-key')
-    ).rejects.toThrow('Keychain write failed');
+    await act(async () => {
+      await expect(
+        result.current.saveKey('assemblyai', 'new-key')
+      ).rejects.toThrow('Keychain write failed');
+    });
 
     // Check error state
     await waitFor(() => {
@@ -182,7 +188,9 @@ describe('useApiKeys', () => {
     mockKeychain['assemblyai'] = 'test-key';
 
     // Manually call loadKeys
-    await result.current.loadKeys();
+    await act(async () => {
+      await result.current.loadKeys();
+    });
 
     // Wait for keys to load
     await waitFor(() => {

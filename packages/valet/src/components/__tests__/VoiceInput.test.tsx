@@ -308,6 +308,30 @@ describe('VoiceInput', () => {
       expect(mockStop).not.toHaveBeenCalled();
       expect(mockOnVoiceEnd).not.toHaveBeenCalled();
     });
+
+    it('should allow stopping active recording even when disabled', () => {
+      vi.mocked(useAssemblyAIStreamingHook.useAssemblyAIStreaming).mockReturnValue([
+        {
+          isRecording: true,
+          interimTranscript: '',
+          finalTranscript: '',
+          error: null,
+        },
+        {
+          start: mockStart,
+          stop: mockStop,
+        },
+      ]);
+
+      const ref = React.createRef<VoiceInputRef>();
+
+      render(<VoiceInput ref={ref} apiKey="test-key" disabled={true} onVoiceEnd={mockOnVoiceEnd} />);
+
+      ref.current?.stop();
+
+      expect(mockStop).toHaveBeenCalledTimes(1);
+      expect(mockOnVoiceEnd).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('Controlled mode via isActive prop', () => {

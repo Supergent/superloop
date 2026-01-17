@@ -69,22 +69,19 @@ class MockWebSocket {
   }
 }
 
-global.WebSocket = MockWebSocket as any;
+let mockWsInstance: MockWebSocket | null = null;
+
+global.WebSocket = vi.fn().mockImplementation(() => {
+  mockWsInstance = new MockWebSocket();
+  return mockWsInstance;
+}) as any;
 
 describe('useAssemblyAIStreaming', () => {
-  let mockWs: MockWebSocket;
-
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetUserMedia.mockResolvedValue(mockMediaStream);
     mockMediaRecorder.state = 'inactive';
-
-    // Capture WebSocket instance
-    const OriginalWebSocket = global.WebSocket;
-    global.WebSocket = vi.fn((url: string) => {
-      mockWs = new MockWebSocket();
-      return mockWs;
-    }) as any;
+    mockWsInstance = null;
   });
 
   afterEach(() => {
@@ -101,7 +98,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       await waitFor(() => {
@@ -118,7 +115,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       await act(async () => {
@@ -139,13 +136,13 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       vi.clearAllMocks();
 
       await act(async () => {
-        mockWs.simulateClose();
+        mockWsInstance!.simulateClose();
       });
 
       await waitFor(() => {
@@ -166,7 +163,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       const partialTranscript = {
@@ -176,7 +173,7 @@ describe('useAssemblyAIStreaming', () => {
       };
 
       await act(async () => {
-        mockWs.simulateMessage(partialTranscript);
+        mockWsInstance!.simulateMessage(partialTranscript);
       });
 
       await waitFor(() => {
@@ -205,7 +202,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       const finalTranscript = {
@@ -215,7 +212,7 @@ describe('useAssemblyAIStreaming', () => {
       };
 
       await act(async () => {
-        mockWs.simulateMessage(finalTranscript);
+        mockWsInstance!.simulateMessage(finalTranscript);
       });
 
       await waitFor(() => {
@@ -242,7 +239,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       vi.clearAllMocks();
@@ -254,7 +251,7 @@ describe('useAssemblyAIStreaming', () => {
       };
 
       await act(async () => {
-        mockWs.simulateMessage(finalTranscript);
+        mockWsInstance!.simulateMessage(finalTranscript);
       });
 
       await waitFor(() => {
@@ -271,7 +268,7 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       const partialTranscript = {
@@ -281,7 +278,7 @@ describe('useAssemblyAIStreaming', () => {
       };
 
       await act(async () => {
-        mockWs.simulateMessage(partialTranscript);
+        mockWsInstance!.simulateMessage(partialTranscript);
       });
 
       await waitFor(() => {
@@ -299,12 +296,12 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       // Set interim first
       await act(async () => {
-        mockWs.simulateMessage({
+        mockWsInstance!.simulateMessage({
           message_type: 'PartialTranscript',
           text: 'hello',
           confidence: 0.8,
@@ -313,7 +310,7 @@ describe('useAssemblyAIStreaming', () => {
 
       // Then final
       await act(async () => {
-        mockWs.simulateMessage({
+        mockWsInstance!.simulateMessage({
           message_type: 'FinalTranscript',
           text: 'hello world',
           confidence: 0.95,
@@ -343,7 +340,7 @@ describe('useAssemblyAIStreaming', () => {
       });
 
       await act(async () => {
-        mockWs.simulateError();
+        mockWsInstance!.simulateError();
       });
 
       await waitFor(() => {
@@ -417,12 +414,12 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       // Add some transcripts
       await act(async () => {
-        mockWs.simulateMessage({
+        mockWsInstance!.simulateMessage({
           message_type: 'FinalTranscript',
           text: 'test',
           confidence: 0.9,
@@ -451,12 +448,12 @@ describe('useAssemblyAIStreaming', () => {
 
       await act(async () => {
         await actions.start();
-        mockWs.simulateOpen();
+        mockWsInstance!.simulateOpen();
       });
 
       unmount();
 
-      expect(mockWs.close).toHaveBeenCalled();
+      expect(mockWsInstance!.close).toHaveBeenCalled();
     });
   });
 });

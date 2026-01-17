@@ -159,6 +159,189 @@ describe('agentPolicy', () => {
 
       vi.useRealTimers();
     });
+
+    it('should include expiration timestamps for all approvals', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      approveCommand('mo clean', 5000);
+      approveCommand('mo optimize', 10000);
+
+      const active = getActiveApprovals();
+      expect(active.length).toBe(2);
+
+      const cleanApproval = active.find(a => a.command === 'mo clean');
+      const optimizeApproval = active.find(a => a.command === 'mo optimize');
+
+      expect(cleanApproval?.expiresAt).toBe(now + 5000);
+      expect(optimizeApproval?.expiresAt).toBe(now + 10000);
+
+      vi.useRealTimers();
+    });
+
+    it('should filter all expired approvals when multiple expire', () => {
+      vi.useFakeTimers();
+
+      approveCommand('mo clean', 1000);
+      approveCommand('mo optimize', 1500);
+      approveCommand('mo purge', 10000);
+
+      // Fast-forward past first two expirations
+      vi.advanceTimersByTime(2000);
+
+      const active = getActiveApprovals();
+      expect(active.length).toBe(1);
+      expect(active[0].command).toBe('mo purge');
+
+      vi.useRealTimers();
+    });
+
+    it('should return empty array when all approvals expire', () => {
+      vi.useFakeTimers();
+
+      approveCommand('mo clean', 1000);
+      approveCommand('mo optimize', 1500);
+
+      // Fast-forward past all expirations
+      vi.advanceTimersByTime(2000);
+
+      const active = getActiveApprovals();
+      expect(active.length).toBe(0);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe('approval expiration edge cases', () => {
+    it('should deny command after approval expires', () => {
+      vi.useFakeTimers();
+
+      const command = 'mo clean';
+      approveCommand(command, 1000);
+
+      // Command is approved
+      expect(isCommandApproved(command)).toBe(true);
+      expect(evaluatePolicy(command).allowed).toBe(true);
+
+      // Fast-forward past expiration
+      vi.advanceTimersByTime(1001);
+
+      // Command is no longer approved
+      expect(isCommandApproved(command)).toBe(false);
+      expect(evaluatePolicy(command).allowed).toBe(false);
+      expect(evaluatePolicy(command).requiresConfirmation).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('should handle multiple approval/expiration cycles for same command', () => {
+      vi.useFakeTimers();
+
+      const command = 'mo clean';
+
+      // First approval
+      approveCommand(command, 1000);
+      expect(isCommandApproved(command)).toBe(true);
+
+      // Expire
+      vi.advanceTimersByTime(1001);
+      expect(isCommandApproved(command)).toBe(false);
+
+      // Second approval with different expiration
+      approveCommand(command, 2000);
+      expect(isCommandApproved(command)).toBe(true);
+
+      // Partial time advance (should still be approved)
+      vi.advanceTimersByTime(1000);
+      expect(isCommandApproved(command)).toBe(true);
+
+      // Full expiration
+      vi.advanceTimersByTime(1001);
+      expect(isCommandApproved(command)).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it('should handle approval without expiration (permanent until revoked)', () => {
+      vi.useFakeTimers();
+
+      const command = 'mo clean';
+      approveCommand(command); // No expiration time
+
+      expect(isCommandApproved(command)).toBe(true);
+
+      // Advance time significantly
+      vi.advanceTimersByTime(1000000);
+
+      // Should still be approved (no expiration)
+      expect(isCommandApproved(command)).toBe(true);
+
+      // But can be manually revoked
+      revokeApproval(command);
+      expect(isCommandApproved(command)).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it('should clear expired approvals when checking approval status', () => {
+      vi.useFakeTimers();
+
+      approveCommand('mo clean', 1000);
+      approveCommand('mo optimize', 1000);
+
+      expect(getActiveApprovals().length).toBe(2);
+
+      // Advance time past expiration
+      vi.advanceTimersByTime(1001);
+
+      // Checking one command should clean up both expired approvals
+      expect(isCommandApproved('mo clean')).toBe(false);
+      expect(getActiveApprovals().length).toBe(0);
+
+      vi.useRealTimers();
+    });
+
+    it('should maintain separate expiration times for different commands', () => {
+      vi.useFakeTimers();
+
+      approveCommand('mo clean', 1000);
+      approveCommand('mo optimize', 2000);
+      approveCommand('mo purge', 3000);
+
+      // After 1.5 seconds, only 'mo clean' should be expired
+      vi.advanceTimersByTime(1500);
+
+      expect(isCommandApproved('mo clean')).toBe(false);
+      expect(isCommandApproved('mo optimize')).toBe(true);
+      expect(isCommandApproved('mo purge')).toBe(true);
+
+      // After another 1 second, 'mo optimize' should also be expired
+      vi.advanceTimersByTime(1000);
+
+      expect(isCommandApproved('mo clean')).toBe(false);
+      expect(isCommandApproved('mo optimize')).toBe(false);
+      expect(isCommandApproved('mo purge')).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('should allow re-approval of previously expired command', () => {
+      vi.useFakeTimers();
+
+      const command = 'mo clean';
+
+      // Approve and expire
+      approveCommand(command, 1000);
+      vi.advanceTimersByTime(1001);
+      expect(isCommandApproved(command)).toBe(false);
+
+      // Re-approve
+      approveCommand(command, 2000);
+      expect(isCommandApproved(command)).toBe(true);
+      expect(evaluatePolicy(command).allowed).toBe(true);
+
+      vi.useRealTimers();
+    });
   });
 
   describe('evaluatePolicy', () => {

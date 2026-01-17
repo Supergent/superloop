@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 export const mockSettings: Record<string, string> = {};
 export const mockKeychain: Record<string, string> = {};
 export const mockMonitoringStatus: any = null;
+export const mockLocalStorage: Record<string, string> = {};
 
 // Mock Tauri invoke function
 const mockInvoke = vi.fn(async (cmd: string, args?: any) => {
@@ -133,10 +134,56 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: mockInvoke,
 }));
 
+vi.mock('@tauri-apps/api/tauri', () => ({
+  invoke: mockInvoke,
+}));
+
 vi.mock('@tauri-apps/api/event', () => ({
   listen: mockListen,
   emit: mockEmit,
 }));
+
+vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
+  register: vi.fn(async (shortcut: string, handler: () => void) => {
+    // Store the handler for testing if needed
+    return undefined;
+  }),
+  unregister: vi.fn(async (shortcut: string) => {
+    return undefined;
+  }),
+  isRegistered: vi.fn(async (shortcut: string) => {
+    return false;
+  }),
+  unregisterAll: vi.fn(async () => {
+    return undefined;
+  }),
+}));
+
+// Mock localStorage
+const localStorageMock = {
+  getItem: (key: string) => mockLocalStorage[key] || null,
+  setItem: (key: string, value: string) => {
+    mockLocalStorage[key] = value;
+  },
+  removeItem: (key: string) => {
+    delete mockLocalStorage[key];
+  },
+  clear: () => {
+    Object.keys(mockLocalStorage).forEach(key => delete mockLocalStorage[key]);
+  },
+  get length() {
+    return Object.keys(mockLocalStorage).length;
+  },
+  key: (index: number) => {
+    const keys = Object.keys(mockLocalStorage);
+    return keys[index] || null;
+  },
+};
+
+Object.defineProperty(global, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
 
 // Export mocks for test access
 export { mockInvoke, mockListen, mockEmit };
@@ -145,6 +192,7 @@ export { mockInvoke, mockListen, mockEmit };
 beforeEach(() => {
   Object.keys(mockSettings).forEach(key => delete mockSettings[key]);
   Object.keys(mockKeychain).forEach(key => delete mockKeychain[key]);
+  Object.keys(mockLocalStorage).forEach(key => delete mockLocalStorage[key]);
   mockInvoke.mockClear();
   mockListen.mockClear();
   mockEmit.mockClear();

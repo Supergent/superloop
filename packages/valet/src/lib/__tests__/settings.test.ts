@@ -85,10 +85,12 @@ describe('settings', () => {
         monitoringFrequency: '30',
         notificationMode: 'critical',
         autoStart: 'false',
+        diskWarningThreshold: '20',
+        diskCriticalThreshold: '10',
       });
     });
 
-    it('should return all settings', async () => {
+    it('should return all settings with defaults', async () => {
       mockSettings['setting1'] = 'value1';
       mockSettings['setting2'] = 'value2';
       mockSettings['setting3'] = 'value3';
@@ -99,6 +101,12 @@ describe('settings', () => {
         setting1: 'value1',
         setting2: 'value2',
         setting3: 'value3',
+        voiceEnabled: 'true',
+        monitoringFrequency: '30',
+        notificationMode: 'critical',
+        autoStart: 'false',
+        diskWarningThreshold: '20',
+        diskCriticalThreshold: '10',
       });
     });
 
@@ -112,6 +120,12 @@ describe('settings', () => {
 
       expect(settings).toEqual({
         keep: 'value1',
+        voiceEnabled: 'true',
+        monitoringFrequency: '30',
+        notificationMode: 'critical',
+        autoStart: 'false',
+        diskWarningThreshold: '20',
+        diskCriticalThreshold: '10',
       });
     });
   });
@@ -155,6 +169,8 @@ describe('settings', () => {
         monitoringFrequency: '30',
         notificationMode: 'critical',
         autoStart: 'false',
+        diskWarningThreshold: '20',
+        diskCriticalThreshold: '10',
       });
 
       // Update a setting
@@ -167,13 +183,69 @@ describe('settings', () => {
       const deletedSetting = await getSetting('notificationMode');
       expect(deletedSetting).toBe(null);
 
-      // Verify final state
+      // Verify final state - getAllSettings returns defaults for missing settings
       const finalSettings = await getAllSettings();
       expect(finalSettings).toEqual({
         voiceEnabled: 'false',
         monitoringFrequency: '30',
+        notificationMode: 'critical', // Default is applied when setting is missing
         autoStart: 'false',
+        diskWarningThreshold: '20',
+        diskCriticalThreshold: '10',
       });
+    });
+  });
+
+  describe('disk threshold defaults', () => {
+    it('should return default disk thresholds when not set', async () => {
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('20');
+      expect(settings.diskCriticalThreshold).toBe('10');
+    });
+
+    it('should use custom disk thresholds when set', async () => {
+      await setSetting('diskWarningThreshold', '40');
+      await setSetting('diskCriticalThreshold', '20');
+
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('40');
+      expect(settings.diskCriticalThreshold).toBe('20');
+    });
+
+    it('should fall back to defaults when disk thresholds are invalid (empty)', async () => {
+      mockSettings['diskWarningThreshold'] = '';
+      mockSettings['diskCriticalThreshold'] = '';
+
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('20');
+      expect(settings.diskCriticalThreshold).toBe('10');
+    });
+
+    it('should fall back to defaults when disk thresholds are invalid (NaN)', async () => {
+      mockSettings['diskWarningThreshold'] = 'not-a-number';
+      mockSettings['diskCriticalThreshold'] = 'invalid';
+
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('20');
+      expect(settings.diskCriticalThreshold).toBe('10');
+    });
+
+    it('should fall back to defaults when disk thresholds are invalid (negative)', async () => {
+      mockSettings['diskWarningThreshold'] = '-5';
+      mockSettings['diskCriticalThreshold'] = '-10';
+
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('20');
+      expect(settings.diskCriticalThreshold).toBe('10');
+    });
+
+    it('should fall back to defaults when disk thresholds are invalid (zero)', async () => {
+      mockSettings['diskWarningThreshold'] = '0';
+      mockSettings['diskCriticalThreshold'] = '0';
+
+      const settings = await getAllSettings();
+      expect(settings.diskWarningThreshold).toBe('20');
+      expect(settings.diskCriticalThreshold).toBe('10');
     });
   });
 

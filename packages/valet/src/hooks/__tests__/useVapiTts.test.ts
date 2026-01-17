@@ -1,10 +1,11 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useVapiTts } from '../useVapiTts';
 import * as voiceEvents from '../../lib/voice/events';
 
 // Mock voice events
-jest.mock('../../lib/voice/events', () => ({
-  emitPlaybackEvent: jest.fn(),
+vi.mock('../../lib/voice/events', () => ({
+  emitPlaybackEvent: vi.fn(),
 }));
 
 // Mock Audio
@@ -24,42 +25,49 @@ class MockAudio {
     }
   }
 
-  play = jest.fn(() => {
+  play = vi.fn(() => {
     this.paused = false;
     this.onplay?.();
     return Promise.resolve();
   });
 
-  pause = jest.fn(() => {
+  pause = vi.fn(() => {
     this.paused = true;
     this.onpause?.();
   });
 }
 
-global.Audio = MockAudio as any;
+let mockAudioInstance: MockAudio | null = null;
+
+global.Audio = class extends MockAudio {
+  constructor(src?: string) {
+    super(src);
+    mockAudioInstance = this;
+  }
+} as any;
 
 // Mock AudioContext
 class MockGainNode {
   gain = { value: 1 };
-  connect = jest.fn();
+  connect = vi.fn();
 }
 
 class MockMediaElementSource {
-  connect = jest.fn();
+  connect = vi.fn();
 }
 
 class MockAudioContext {
   destination = {};
-  createGain = jest.fn(() => new MockGainNode());
-  createMediaElementSource = jest.fn(() => new MockMediaElementSource());
-  close = jest.fn();
+  createGain = vi.fn(() => new MockGainNode());
+  createMediaElementSource = vi.fn(() => new MockMediaElementSource());
+  close = vi.fn();
 }
 
 (global as any).AudioContext = MockAudioContext;
 (global as any).webkitAudioContext = MockAudioContext;
 
 // Mock fetch
-global.fetch = jest.fn();
+global.fetch = vi.fn();
 
 describe('useVapiTts', () => {
   const mockConfig = {
@@ -69,14 +77,44 @@ describe('useVapiTts', () => {
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    (global.fetch as jest.Mock).mockResolvedValue({
+    vi.clearAllMocks();
+    mockAudioInstance = null;
+    (global.fetch as any).mockResolvedValue({
       ok: true,
       json: async () => ({ audio_url: 'https://example.com/audio.mp3' }),
     });
   });
 
   describe('pause/resume/mute states', () => {
+    it('should stop existing audio before starting new playback', async () => {
+      const { result } = renderHook(() => useVapiTts(mockConfig));
+
+      const [, actions] = result.current;
+
+      // Start first playback
+      await act(async () => {
+        await actions.speak('First message');
+      });
+
+      const firstAudioInstance = mockAudioInstance;
+      expect(firstAudioInstance).toBeTruthy();
+      expect(firstAudioInstance!.play).toHaveBeenCalledTimes(1);
+
+      // Start second playback (should stop first)
+      await act(async () => {
+        await actions.speak('Second message');
+      });
+
+      // Verify first audio was stopped
+      expect(firstAudioInstance!.pause).toHaveBeenCalled();
+      expect(firstAudioInstance!.currentTime).toBe(0);
+
+      // Verify new audio instance was created
+      expect(mockAudioInstance).toBeTruthy();
+      expect(mockAudioInstance).not.toBe(firstAudioInstance);
+      expect(mockAudioInstance!.play).toHaveBeenCalled();
+    });
+
     it('should pause playback when pause is called', async () => {
       const { result } = renderHook(() => useVapiTts(mockConfig));
 
@@ -97,8 +135,8 @@ describe('useVapiTts', () => {
       });
 
       // Verify pause was called on audio
-      const mockAudio = (global.Audio as any).mock.results[0].value;
-      expect(mockAudio.pause).toHaveBeenCalled();
+      expect(mockAudioInstance).toBeTruthy();
+      expect(mockAudioInstance!.pause).toHaveBeenCalled();
     });
 
     it('should resume playback when resume is called', async () => {
@@ -117,15 +155,15 @@ describe('useVapiTts', () => {
       });
 
       // Get the mock audio instance
-      const mockAudio = (global.Audio as any).mock.results[0].value;
-      mockAudio.paused = true;
+      expect(mockAudioInstance).toBeTruthy();
+      mockAudioInstance!.paused = true;
 
       // Resume
       await act(async () => {
         actions.resume();
       });
 
-      expect(mockAudio.play).toHaveBeenCalledTimes(2); // Once for speak, once for resume
+      expect(mockAudioInstance!.play).toHaveBeenCalledTimes(2); // Once for speak, once for resume
 
       const [stateAfterResume] = result.current;
       expect(stateAfterResume.isPaused).toBe(false);
@@ -226,14 +264,14 @@ describe('useVapiTts', () => {
       });
 
       // Clear previous calls
-      jest.clearAllMocks();
+      vi.clearAllMocks();
 
       // Get the mock audio instance and simulate pause event
-      const mockAudio = (global.Audio as any).mock.results[0].value;
+      expect(mockAudioInstance).toBeTruthy();
 
       act(() => {
         actions.pause();
-        mockAudio.onpause?.();
+        mockAudioInstance!.onpause?.();
       });
 
       expect(voiceEvents.emitPlaybackEvent).toHaveBeenCalledWith({
@@ -253,10 +291,10 @@ describe('useVapiTts', () => {
       });
 
       // Get the mock audio instance and simulate end event
-      const mockAudio = (global.Audio as any).mock.results[0].value;
+      expect(mockAudioInstance).toBeTruthy();
 
       act(() => {
-        mockAudio.onended?.();
+        mockAudioInstance!.onended?.();
       });
 
       expect(voiceEvents.emitPlaybackEvent).toHaveBeenCalledWith({
@@ -284,10 +322,10 @@ describe('useVapiTts', () => {
       });
 
       // Clear previous calls
-      jest.clearAllMocks();
+      vi.clearAllMocks();
 
-      const mockAudio = (global.Audio as any).mock.results[0].value;
-      mockAudio.paused = true;
+      expect(mockAudioInstance).toBeTruthy();
+      mockAudioInstance!.paused = true;
 
       await act(async () => {
         actions.resume();
@@ -303,7 +341,7 @@ describe('useVapiTts', () => {
 
   describe('error handling', () => {
     it('should handle API errors', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as any).mockResolvedValue({
         ok: false,
         statusText: 'Unauthorized',
       });
@@ -331,10 +369,10 @@ describe('useVapiTts', () => {
       });
 
       // Get the mock audio instance and simulate error event
-      const mockAudio = (global.Audio as any).mock.results[0].value;
+      expect(mockAudioInstance).toBeTruthy();
 
       act(() => {
-        mockAudio.onerror?.();
+        mockAudioInstance!.onerror?.();
       });
 
       expect(voiceEvents.emitPlaybackEvent).toHaveBeenCalledWith({
@@ -350,7 +388,7 @@ describe('useVapiTts', () => {
     });
 
     it('should handle missing audio URL', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as any).mockResolvedValue({
         ok: true,
         json: async () => ({}),
       });
@@ -411,7 +449,7 @@ describe('useVapiTts', () => {
         expect.objectContaining({
           body: JSON.stringify({
             text: 'Hello world',
-            voice: 'default',
+            voice: 'en-US-Neural2-J',
             model: 'tts-1',
           }),
         })

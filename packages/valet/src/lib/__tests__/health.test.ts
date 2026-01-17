@@ -148,6 +148,67 @@ describe('health', () => {
 
       expect(health.status).toBe('critical');
     });
+
+    it('should respect custom disk warning threshold', () => {
+      const metrics = createMockMetrics({
+        disk: {
+          used: 470 * 1024 * 1024 * 1024,
+          total: 500 * 1024 * 1024 * 1024,
+          available: 30 * 1024 * 1024 * 1024, // 30GB (would be good with default 20GB threshold)
+          percentage: 94,
+          mountPoint: '/',
+        },
+      });
+
+      // With default threshold (20GB), 30GB available should be good
+      const healthDefault = computeHealthState(metrics);
+      expect(healthDefault.status).toBe('good');
+
+      // With custom threshold (40GB), 30GB available should trigger warning
+      const healthCustom = computeHealthState(metrics, 40, 10);
+      expect(healthCustom.status).toBe('warning');
+      expect(healthCustom.warnings.some((w) => w.includes('Disk space running low'))).toBe(true);
+    });
+
+    it('should respect custom disk critical threshold', () => {
+      const metrics = createMockMetrics({
+        disk: {
+          used: 485 * 1024 * 1024 * 1024,
+          total: 500 * 1024 * 1024 * 1024,
+          available: 15 * 1024 * 1024 * 1024, // 15GB (would be warning with default 10GB critical threshold)
+          percentage: 97,
+          mountPoint: '/',
+        },
+      });
+
+      // With default threshold (10GB critical), 15GB available should be warning
+      const healthDefault = computeHealthState(metrics);
+      expect(healthDefault.status).toBe('warning');
+
+      // With custom threshold (20GB critical), 15GB available should be critical
+      const healthCustom = computeHealthState(metrics, 30, 20);
+      expect(healthCustom.status).toBe('critical');
+      expect(healthCustom.warnings.some((w) => w.includes('Disk space critically low'))).toBe(true);
+    });
+
+    it('should use custom thresholds in both computeHealthState and getHealthStatus', () => {
+      const metrics = createMockMetrics({
+        disk: {
+          used: 475 * 1024 * 1024 * 1024,
+          total: 500 * 1024 * 1024 * 1024,
+          available: 25 * 1024 * 1024 * 1024, // 25GB
+          percentage: 95,
+          mountPoint: '/',
+        },
+      });
+
+      // Custom thresholds: warning=30GB, critical=15GB
+      const health = computeHealthState(metrics, 30, 15);
+      expect(health.status).toBe('warning');
+
+      const status = getHealthStatus(metrics, 30, 15);
+      expect(status).toBe('warning');
+    });
   });
 
   describe('getHealthStatus', () => {

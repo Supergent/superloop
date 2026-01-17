@@ -338,5 +338,412 @@ describe('SettingsPanel - Side Effects', () => {
 
       expect(screen.queryByTestId('api-keys-modal')).not.toBeInTheDocument();
     });
+
+    it('should pass isOpen=false to modal when closed, enabling lazy-loading', () => {
+      render(<SettingsPanel />);
+
+      // Modal should be closed initially
+      expect(screen.queryByTestId('api-keys-modal')).not.toBeInTheDocument();
+
+      // Open modal
+      const manageButton = screen.getByText('Manage API Keys');
+      fireEvent.click(manageButton);
+
+      expect(screen.getByTestId('api-keys-modal')).toBeInTheDocument();
+
+      // Close modal
+      const closeButton = screen.getByText('Close Modal');
+      fireEvent.click(closeButton);
+
+      // Modal should not be rendered (isOpen=false)
+      expect(screen.queryByTestId('api-keys-modal')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Account & Trial Display', () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it('should display user email from localStorage', () => {
+      localStorage.setItem('valet_user_email', 'user@example.com');
+
+      render(<SettingsPanel />);
+
+      expect(screen.getByText('user@example.com')).toBeInTheDocument();
+    });
+
+    it('should display "Not signed in" when no email in localStorage', () => {
+      render(<SettingsPanel />);
+
+      expect(screen.getByText('Not signed in')).toBeInTheDocument();
+    });
+
+    it('should display trial active status', () => {
+      render(<SettingsPanel />);
+
+      expect(screen.getByText('✓ Free Trial Active')).toBeInTheDocument();
+    });
+
+    it('should render trial end date using stored trial start timestamp', () => {
+      // Set trial start to Jan 1, 2024
+      const trialStartTime = new Date('2024-01-01T00:00:00Z').getTime();
+      localStorage.setItem('valet_trial_start', trialStartTime.toString());
+
+      render(<SettingsPanel />);
+
+      // Trial should end 7 days later (Jan 8, 2024)
+      const expectedEndDate = new Date('2024-01-08T00:00:00Z');
+      const formattedEndDate = expectedEndDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+      expect(screen.getByText(formattedEndDate)).toBeInTheDocument();
+    });
+
+    it('should calculate trial end date correctly for different start dates', () => {
+      // Set trial start to Feb 15, 2024
+      const trialStartTime = new Date('2024-02-15T12:00:00Z').getTime();
+      localStorage.setItem('valet_trial_start', trialStartTime.toString());
+
+      render(<SettingsPanel />);
+
+      // Trial should end 7 days later (Feb 22, 2024)
+      const expectedEndDate = new Date('2024-02-22T12:00:00Z');
+      const formattedEndDate = expectedEndDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+      expect(screen.getByText(formattedEndDate)).toBeInTheDocument();
+    });
+
+    it('should handle expired trial state (end date in the past)', () => {
+      // Set trial start to 30 days ago
+      const trialStartTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      localStorage.setItem('valet_trial_start', trialStartTime.toString());
+
+      render(<SettingsPanel />);
+
+      // Should still render end date (even if expired)
+      expect(screen.getByText('✓ Free Trial Active')).toBeInTheDocument();
+
+      // End date should be 23 days ago (30 - 7)
+      const expectedEndDate = new Date(trialStartTime + 7 * 24 * 60 * 60 * 1000);
+      const formattedEndDate = expectedEndDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+      expect(screen.getByText(formattedEndDate)).toBeInTheDocument();
+    });
+
+    it('should use current time when trial start is not in localStorage', () => {
+      render(<SettingsPanel />);
+
+      // Should render a trial end date (even without stored start)
+      const trialEndLabel = screen.getByText('Trial Ends:');
+      expect(trialEndLabel).toBeInTheDocument();
+
+      // The next sibling should contain a date
+      const trialEndValue = trialEndLabel.nextElementSibling;
+      expect(trialEndValue).toBeInTheDocument();
+      expect(trialEndValue?.textContent).toMatch(/\w+ \d+, \d{4}/);
+    });
+
+    it('should handle invalid trial start timestamp', () => {
+      localStorage.setItem('valet_trial_start', 'invalid-timestamp');
+
+      render(<SettingsPanel />);
+
+      // Should still render without crashing
+      expect(screen.getByText('✓ Free Trial Active')).toBeInTheDocument();
+    });
+
+    it('should display pricing information', () => {
+      render(<SettingsPanel />);
+
+      expect(screen.getByText('$29/year after trial')).toBeInTheDocument();
+    });
+
+    it('should display manage account button', () => {
+      render(<SettingsPanel />);
+
+      const manageButton = screen.getByText('Manage Account');
+      expect(manageButton).toBeInTheDocument();
+    });
+  });
+
+  describe('Alert Threshold Controls', () => {
+    it('should display disk warning threshold from settings', () => {
+      vi.mocked(settings.useSettings).mockReturnValue({
+        settings: {
+          voiceEnabled: 'true',
+          monitoringFrequency: '30',
+          notificationMode: 'critical',
+          autoStart: 'false',
+          diskWarningThreshold: '25',
+          diskCriticalThreshold: '10',
+        },
+        loading: false,
+        error: null,
+        updateSetting: mockUpdateSetting,
+        removeSetting: vi.fn(),
+        refresh: vi.fn(),
+      });
+
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+      expect(warningInput.value).toBe('25');
+    });
+
+    it('should display disk critical threshold from settings', () => {
+      vi.mocked(settings.useSettings).mockReturnValue({
+        settings: {
+          voiceEnabled: 'true',
+          monitoringFrequency: '30',
+          notificationMode: 'critical',
+          autoStart: 'false',
+          diskWarningThreshold: '20',
+          diskCriticalThreshold: '8',
+        },
+        loading: false,
+        error: null,
+        updateSetting: mockUpdateSetting,
+        removeSetting: vi.fn(),
+        refresh: vi.fn(),
+      });
+
+      render(<SettingsPanel />);
+
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+      expect(criticalInput.value).toBe('8');
+    });
+
+    it('should use default thresholds when not in settings', () => {
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      expect(warningInput.value).toBe('20');
+      expect(criticalInput.value).toBe('10');
+    });
+
+    it('should persist valid warning threshold on blur', async () => {
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+
+      fireEvent.change(warningInput, { target: { value: '30' } });
+      fireEvent.blur(warningInput);
+
+      await waitFor(() => {
+        expect(mockUpdateSetting).toHaveBeenCalledWith('diskWarningThreshold', '30');
+      });
+    });
+
+    it('should persist valid critical threshold on blur', async () => {
+      render(<SettingsPanel />);
+
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      fireEvent.change(criticalInput, { target: { value: '5' } });
+      fireEvent.blur(criticalInput);
+
+      await waitFor(() => {
+        expect(mockUpdateSetting).toHaveBeenCalledWith('diskCriticalThreshold', '5');
+      });
+    });
+
+    it('should not persist empty warning threshold (revert to previous)', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+
+      // Initial value is '20'
+      expect(warningInput.value).toBe('20');
+
+      // Clear the input
+      fireEvent.change(warningInput, { target: { value: '' } });
+      fireEvent.blur(warningInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Warning threshold must be a valid positive number');
+      });
+
+      // Should revert to previous value
+      expect(warningInput.value).toBe('20');
+
+      // Should not persist the empty value
+      expect(mockUpdateSetting).not.toHaveBeenCalledWith('diskWarningThreshold', expect.anything());
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should not persist NaN warning threshold (revert to previous)', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+
+      // Set invalid value
+      fireEvent.change(warningInput, { target: { value: 'abc' } });
+      fireEvent.blur(warningInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Warning threshold must be a valid positive number');
+      });
+
+      // Should revert to previous value
+      expect(warningInput.value).toBe('20');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should not persist empty critical threshold (revert to previous)', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      // Initial value is '10'
+      expect(criticalInput.value).toBe('10');
+
+      // Clear the input
+      fireEvent.change(criticalInput, { target: { value: '' } });
+      fireEvent.blur(criticalInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Critical threshold must be a valid positive number');
+      });
+
+      // Should revert to previous value
+      expect(criticalInput.value).toBe('10');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should not persist NaN critical threshold (revert to previous)', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      // Set invalid value
+      fireEvent.change(criticalInput, { target: { value: 'xyz' } });
+      fireEvent.blur(criticalInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Critical threshold must be a valid positive number');
+      });
+
+      // Should revert to previous value
+      expect(criticalInput.value).toBe('10');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should reject warning threshold less than or equal to critical threshold', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+
+      // Try to set warning threshold to 10 (same as critical)
+      fireEvent.change(warningInput, { target: { value: '10' } });
+      fireEvent.blur(warningInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Warning threshold must be greater than critical threshold');
+      });
+
+      // Should revert to previous value
+      expect(warningInput.value).toBe('20');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should reject critical threshold greater than or equal to warning threshold', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      render(<SettingsPanel />);
+
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      // Try to set critical threshold to 20 (same as warning)
+      fireEvent.change(criticalInput, { target: { value: '20' } });
+      fireEvent.blur(criticalInput);
+
+      await waitFor(() => {
+        expect(consoleWarnSpy).toHaveBeenCalledWith('Critical threshold must be less than warning threshold');
+      });
+
+      // Should revert to previous value
+      expect(criticalInput.value).toBe('10');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should preserve defaults when invalid thresholds in settings', () => {
+      vi.mocked(settings.useSettings).mockReturnValue({
+        settings: {
+          voiceEnabled: 'true',
+          monitoringFrequency: '30',
+          notificationMode: 'critical',
+          autoStart: 'false',
+          diskWarningThreshold: '', // Empty string
+          diskCriticalThreshold: 'invalid', // Invalid value
+        },
+        loading: false,
+        error: null,
+        updateSetting: mockUpdateSetting,
+        removeSetting: vi.fn(),
+        refresh: vi.fn(),
+      });
+
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+      const criticalInput = screen.getByLabelText('Disk Critical (GB)') as HTMLInputElement;
+
+      // Should fall back to defaults
+      expect(warningInput.value).toBe('20');
+      expect(criticalInput.value).toBe('10');
+    });
+
+    it('should allow multi-digit threshold input without premature validation', async () => {
+      render(<SettingsPanel />);
+
+      const warningInput = screen.getByLabelText('Disk Warning (GB)') as HTMLInputElement;
+
+      // Type '100' character by character
+      fireEvent.change(warningInput, { target: { value: '1' } });
+      expect(warningInput.value).toBe('1');
+
+      fireEvent.change(warningInput, { target: { value: '10' } });
+      expect(warningInput.value).toBe('10');
+
+      fireEvent.change(warningInput, { target: { value: '100' } });
+      expect(warningInput.value).toBe('100');
+
+      // Only validate on blur
+      fireEvent.blur(warningInput);
+
+      await waitFor(() => {
+        expect(mockUpdateSetting).toHaveBeenCalledWith('diskWarningThreshold', '100');
+      });
+    });
   });
 });

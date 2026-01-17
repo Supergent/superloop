@@ -81,6 +81,56 @@ describe('audit', () => {
       expect(entries[0].details).toBe('User cancelled operation');
     });
 
+    it('should convert rejected clean command', () => {
+      const events: AuditEvent[] = [
+        createMockAuditEvent({
+          type: 'command_rejected',
+          command: 'mo clean',
+          reason: 'User declined confirmation',
+        }),
+      ];
+
+      const entries = convertToActivityLogEntries(events);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].type).toBe('clean');
+      expect(entries[0].description).toBe('Rejected: mo clean');
+      expect(entries[0].details).toBe('User declined confirmation');
+    });
+
+    it('should convert rejected optimize command', () => {
+      const events: AuditEvent[] = [
+        createMockAuditEvent({
+          type: 'command_rejected',
+          command: 'mo optimize',
+          reason: 'Safety policy violation',
+        }),
+      ];
+
+      const entries = convertToActivityLogEntries(events);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].type).toBe('optimize');
+      expect(entries[0].description).toBe('Rejected: mo optimize');
+      expect(entries[0].details).toBe('Safety policy violation');
+    });
+
+    it('should convert command_rejected without reason', () => {
+      const events: AuditEvent[] = [
+        createMockAuditEvent({
+          type: 'command_rejected',
+          command: 'mo analyze',
+        }),
+      ];
+
+      const entries = convertToActivityLogEntries(events);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].type).toBe('scan');
+      expect(entries[0].description).toBe('Rejected: mo analyze');
+      expect(entries[0].details).toBeUndefined();
+    });
+
     it('should preserve timestamps as numeric values', () => {
       const now = Date.now();
       const events: AuditEvent[] = [
