@@ -150,6 +150,12 @@ Then open `http://localhost:3333/liquid` to see:
 
 The `/superloop-view` skill generates custom dashboard views for specific questions.
 
+## Packages
+
+Superloop includes standalone packages that can be used independently:
+
+- **[convex-scanner](packages/convex-scanner/README.md)** - Static security analysis tool for Convex backend code. Detects authentication issues, validates input handling, and identifies security anti-patterns.
+
 ## Commands
 
 | Command | Description |
@@ -208,6 +214,7 @@ superloop/
 │   ├── build.sh           # Assembles src/ into superloop.sh
 │   └── validation/        # Smoke test utilities
 ├── packages/
+│   ├── convex-scanner/    # Static security analysis for Convex backend code
 │   ├── json-render-core/  # Generative UI framework (catalog, validation, actions)
 │   ├── json-render-react/ # React renderer for UITrees
 │   └── superloop-ui/      # Liquid dashboard and prototype viewer

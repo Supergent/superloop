@@ -1,0 +1,51 @@
+{
+  "name": "@superloop/convex-scanner",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Static security analysis tool for Convex backend code",
+  "keywords": [
+    "convex",
+    "security",
+    "scanner",
+    "static-analysis",
+    "typescript"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "convex-scanner": "./dist/cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "typescript": "^5.4.5",
+    "zod": "^4.0.0",
+    "fast-glob": "^3.3.2",
+    "jiti": "^2.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.2",
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "@vitest/ui": "^1.0.0",
+    "@types/node": "^20.11.0"
+  }
+}

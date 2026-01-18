@@ -65,10 +65,10 @@
       "timeouts": {
         "enabled": true,
         "default": 300,
-        "planner": 600,
-        "implementer": 1200,
+        "planner": 3600,
+        "implementer": 1800,
         "tester": 300,
-        "reviewer": 300
+        "reviewer": 7200
       },
       "stuck": {
         "enabled": true,
