@@ -114,97 +114,46 @@ EOF
       max_steps=$(jq -r '.max_steps // ""' <<<"$tester_exploration_json")
       screenshot_dir=$(jq -r '.screenshot_dir // ""' <<<"$tester_exploration_json")
 
-      cat <<'AGENT_BROWSER_SKILL' >> "$prompt_file"
+      # Inject agent-browser documentation using hybrid approach
+      local skill_file="$HOME/.claude/skills/agent-browser/SKILL.md"
 
-## Exploration Configuration
+      echo "" >> "$prompt_file"
+      echo "## Exploration Configuration" >> "$prompt_file"
+      echo "" >> "$prompt_file"
+      echo "Browser exploration is ENABLED. Use agent-browser to verify the implementation." >> "$prompt_file"
+      echo "" >> "$prompt_file"
 
-Browser exploration is ENABLED. Use agent-browser to verify the implementation.
-
+      # Try to use global SKILL.md first, fallback to --help, then minimal reference
+      if [[ -f "$skill_file" ]]; then
+        # Global skill exists - use it (single source of truth)
+        cat "$skill_file" >> "$prompt_file"
+      elif command -v agent-browser &> /dev/null; then
+        # Fallback: Generate from agent-browser --help
+        echo "### agent-browser Commands" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo '```' >> "$prompt_file"
+        agent-browser --help >> "$prompt_file" 2>&1
+        echo '```' >> "$prompt_file"
+      else
+        # Minimal fallback if agent-browser not found
+        cat <<'MINIMAL_FALLBACK' >> "$prompt_file"
 ### agent-browser Quick Reference
 
-**Core workflow:**
-1. Navigate: `agent-browser open <url>`
-2. Snapshot: `agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
-3. Interact using refs from the snapshot
-4. Re-snapshot after navigation or significant DOM changes
-
-**Navigation:**
+**Installation required:**
 ```
-agent-browser open <url>      # Navigate to URL
-agent-browser back            # Go back
-agent-browser forward         # Go forward
-agent-browser reload          # Reload page
-agent-browser close           # Close browser
+npm install -g agent-browser
 ```
 
-**Snapshot (page analysis):**
-```
-agent-browser snapshot        # Full accessibility tree
-agent-browser snapshot -i     # Interactive elements only (recommended)
-agent-browser snapshot -c     # Compact output
-agent-browser snapshot -d 3   # Limit depth to 3
-```
+**Basic workflow:**
+1. `agent-browser open <url>` - Navigate to page
+2. `agent-browser snapshot -i` - Get interactive elements with refs
+3. `agent-browser click @e1` - Interact using refs
+4. `agent-browser close` - Close browser
 
-**Interactions (use @refs from snapshot):**
-```
-agent-browser click @e1           # Click
-agent-browser dblclick @e1        # Double-click
-agent-browser fill @e2 "text"     # Clear and type
-agent-browser type @e2 "text"     # Type without clearing
-agent-browser press Enter         # Press key
-agent-browser press Control+a     # Key combination
-agent-browser hover @e1           # Hover
-agent-browser check @e1           # Check checkbox
-agent-browser uncheck @e1         # Uncheck checkbox
-agent-browser select @e1 "value"  # Select dropdown
-agent-browser scroll down 500     # Scroll page
-agent-browser scrollintoview @e1  # Scroll element into view
-```
-
-**Get information:**
-```
-agent-browser get text @e1        # Get element text
-agent-browser get value @e1       # Get input value
-agent-browser get title           # Get page title
-agent-browser get url             # Get current URL
-```
-
-**Screenshots:**
-```
-agent-browser screenshot          # Screenshot to stdout
-agent-browser screenshot path.png # Save to file
-agent-browser screenshot --full   # Full page
-```
-
-**Wait:**
-```
-agent-browser wait @e1                     # Wait for element
-agent-browser wait 2000                    # Wait milliseconds
-agent-browser wait --text "Success"        # Wait for text
-agent-browser wait --load networkidle      # Wait for network idle
-```
-
-**Semantic locators (alternative to refs):**
-```
-agent-browser find role button click --name "Submit"
-agent-browser find text "Sign In" click
-agent-browser find label "Email" fill "user@test.com"
-```
-
-**Example exploration flow:**
-```
-agent-browser open https://example.com/app
-agent-browser snapshot -i
-# Output shows: textbox "Email" [ref=e1], button "Submit" [ref=e2]
-
-agent-browser fill @e1 "test@example.com"
-agent-browser click @e2
-agent-browser wait --load networkidle
-agent-browser snapshot -i  # Check result
-agent-browser screenshot exploration-result.png
-```
-
-AGENT_BROWSER_SKILL
+For full documentation, install agent-browser or see https://github.com/vercel-labs/agent-browser
+MINIMAL_FALLBACK
+      fi
+      echo "" >> "$prompt_file"
 
       echo "### Session Configuration" >> "$prompt_file"
       echo "" >> "$prompt_file"
