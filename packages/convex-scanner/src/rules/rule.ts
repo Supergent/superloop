@@ -16,6 +16,8 @@ export interface RuleContext {
   typeChecker: ts.TypeChecker;
   /** Full TypeScript program */
   program: ts.Program;
+  /** Rule configuration applied by registry */
+  config?: RuleConfiguration;
 }
 
 /**
@@ -42,4 +44,5 @@ export interface Rule {
 export interface RuleConfiguration {
   enabled: boolean;
   severity: FindingSeverity;
+  options?: Record<string, unknown>;
 }

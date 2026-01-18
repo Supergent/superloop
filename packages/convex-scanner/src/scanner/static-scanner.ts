@@ -129,8 +129,10 @@ export async function scanConvex(
   const registry = new RuleRegistry();
 
   // Apply configuration
-  const rulesConfig = { ...config.rules, ...options.rules };
-  registry.applyConfig(rulesConfig);
+  registry.applyConfig(config.rules);
+  if (options.rules) {
+    registry.applyConfig(options.rules);
+  }
 
   const enabledRules = registry.getEnabledRules();
 
@@ -152,7 +154,7 @@ export async function scanConvex(
         };
 
         for (const { rule, config: ruleConfig } of enabledRules) {
-          const findings = rule.check(context);
+          const findings = rule.check({ ...context, config: ruleConfig });
 
           // Apply severity override if configured
           for (const finding of findings) {

@@ -84,5 +84,5 @@ export function isQuery(type: ConvexFunctionType): boolean {
  * Check if a function type is an action
  */
 export function isAction(type: ConvexFunctionType): boolean {
-  return type === 'action' || type === 'internalAction';
+  return type === 'action' || type === 'internalAction' || type === 'httpAction';
 }

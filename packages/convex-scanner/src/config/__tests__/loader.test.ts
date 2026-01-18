@@ -24,6 +24,9 @@ describe('config-loader', () => {
     expect(config.ignore).toEqual(DEFAULT_IGNORE_PATTERNS);
     expect(config.rules['auth/missing-auth-check']).toBeDefined();
     expect(config.rules['auth/missing-auth-check']?.enabled).toBe(true);
+    expect(
+      config.rules['auth/missing-auth-check']?.options?.checkQueries
+    ).toBe(true);
   });
 
   it('should have default ignore patterns', async () => {

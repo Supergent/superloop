@@ -24,6 +24,13 @@ export const DEFAULT_CONFIG: Required<ScannerConfig> = {
     'auth/missing-auth-check': {
       enabled: true,
       severity: 'high',
+      options: {
+        checkQueries: true,
+        checkMutations: true,
+        checkActions: true,
+        allowList: [],
+        allowInlineSuppressions: true,
+      },
     },
   },
   ignore: DEFAULT_IGNORE_PATTERNS,

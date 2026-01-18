@@ -10,6 +10,15 @@ import { z } from 'zod';
 export const ruleConfigSchema = z.object({
   enabled: z.boolean().optional(),
   severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).optional(),
+  options: z
+    .object({
+      checkQueries: z.boolean().optional().default(true),
+      checkMutations: z.boolean().optional().default(true),
+      checkActions: z.boolean().optional().default(true),
+      allowList: z.array(z.string()).optional().default([]),
+      allowInlineSuppressions: z.boolean().optional().default(true),
+    })
+    .optional(),
 });
 
 export type RuleConfig = z.infer<typeof ruleConfigSchema>;

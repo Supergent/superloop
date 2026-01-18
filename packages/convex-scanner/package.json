@@ -36,16 +36,17 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "typescript": "^5.4.5",
-    "zod": "^4.0.0",
     "fast-glob": "^3.3.2",
-    "jiti": "^2.0.0"
+    "jiti": "^2.0.0",
+    "minimatch": "^9.0.3",
+    "typescript": "^5.4.5",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "^4.0.17",
+    "@vitest/ui": "^4.0.17",
     "tsup": "^8.0.2",
-    "vitest": "^1.0.0",
-    "@vitest/coverage-v8": "^1.0.0",
-    "@vitest/ui": "^1.0.0",
-    "@types/node": "^20.11.0"
+    "vitest": "^4.0.17"
   }
 }

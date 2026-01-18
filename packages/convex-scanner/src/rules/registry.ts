@@ -36,13 +36,18 @@ export class RuleRegistry {
    */
   configure(
     ruleId: string,
-    config: { enabled?: boolean; severity?: FindingSeverity }
+    config: {
+      enabled?: boolean;
+      severity?: FindingSeverity;
+      options?: Record<string, unknown>;
+    }
   ): void {
     const existing = this.config.get(ruleId);
     if (existing) {
       this.config.set(ruleId, {
         enabled: config.enabled ?? existing.enabled,
         severity: config.severity ?? existing.severity,
+        options: config.options ?? existing.options,
       });
     }
   }
@@ -76,7 +81,10 @@ export class RuleRegistry {
    * Apply configuration from user config
    */
   applyConfig(
-    userConfig: Record<string, { enabled?: boolean; severity?: FindingSeverity }>
+    userConfig: Record<
+      string,
+      { enabled?: boolean; severity?: FindingSeverity; options?: Record<string, unknown> }
+    >
   ): void {
     for (const [ruleId, ruleConfig] of Object.entries(userConfig)) {
       this.configure(ruleId, ruleConfig);
