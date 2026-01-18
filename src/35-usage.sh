@@ -61,20 +61,30 @@ get_timestamp_ms() {
 find_claude_session_file() {
   local repo="$1"
   local session_id="$2"
-  local project_name
-  project_name=$(basename "$repo")
+
+  # Claude uses full absolute path with slashes replaced by dashes
+  # e.g., /Users/foo/Work/project -> -Users-foo-Work-project
+  local project_name="${repo//\//-}"
 
   # Claude stores sessions in ~/.claude/projects/<project>/<session-id>.jsonl
-  local session_file="$HOME/.claude/projects/-${project_name//\//-}/${session_id}.jsonl"
+  local session_file="$HOME/.claude/projects/${project_name}/${session_id}.jsonl"
 
   if [[ -f "$session_file" ]]; then
     echo "$session_file"
     return 0
   fi
 
-  # Try alternative path formats
-  local alt_file
-  for alt_file in "$HOME/.claude/projects"/*"$project_name"*/"${session_id}.jsonl"; do
+  # Try alternative: just the basename (for backwards compatibility)
+  local basename_name
+  basename_name=$(basename "$repo")
+  local alt_file="$HOME/.claude/projects/-${basename_name}/${session_id}.jsonl"
+  if [[ -f "$alt_file" ]]; then
+    echo "$alt_file"
+    return 0
+  fi
+
+  # Try glob match as last resort
+  for alt_file in "$HOME/.claude/projects"/*"$basename_name"*/"${session_id}.jsonl"; do
     if [[ -f "$alt_file" ]]; then
       echo "$alt_file"
       return 0
@@ -128,6 +138,32 @@ extract_claude_usage() {
       }
     end
   ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
+}
+
+# Extract usage from Codex log output (fallback when session files unavailable)
+# Codex prints "tokens used\n{number}" at the end of runs
+# Args: $1 = log_file
+# Output: JSON object with usage stats
+extract_codex_usage_from_log() {
+  local log_file="$1"
+
+  if [[ ! -f "$log_file" ]]; then
+    echo '{"input_tokens": 0, "output_tokens": 0}'
+    return 1
+  fi
+
+  # Extract "tokens used\n{number}" pattern from log
+  # The number on the line after "tokens used" is the total tokens
+  local total_tokens
+  total_tokens=$(grep -A1 "^tokens used$" "$log_file" 2>/dev/null | tail -1 | tr -d ',' | tr -d ' ')
+
+  if [[ "$total_tokens" =~ ^[0-9]+$ ]]; then
+    # Codex doesn't break down input/output in log, so we report as total
+    # Using output_tokens since that's typically what matters for billing
+    echo "{\"input_tokens\": 0, \"output_tokens\": $total_tokens, \"total_tokens\": $total_tokens}"
+  else
+    echo '{"input_tokens": 0, "output_tokens": 0}'
+  fi
 }
 
 # Extract usage from Codex session file
@@ -495,9 +531,20 @@ track_usage() {
             # Try to extract model from session file first
             USAGE_MODEL=$(extract_codex_model "$session_file" || true)
           fi
-          # If no model from session, try log file
-          if [[ -z "$USAGE_MODEL" && -n "$log_file" && -f "$log_file" ]]; then
-            USAGE_MODEL=$(extract_codex_model_from_log "$log_file" || true)
+          # Fallback: extract tokens from log output if session file not found or has no tokens
+          # This handles cases where Codex runs in a VM (e.g., via orb) and sessions aren't on host
+          if [[ -n "$log_file" && -f "$log_file" ]]; then
+            local log_usage
+            log_usage=$(extract_codex_usage_from_log "$log_file")
+            local log_tokens
+            log_tokens=$(echo "$log_usage" | jq -r '.total_tokens // 0' 2>/dev/null)
+            if [[ "$log_tokens" -gt 0 ]]; then
+              usage_json="$log_usage"
+            fi
+            # Extract model from log if not found from session
+            if [[ -z "$USAGE_MODEL" ]]; then
+              USAGE_MODEL=$(extract_codex_model_from_log "$log_file" || true)
+            fi
           fi
           ;;
       esac

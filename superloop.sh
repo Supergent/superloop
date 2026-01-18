@@ -2779,20 +2779,30 @@ get_timestamp_ms() {
 find_claude_session_file() {
   local repo="$1"
   local session_id="$2"
-  local project_name
-  project_name=$(basename "$repo")
+
+  # Claude uses full absolute path with slashes replaced by dashes
+  # e.g., /Users/foo/Work/project -> -Users-foo-Work-project
+  local project_name="${repo//\//-}"
 
   # Claude stores sessions in ~/.claude/projects/<project>/<session-id>.jsonl
-  local session_file="$HOME/.claude/projects/-${project_name//\//-}/${session_id}.jsonl"
+  local session_file="$HOME/.claude/projects/${project_name}/${session_id}.jsonl"
 
   if [[ -f "$session_file" ]]; then
     echo "$session_file"
     return 0
   fi
 
-  # Try alternative path formats
-  local alt_file
-  for alt_file in "$HOME/.claude/projects"/*"$project_name"*/"${session_id}.jsonl"; do
+  # Try alternative: just the basename (for backwards compatibility)
+  local basename_name
+  basename_name=$(basename "$repo")
+  local alt_file="$HOME/.claude/projects/-${basename_name}/${session_id}.jsonl"
+  if [[ -f "$alt_file" ]]; then
+    echo "$alt_file"
+    return 0
+  fi
+
+  # Try glob match as last resort
+  for alt_file in "$HOME/.claude/projects"/*"$basename_name"*/"${session_id}.jsonl"; do
     if [[ -f "$alt_file" ]]; then
       echo "$alt_file"
       return 0
@@ -2846,6 +2856,32 @@ extract_claude_usage() {
       }
     end
   ' "$session_file" 2>/dev/null || echo '{"error": "failed to parse session file"}'
+}
+
+# Extract usage from Codex log output (fallback when session files unavailable)
+# Codex prints "tokens used\n{number}" at the end of runs
+# Args: $1 = log_file
+# Output: JSON object with usage stats
+extract_codex_usage_from_log() {
+  local log_file="$1"
+
+  if [[ ! -f "$log_file" ]]; then
+    echo '{"input_tokens": 0, "output_tokens": 0}'
+    return 1
+  fi
+
+  # Extract "tokens used\n{number}" pattern from log
+  # The number on the line after "tokens used" is the total tokens
+  local total_tokens
+  total_tokens=$(grep -A1 "^tokens used$" "$log_file" 2>/dev/null | tail -1 | tr -d ',' | tr -d ' ')
+
+  if [[ "$total_tokens" =~ ^[0-9]+$ ]]; then
+    # Codex doesn't break down input/output in log, so we report as total
+    # Using output_tokens since that's typically what matters for billing
+    echo "{\"input_tokens\": 0, \"output_tokens\": $total_tokens, \"total_tokens\": $total_tokens}"
+  else
+    echo '{"input_tokens": 0, "output_tokens": 0}'
+  fi
 }
 
 # Extract usage from Codex session file
@@ -3213,9 +3249,20 @@ track_usage() {
             # Try to extract model from session file first
             USAGE_MODEL=$(extract_codex_model "$session_file" || true)
           fi
-          # If no model from session, try log file
-          if [[ -z "$USAGE_MODEL" && -n "$log_file" && -f "$log_file" ]]; then
-            USAGE_MODEL=$(extract_codex_model_from_log "$log_file" || true)
+          # Fallback: extract tokens from log output if session file not found or has no tokens
+          # This handles cases where Codex runs in a VM (e.g., via orb) and sessions aren't on host
+          if [[ -n "$log_file" && -f "$log_file" ]]; then
+            local log_usage
+            log_usage=$(extract_codex_usage_from_log "$log_file")
+            local log_tokens
+            log_tokens=$(echo "$log_usage" | jq -r '.total_tokens // 0' 2>/dev/null)
+            if [[ "$log_tokens" -gt 0 ]]; then
+              usage_json="$log_usage"
+            fi
+            # Extract model from log if not found from session
+            if [[ -z "$USAGE_MODEL" ]]; then
+              USAGE_MODEL=$(extract_codex_model_from_log "$log_file" || true)
+            fi
           fi
           ;;
       esac
@@ -4486,6 +4533,124 @@ write_approval_request() {
       }
     } | with_entries(select(.value != null))' \
     > "$approval_file"
+}
+
+#!/usr/bin/env bash
+# Git operations for superloop
+# Handles automatic commits after iterations
+
+# Auto-commit changes after an iteration
+# Arguments:
+#   $1 - repo path
+#   $2 - loop_id
+#   $3 - iteration number
+#   $4 - tests_status (ok, failed, skipped)
+#   $5 - commit_strategy (per_iteration, on_test_pass, never)
+#   $6 - events_file for logging
+#   $7 - run_id
+# Returns: 0 on success or skip, 1 on failure
+auto_commit_iteration() {
+  local repo="$1"
+  local loop_id="$2"
+  local iteration="$3"
+  local tests_status="$4"
+  local commit_strategy="$5"
+  local events_file="$6"
+  local run_id="$7"
+
+  # Check if commits are disabled
+  if [[ "$commit_strategy" == "never" || -z "$commit_strategy" ]]; then
+    return 0
+  fi
+
+  # Check if we should skip based on test status
+  if [[ "$commit_strategy" == "on_test_pass" && "$tests_status" != "ok" ]]; then
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_skipped" \
+      "$(jq -n --arg reason "tests_not_passing" --arg tests_status "$tests_status" '{reason: $reason, tests_status: $tests_status}')"
+    return 0
+  fi
+
+  # Check if there are any changes to commit
+  local has_changes=0
+  if ! git -C "$repo" diff --quiet HEAD 2>/dev/null; then
+    has_changes=1
+  fi
+  if [[ $has_changes -eq 0 ]] && [[ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]]; then
+    has_changes=1
+  fi
+
+  if [[ $has_changes -eq 0 ]]; then
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_skipped" \
+      "$(jq -n --arg reason "no_changes" '{reason: $reason}')"
+    return 0
+  fi
+
+  # Determine what phase we're in by looking at task files
+  local loop_dir="$repo/.superloop/loops/$loop_id"
+  local current_phase="unknown"
+  local latest_phase_file
+  latest_phase_file=$(ls -t "$loop_dir/tasks/"PHASE_*.MD 2>/dev/null | head -1)
+  if [[ -n "$latest_phase_file" ]]; then
+    current_phase=$(basename "$latest_phase_file" .MD | sed 's/PHASE_/Phase /')
+  fi
+
+  # Build commit message
+  local test_indicator=""
+  case "$tests_status" in
+    ok) test_indicator="tests: passing" ;;
+    failed) test_indicator="tests: failing" ;;
+    skipped) test_indicator="tests: skipped" ;;
+    *) test_indicator="tests: $tests_status" ;;
+  esac
+
+  local commit_msg="[superloop] $loop_id iteration $iteration: $current_phase ($test_indicator)"
+
+  # Stage all changes (including untracked files in the repo, excluding .superloop internal files)
+  # We want to commit implementation work, not loop state files
+  local staged_count=0
+
+  # Stage tracked file changes
+  git -C "$repo" add -u 2>/dev/null || true
+
+  # Stage new files, excluding .superloop directory
+  while IFS= read -r file; do
+    if [[ -n "$file" && ! "$file" =~ ^\.superloop/ ]]; then
+      git -C "$repo" add "$file" 2>/dev/null || true
+      ((staged_count++)) || true
+    fi
+  done < <(git -C "$repo" status --porcelain 2>/dev/null | grep '^??' | cut -c4-)
+
+  # Check if we actually staged anything
+  if git -C "$repo" diff --cached --quiet 2>/dev/null; then
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_skipped" \
+      "$(jq -n --arg reason "nothing_staged" '{reason: $reason}')"
+    return 0
+  fi
+
+  # Create the commit
+  local commit_output
+  local commit_exit_code
+  commit_output=$(git -C "$repo" commit -m "$commit_msg
+
+Automated commit by superloop after iteration $iteration.
+Strategy: $commit_strategy
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>" 2>&1)
+  commit_exit_code=$?
+
+  if [[ $commit_exit_code -eq 0 ]]; then
+    local commit_sha
+    commit_sha=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_success" \
+      "$(jq -n --arg sha "$commit_sha" --arg message "$commit_msg" --arg strategy "$commit_strategy" '{sha: $sha, message: $message, strategy: $strategy}')"
+    echo "[superloop] Auto-committed: $commit_sha - $commit_msg" >&2
+    return 0
+  else
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_failed" \
+      "$(jq -n --arg error "$commit_output" --arg strategy "$commit_strategy" '{error: $error, strategy: $strategy}')"
+    echo "[superloop] Auto-commit failed: $commit_output" >&2
+    return 1
+  fi
 }
 
 append_decision_log() {

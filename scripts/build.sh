@@ -15,6 +15,7 @@ PARTS=(
   "36-usage-limits.sh"
   "37-pricing.sh"
   "40-gates.sh"
+  "45-git.sh"
   "50-events.sh"
   "60-commands.sh"
   "70-report.sh"
