@@ -38,6 +38,63 @@
   },
   "loops": [
     {
+      "id": "convex-scanner",
+      "spec_file": ".superloop/specs/convex-scanner.md",
+      "max_iterations": 15,
+      "completion_promise": "SUPERLOOP_COMPLETE",
+      "checklists": [],
+      "tests": {
+        "mode": "on_promise",
+        "commands": [
+          "cd packages/convex-scanner && npm test",
+          "cd packages/convex-scanner && npx tsc --noEmit"
+        ]
+      },
+      "evidence": {
+        "enabled": false,
+        "require_on_completion": false,
+        "artifacts": []
+      },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": false
+      },
+      "reviewer_packet": {
+        "enabled": false
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 300,
+        "planner": 600,
+        "implementer": 1200,
+        "tester": 300,
+        "reviewer": 300
+      },
+      "stuck": {
+        "enabled": true,
+        "threshold": 3,
+        "action": "report_and_stop",
+        "ignore": []
+      },
+      "git": {
+        "commit_strategy": "per_iteration"
+      },
+      "roles": {
+        "planner": {
+          "runner": "codex2"
+        },
+        "implementer": {
+          "runner": "claude-vanilla"
+        },
+        "tester": {
+          "runner": "claude-vanilla"
+        },
+        "reviewer": {
+          "runner": "codex4"
+        }
+      }
+    },
+    {
       "id": "valet-mvp",
       "spec_file": ".superloop/specs/valet-mvp.md",
       "max_iterations": 20,
