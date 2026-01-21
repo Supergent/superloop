@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { MockProvider, useMockState } from './data/mock-provider';
 import { LiveProvider, useLiveState } from './data/live-provider';
+import { ReplayProvider, useReplayState } from './data/replay-provider';
 import { PhaseRing } from './components/PhaseRing';
 import { GatePills } from './components/GatePills';
 import { IterationCounter } from './components/IterationCounter';
 import { LoopStateBadge } from './components/LoopStateBadge';
 import { type LoopState } from './types';
 
-type DataMode = 'mock' | 'live';
+type DataMode = 'demo' | 'live' | 'replay';
 
 function MockVisualization({ onModeChange }: { onModeChange: (mode: DataMode) => void }) {
   const {
@@ -22,7 +23,6 @@ function MockVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
     setShowStuck,
   } = useMockState();
 
-  // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
@@ -47,6 +47,10 @@ function MockVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
         case 'L':
           onModeChange('live');
           break;
+        case 'p':
+        case 'P':
+          onModeChange('replay');
+          break;
       }
     };
 
@@ -57,7 +61,7 @@ function MockVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
   return (
     <VisualizationLayout
       state={state}
-      mode="mock"
+      mode="demo"
       onModeChange={onModeChange}
       footer={
         <MockControls
@@ -88,7 +92,6 @@ function LiveVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
     setPollInterval,
   } = useLiveState();
 
-  // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
@@ -96,9 +99,13 @@ function LiveVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
         case 'R':
           refresh();
           break;
-        case 'm':
-        case 'M':
-          onModeChange('mock');
+        case 'd':
+        case 'D':
+          onModeChange('demo');
+          break;
+        case 'p':
+        case 'P':
+          onModeChange('replay');
           break;
       }
     };
@@ -128,6 +135,115 @@ function LiveVisualization({ onModeChange }: { onModeChange: (mode: DataMode) =>
   );
 }
 
+function ReplayVisualization({ onModeChange }: { onModeChange: (mode: DataMode) => void }) {
+  const {
+    state,
+    currentEntry,
+    entryIndex,
+    totalEntries,
+    nextEntry,
+    prevEntry,
+    goToEntry,
+    autoPlay,
+    setAutoPlay,
+    playbackSpeed,
+    setPlaybackSpeed,
+    availableLoops,
+    selectedLoop,
+    selectLoop,
+    isLoading,
+    error,
+  } = useReplayState();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case ' ':
+        case 'ArrowRight':
+          e.preventDefault();
+          nextEntry();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          prevEntry();
+          break;
+        case 'a':
+        case 'A':
+          setAutoPlay(!autoPlay);
+          break;
+        case 'd':
+        case 'D':
+          onModeChange('demo');
+          break;
+        case 'l':
+        case 'L':
+          onModeChange('live');
+          break;
+        case 'Home':
+          goToEntry(0);
+          break;
+        case 'End':
+          goToEntry(totalEntries - 1);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [nextEntry, prevEntry, goToEntry, autoPlay, setAutoPlay, totalEntries, onModeChange]);
+
+  return (
+    <VisualizationLayout
+      state={state}
+      mode="replay"
+      onModeChange={onModeChange}
+      isLoading={isLoading}
+      error={error}
+      extraInfo={
+        currentEntry && (
+          <div className="text-center space-y-1">
+            <div className="text-xs text-loop-muted">
+              {currentEntry.started_at && (
+                <span>
+                  Started: {new Date(currentEntry.started_at).toLocaleString()}
+                </span>
+              )}
+              {currentEntry.ended_at && (
+                <span className="ml-4">
+                  Duration:{' '}
+                  {Math.round(
+                    (new Date(currentEntry.ended_at).getTime() -
+                      new Date(currentEntry.started_at).getTime()) /
+                      1000 /
+                      60
+                  )}{' '}
+                  min
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      }
+      footer={
+        <ReplayControls
+          entryIndex={entryIndex}
+          totalEntries={totalEntries}
+          autoPlay={autoPlay}
+          playbackSpeed={playbackSpeed}
+          availableLoops={availableLoops}
+          selectedLoop={selectedLoop}
+          onNext={nextEntry}
+          onPrev={prevEntry}
+          onGoToEntry={goToEntry}
+          onToggleAutoPlay={() => setAutoPlay(!autoPlay)}
+          onSetPlaybackSpeed={setPlaybackSpeed}
+          onSelectLoop={selectLoop}
+        />
+      }
+    />
+  );
+}
+
 interface VisualizationLayoutProps {
   state: LoopState;
   mode: DataMode;
@@ -135,6 +251,7 @@ interface VisualizationLayoutProps {
   footer: React.ReactNode;
   isLoading?: boolean;
   error?: string | null;
+  extraInfo?: React.ReactNode;
 }
 
 function VisualizationLayout({
@@ -144,6 +261,7 @@ function VisualizationLayout({
   footer,
   isLoading,
   error,
+  extraInfo,
 }: VisualizationLayoutProps) {
   const isActive = state.status !== 'idle';
 
@@ -159,14 +277,24 @@ function VisualizationLayout({
             {/* Mode toggle */}
             <div className="flex rounded-lg overflow-hidden border border-loop-border">
               <button
-                onClick={() => onModeChange('mock')}
+                onClick={() => onModeChange('demo')}
                 className={`px-3 py-1 text-sm transition-colors ${
-                  mode === 'mock'
+                  mode === 'demo'
                     ? 'bg-loop-accent text-white'
                     : 'bg-loop-surface text-loop-muted hover:text-loop-text'
                 }`}
               >
                 Demo
+              </button>
+              <button
+                onClick={() => onModeChange('replay')}
+                className={`px-3 py-1 text-sm transition-colors ${
+                  mode === 'replay'
+                    ? 'bg-loop-accent text-white'
+                    : 'bg-loop-surface text-loop-muted hover:text-loop-text'
+                }`}
+              >
+                Replay
               </button>
               <button
                 onClick={() => onModeChange('live')}
@@ -212,6 +340,9 @@ function VisualizationLayout({
               </span>
             </div>
           )}
+
+          {/* Extra info (timestamps for replay mode) */}
+          {extraInfo}
 
           {/* Stuck reason (if applicable) */}
           {state.stuckReason && (
@@ -286,7 +417,7 @@ function MockControls({
               : 'bg-loop-surface border-loop-border text-loop-text hover:bg-loop-border'
           }`}
         >
-          {autoPlay ? 'Pause' : 'Auto-play'}
+          {autoPlay ? 'Pause' : 'Play'}
         </button>
 
         <button
@@ -321,19 +452,19 @@ function MockControls({
             <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
               A
             </kbd>{' '}
-            Auto-play
+            Play
           </span>
           <span>
             <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
-              S
+              P
             </kbd>{' '}
-            Stuck
+            Replay
           </span>
           <span>
             <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
               L
             </kbd>{' '}
-            Live mode
+            Live
           </span>
         </span>
       </div>
@@ -407,9 +538,159 @@ function LiveControls({
           </span>
           <span>
             <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
-              M
+              D
             </kbd>{' '}
-            Demo mode
+            Demo
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              P
+            </kbd>{' '}
+            Replay
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+interface ReplayControlsProps {
+  entryIndex: number;
+  totalEntries: number;
+  autoPlay: boolean;
+  playbackSpeed: number;
+  availableLoops: string[];
+  selectedLoop: string | null;
+  onNext: () => void;
+  onPrev: () => void;
+  onGoToEntry: (index: number) => void;
+  onToggleAutoPlay: () => void;
+  onSetPlaybackSpeed: (speed: number) => void;
+  onSelectLoop: (loopId: string) => void;
+}
+
+function ReplayControls({
+  entryIndex,
+  totalEntries,
+  autoPlay,
+  playbackSpeed,
+  availableLoops,
+  selectedLoop,
+  onNext,
+  onPrev,
+  onGoToEntry,
+  onToggleAutoPlay,
+  onSetPlaybackSpeed,
+  onSelectLoop,
+}: ReplayControlsProps) {
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* Progress bar with scrubber */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between text-xs text-loop-muted mb-2">
+          <span>
+            Iteration {entryIndex + 1} of {totalEntries}
+          </span>
+          <span>Replay Mode</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0, totalEntries - 1)}
+          value={entryIndex}
+          onChange={(e) => onGoToEntry(Number(e.target.value))}
+          className="w-full h-2 bg-loop-border rounded-lg appearance-none cursor-pointer accent-loop-accent"
+        />
+      </div>
+
+      {/* Control buttons */}
+      <div className="flex items-center justify-center gap-4 mb-4">
+        {availableLoops.length > 0 && (
+          <select
+            value={selectedLoop ?? ''}
+            onChange={(e) => onSelectLoop(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-loop-surface border border-loop-border text-loop-text"
+          >
+            {availableLoops.map((loop) => (
+              <option key={loop} value={loop}>
+                {loop}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <button
+          onClick={onPrev}
+          disabled={entryIndex === 0}
+          className="px-4 py-2 rounded-lg bg-loop-surface border border-loop-border text-loop-text hover:bg-loop-border transition-colors disabled:opacity-50"
+        >
+          Previous
+        </button>
+
+        <button
+          onClick={onToggleAutoPlay}
+          disabled={totalEntries === 0}
+          className={`px-4 py-2 rounded-lg border transition-colors ${
+            autoPlay
+              ? 'bg-loop-accent/20 border-loop-accent text-loop-accent'
+              : 'bg-loop-surface border-loop-border text-loop-text hover:bg-loop-border'
+          } disabled:opacity-50`}
+        >
+          {autoPlay ? 'Pause' : 'Play'}
+        </button>
+
+        <button
+          onClick={onNext}
+          disabled={entryIndex >= totalEntries - 1}
+          className="px-4 py-2 rounded-lg bg-loop-surface border border-loop-border text-loop-text hover:bg-loop-border transition-colors disabled:opacity-50"
+        >
+          Next
+        </button>
+
+        <select
+          value={playbackSpeed}
+          onChange={(e) => onSetPlaybackSpeed(Number(e.target.value))}
+          className="px-3 py-2 rounded-lg bg-loop-surface border border-loop-border text-loop-text"
+        >
+          <option value={500}>Speed: 0.5s</option>
+          <option value={1000}>Speed: 1s</option>
+          <option value={2000}>Speed: 2s</option>
+          <option value={3000}>Speed: 3s</option>
+        </select>
+      </div>
+
+      {/* Keyboard hints */}
+      <div className="text-center text-xs text-loop-muted">
+        <span className="inline-flex items-center gap-4 flex-wrap justify-center">
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              Space
+            </kbd>{' '}
+            Next
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              A
+            </kbd>{' '}
+            Play/Pause
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              Home/End
+            </kbd>{' '}
+            Jump
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              D
+            </kbd>{' '}
+            Demo
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 rounded bg-loop-surface border border-loop-border">
+              L
+            </kbd>{' '}
+            Live
           </span>
         </span>
       </div>
@@ -418,13 +699,21 @@ function LiveControls({
 }
 
 export default function App() {
-  const [mode, setMode] = useState<DataMode>('mock');
+  const [mode, setMode] = useState<DataMode>('demo');
 
-  if (mode === 'mock') {
+  if (mode === 'demo') {
     return (
       <MockProvider>
         <MockVisualization onModeChange={setMode} />
       </MockProvider>
+    );
+  }
+
+  if (mode === 'replay') {
+    return (
+      <ReplayProvider>
+        <ReplayVisualization onModeChange={setMode} />
+      </ReplayProvider>
     );
   }
 
