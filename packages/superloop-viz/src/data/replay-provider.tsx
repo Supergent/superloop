@@ -48,13 +48,42 @@ function mapGateStatus(status: 'ok' | 'failed' | 'skipped'): GatesState[keyof Ga
   }
 }
 
-function inferPhase(entry: RawIterationEntry): LoopPhase | null {
-  const artifacts = entry.artifacts;
-  if (artifacts.reviewer?.exists) return 'reviewer';
-  if (artifacts.test_report?.exists) return 'tester';
-  if (artifacts.implementer?.exists) return 'implementer';
-  if (artifacts.plan?.exists) return 'planner';
-  return 'planner';
+/**
+ * Infer phase based on the iteration outcome, not just artifact existence.
+ *
+ * Each iteration goes through all phases (planner → implementer → tester → reviewer),
+ * so we infer based on where the iteration "ended" or what the key outcome was:
+ *
+ * - Tests failed → ended at tester phase
+ * - Tests passed, promise not matched → reviewer phase (needs another iteration)
+ * - Tests passed, promise matched → completed through reviewer
+ * - First iteration → starts at planner
+ */
+function inferPhase(entry: RawIterationEntry): LoopPhase {
+  const { gates, promise, completion_ok, iteration } = entry;
+
+  // If tests failed, the significant phase was testing
+  if (gates.tests === 'failed') {
+    return 'tester';
+  }
+
+  // If tests passed but promise didn't match, went through review but incomplete
+  if (gates.tests === 'ok' && !promise.matched) {
+    return 'reviewer';
+  }
+
+  // If completed successfully, finished at reviewer
+  if (completion_ok || promise.matched) {
+    return 'reviewer';
+  }
+
+  // First iteration typically starts heavy in planning/implementation
+  if (iteration === 1) {
+    return 'implementer';
+  }
+
+  // Default: in implementation trying to fix issues
+  return 'implementer';
 }
 
 function entryToState(entry: RawIterationEntry, loopId: string): LoopState {
