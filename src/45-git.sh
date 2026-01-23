@@ -100,6 +100,23 @@ auto_commit_iteration() {
     pre_commit_output=$(cd "$repo" && eval "$pre_commit_commands" 2>&1)
     pre_commit_exit_code=$?
 
+    # Log pre-commit execution to events (for reviewer visibility)
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "pre_commit_executed" \
+      "$(jq -n --arg cmd "$pre_commit_commands" --arg exit_code "$pre_commit_exit_code" --arg output "$pre_commit_output" '{command: $cmd, exit_code: ($exit_code | tonumber), output: $output}')"
+
+    # Write lint feedback to a file for Reviewer to read
+    local lint_feedback_file="$loop_dir/lint-feedback.txt"
+    cat > "$lint_feedback_file" <<EOF
+# Lint Feedback (Iteration $iteration)
+
+Command: $pre_commit_commands
+Exit Code: $pre_commit_exit_code
+Status: $([ $pre_commit_exit_code -eq 0 ] && echo "SUCCESS" || echo "FAILED")
+
+## Output:
+$pre_commit_output
+EOF
+
     if [[ $pre_commit_exit_code -ne 0 ]]; then
       echo "[superloop] Pre-commit commands failed (exit $pre_commit_exit_code), attempting commit anyway..." >&2
       echo "[superloop] Output: $pre_commit_output" >&2

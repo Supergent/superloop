@@ -42,6 +42,14 @@ Context files (read as needed):
 - Tasks directory: $tasks_dir
 EOF
 
+  # Add lint feedback if it exists
+  local loop_dir
+  loop_dir=$(dirname "$notes_file")
+  local lint_feedback_file="$loop_dir/lint-feedback.txt"
+  if [[ -f "$lint_feedback_file" ]]; then
+    echo "- Lint feedback: $lint_feedback_file" >> "$prompt_file"
+  fi
+
   if [[ -n "$reviewer_packet" ]]; then
     echo "- Reviewer packet: $reviewer_packet" >> "$prompt_file"
   fi
