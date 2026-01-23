@@ -1005,6 +1005,8 @@ run_cmd() {
     # Git auto-commit configuration
     local commit_strategy
     commit_strategy=$(jq -r '.git.commit_strategy // "never"' <<<"$loop_json")
+    local pre_commit_commands
+    pre_commit_commands=$(jq -r '.git.pre_commit_commands // ""' <<<"$loop_json")
 
     if [[ "$reviewer_packet_enabled" != "true" ]]; then
       reviewer_packet=""
@@ -1856,7 +1858,7 @@ run_cmd() {
 
       # Auto-commit iteration changes if configured
       if [[ "$commit_strategy" != "never" ]]; then
-        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" || true
+        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" "$pre_commit_commands" || true
       fi
 
       append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"

@@ -11,6 +11,7 @@
 #   $5 - commit_strategy (per_iteration, on_test_pass, never)
 #   $6 - events_file for logging
 #   $7 - run_id
+#   $8 - pre_commit_commands (optional command to run before commit)
 # Returns: 0 on success or skip, 1 on failure
 auto_commit_iteration() {
   local repo="$1"
@@ -20,6 +21,7 @@ auto_commit_iteration() {
   local commit_strategy="$5"
   local events_file="$6"
   local run_id="$7"
+  local pre_commit_commands="${8:-}"
 
   # Check if commits are disabled
   if [[ "$commit_strategy" == "never" || -z "$commit_strategy" ]]; then
@@ -88,6 +90,32 @@ auto_commit_iteration() {
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_skipped" \
       "$(jq -n --arg reason "nothing_staged" '{reason: $reason}')"
     return 0
+  fi
+
+  # Run pre-commit commands if configured
+  if [[ -n "$pre_commit_commands" ]]; then
+    echo "[superloop] Running pre-commit commands: $pre_commit_commands" >&2
+    local pre_commit_output
+    local pre_commit_exit_code
+    pre_commit_output=$(cd "$repo" && eval "$pre_commit_commands" 2>&1)
+    pre_commit_exit_code=$?
+
+    if [[ $pre_commit_exit_code -ne 0 ]]; then
+      echo "[superloop] Pre-commit commands failed (exit $pre_commit_exit_code), attempting commit anyway..." >&2
+      echo "[superloop] Output: $pre_commit_output" >&2
+    else
+      echo "[superloop] Pre-commit commands succeeded" >&2
+    fi
+
+    # Re-stage changes after pre-commit commands (e.g., lint fixes)
+    git -C "$repo" add -u 2>/dev/null || true
+
+    # Stage any new files that might have been created, excluding .superloop
+    while IFS= read -r file; do
+      if [[ -n "$file" && ! "$file" =~ ^\.superloop/ ]]; then
+        git -C "$repo" add "$file" 2>/dev/null || true
+      fi
+    done < <(git -C "$repo" status --porcelain 2>/dev/null | grep '^??' | cut -c4-)
   fi
 
   # Create the commit

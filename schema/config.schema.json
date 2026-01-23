@@ -356,6 +356,22 @@
               }
             }
           },
+          "git": {
+            "type": "object",
+            "description": "Git auto-commit configuration for iteration changes",
+            "properties": {
+              "commit_strategy": {
+                "type": "string",
+                "enum": ["never", "per_iteration", "on_test_pass"],
+                "default": "never",
+                "description": "When to automatically commit changes: never, after every iteration, or only when tests pass"
+              },
+              "pre_commit_commands": {
+                "type": "string",
+                "description": "Optional shell command to run before committing (e.g., 'bun run lint:fix' to auto-fix linting issues)"
+              }
+            }
+          },
           "roles": {
             "oneOf": [
               {
