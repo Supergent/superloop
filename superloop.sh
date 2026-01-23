@@ -1233,6 +1233,14 @@ Context files (read as needed):
 - Tasks directory: $tasks_dir
 EOF
 
+  # Add lint feedback if it exists
+  local loop_dir
+  loop_dir=$(dirname "$notes_file")
+  local lint_feedback_file="$loop_dir/lint-feedback.txt"
+  if [[ -f "$lint_feedback_file" ]]; then
+    echo "- Lint feedback: $lint_feedback_file" >> "$prompt_file"
+  fi
+
   if [[ -n "$reviewer_packet" ]]; then
     echo "- Reviewer packet: $reviewer_packet" >> "$prompt_file"
   fi
@@ -1305,97 +1313,46 @@ EOF
       max_steps=$(jq -r '.max_steps // ""' <<<"$tester_exploration_json")
       screenshot_dir=$(jq -r '.screenshot_dir // ""' <<<"$tester_exploration_json")
 
-      cat <<'AGENT_BROWSER_SKILL' >> "$prompt_file"
+      # Inject agent-browser documentation using hybrid approach
+      local skill_file="$HOME/.claude/skills/agent-browser/SKILL.md"
 
-## Exploration Configuration
+      echo "" >> "$prompt_file"
+      echo "## Exploration Configuration" >> "$prompt_file"
+      echo "" >> "$prompt_file"
+      echo "Browser exploration is ENABLED. Use agent-browser to verify the implementation." >> "$prompt_file"
+      echo "" >> "$prompt_file"
 
-Browser exploration is ENABLED. Use agent-browser to verify the implementation.
-
+      # Try to use global SKILL.md first, fallback to --help, then minimal reference
+      if [[ -f "$skill_file" ]]; then
+        # Global skill exists - use it (single source of truth)
+        cat "$skill_file" >> "$prompt_file"
+      elif command -v agent-browser &> /dev/null; then
+        # Fallback: Generate from agent-browser --help
+        echo "### agent-browser Commands" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo '```' >> "$prompt_file"
+        agent-browser --help >> "$prompt_file" 2>&1
+        echo '```' >> "$prompt_file"
+      else
+        # Minimal fallback if agent-browser not found
+        cat <<'MINIMAL_FALLBACK' >> "$prompt_file"
 ### agent-browser Quick Reference
 
-**Core workflow:**
-1. Navigate: `agent-browser open <url>`
-2. Snapshot: `agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
-3. Interact using refs from the snapshot
-4. Re-snapshot after navigation or significant DOM changes
-
-**Navigation:**
+**Installation required:**
 ```
-agent-browser open <url>      # Navigate to URL
-agent-browser back            # Go back
-agent-browser forward         # Go forward
-agent-browser reload          # Reload page
-agent-browser close           # Close browser
+npm install -g agent-browser
 ```
 
-**Snapshot (page analysis):**
-```
-agent-browser snapshot        # Full accessibility tree
-agent-browser snapshot -i     # Interactive elements only (recommended)
-agent-browser snapshot -c     # Compact output
-agent-browser snapshot -d 3   # Limit depth to 3
-```
+**Basic workflow:**
+1. `agent-browser open <url>` - Navigate to page
+2. `agent-browser snapshot -i` - Get interactive elements with refs
+3. `agent-browser click @e1` - Interact using refs
+4. `agent-browser close` - Close browser
 
-**Interactions (use @refs from snapshot):**
-```
-agent-browser click @e1           # Click
-agent-browser dblclick @e1        # Double-click
-agent-browser fill @e2 "text"     # Clear and type
-agent-browser type @e2 "text"     # Type without clearing
-agent-browser press Enter         # Press key
-agent-browser press Control+a     # Key combination
-agent-browser hover @e1           # Hover
-agent-browser check @e1           # Check checkbox
-agent-browser uncheck @e1         # Uncheck checkbox
-agent-browser select @e1 "value"  # Select dropdown
-agent-browser scroll down 500     # Scroll page
-agent-browser scrollintoview @e1  # Scroll element into view
-```
-
-**Get information:**
-```
-agent-browser get text @e1        # Get element text
-agent-browser get value @e1       # Get input value
-agent-browser get title           # Get page title
-agent-browser get url             # Get current URL
-```
-
-**Screenshots:**
-```
-agent-browser screenshot          # Screenshot to stdout
-agent-browser screenshot path.png # Save to file
-agent-browser screenshot --full   # Full page
-```
-
-**Wait:**
-```
-agent-browser wait @e1                     # Wait for element
-agent-browser wait 2000                    # Wait milliseconds
-agent-browser wait --text "Success"        # Wait for text
-agent-browser wait --load networkidle      # Wait for network idle
-```
-
-**Semantic locators (alternative to refs):**
-```
-agent-browser find role button click --name "Submit"
-agent-browser find text "Sign In" click
-agent-browser find label "Email" fill "user@test.com"
-```
-
-**Example exploration flow:**
-```
-agent-browser open https://example.com/app
-agent-browser snapshot -i
-# Output shows: textbox "Email" [ref=e1], button "Submit" [ref=e2]
-
-agent-browser fill @e1 "test@example.com"
-agent-browser click @e2
-agent-browser wait --load networkidle
-agent-browser snapshot -i  # Check result
-agent-browser screenshot exploration-result.png
-```
-
-AGENT_BROWSER_SKILL
+For full documentation, install agent-browser or see https://github.com/vercel-labs/agent-browser
+MINIMAL_FALLBACK
+      fi
+      echo "" >> "$prompt_file"
 
       echo "### Session Configuration" >> "$prompt_file"
       echo "" >> "$prompt_file"
@@ -4548,6 +4505,7 @@ write_approval_request() {
 #   $5 - commit_strategy (per_iteration, on_test_pass, never)
 #   $6 - events_file for logging
 #   $7 - run_id
+#   $8 - pre_commit_commands (optional command to run before commit)
 # Returns: 0 on success or skip, 1 on failure
 auto_commit_iteration() {
   local repo="$1"
@@ -4557,6 +4515,7 @@ auto_commit_iteration() {
   local commit_strategy="$5"
   local events_file="$6"
   local run_id="$7"
+  local pre_commit_commands="${8:-}"
 
   # Check if commits are disabled
   if [[ "$commit_strategy" == "never" || -z "$commit_strategy" ]]; then
@@ -4625,6 +4584,49 @@ auto_commit_iteration() {
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "auto_commit_skipped" \
       "$(jq -n --arg reason "nothing_staged" '{reason: $reason}')"
     return 0
+  fi
+
+  # Run pre-commit commands if configured
+  if [[ -n "$pre_commit_commands" ]]; then
+    echo "[superloop] Running pre-commit commands: $pre_commit_commands" >&2
+    local pre_commit_output
+    local pre_commit_exit_code
+    pre_commit_output=$(cd "$repo" && eval "$pre_commit_commands" 2>&1)
+    pre_commit_exit_code=$?
+
+    # Log pre-commit execution to events (for reviewer visibility)
+    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "pre_commit_executed" \
+      "$(jq -n --arg cmd "$pre_commit_commands" --arg exit_code "$pre_commit_exit_code" --arg output "$pre_commit_output" '{command: $cmd, exit_code: ($exit_code | tonumber), output: $output}')"
+
+    # Write lint feedback to a file for Reviewer to read
+    local lint_feedback_file="$loop_dir/lint-feedback.txt"
+    cat > "$lint_feedback_file" <<EOF
+# Lint Feedback (Iteration $iteration)
+
+Command: $pre_commit_commands
+Exit Code: $pre_commit_exit_code
+Status: $([ $pre_commit_exit_code -eq 0 ] && echo "SUCCESS" || echo "FAILED")
+
+## Output:
+$pre_commit_output
+EOF
+
+    if [[ $pre_commit_exit_code -ne 0 ]]; then
+      echo "[superloop] Pre-commit commands failed (exit $pre_commit_exit_code), attempting commit anyway..." >&2
+      echo "[superloop] Output: $pre_commit_output" >&2
+    else
+      echo "[superloop] Pre-commit commands succeeded" >&2
+    fi
+
+    # Re-stage changes after pre-commit commands (e.g., lint fixes)
+    git -C "$repo" add -u 2>/dev/null || true
+
+    # Stage any new files that might have been created, excluding .superloop
+    while IFS= read -r file; do
+      if [[ -n "$file" && ! "$file" =~ ^\.superloop/ ]]; then
+        git -C "$repo" add "$file" 2>/dev/null || true
+      fi
+    done < <(git -C "$repo" status --porcelain 2>/dev/null | grep '^??' | cut -c4-)
   fi
 
   # Create the commit
@@ -6074,6 +6076,8 @@ run_cmd() {
     # Git auto-commit configuration
     local commit_strategy
     commit_strategy=$(jq -r '.git.commit_strategy // "never"' <<<"$loop_json")
+    local pre_commit_commands
+    pre_commit_commands=$(jq -r '.git.pre_commit_commands // ""' <<<"$loop_json")
 
     if [[ "$reviewer_packet_enabled" != "true" ]]; then
       reviewer_packet=""
@@ -6925,7 +6929,7 @@ run_cmd() {
 
       # Auto-commit iteration changes if configured
       if [[ "$commit_strategy" != "never" ]]; then
-        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" || true
+        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" "$pre_commit_commands" || true
       fi
 
       append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
