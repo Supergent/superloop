@@ -76,6 +76,29 @@ init_cmd() {
           ".cache/**"
         ]
       },
+      "recovery": {
+        "enabled": true,
+        "auto_approve": [
+          "bun install",
+          "npm install",
+          "yarn install",
+          "pnpm install",
+          "rm -rf node_modules && bun install",
+          "rm -rf node_modules && npm install",
+          "rm -rf .next && bun run build",
+          "rm -rf dist && bun run build"
+        ],
+        "require_human": [
+          "rm -rf *",
+          "git reset --hard",
+          "git push *",
+          "curl *",
+          "wget *"
+        ],
+        "max_auto_recoveries_per_run": 3,
+        "cooldown_seconds": 60,
+        "on_unknown": "escalate"
+      },
       "roles": {
         "planner": {"runner": "codex"},
         "implementer": {"runner": "claude-vanilla"},
@@ -1008,6 +1031,24 @@ run_cmd() {
     local pre_commit_commands
     pre_commit_commands=$(jq -r '.git.pre_commit_commands // ""' <<<"$loop_json")
 
+    # Recovery configuration
+    local recovery_enabled
+    recovery_enabled=$(jq -r '.recovery.enabled // false' <<<"$loop_json")
+    local recovery_max_per_run
+    recovery_max_per_run=$(jq -r '.recovery.max_auto_recoveries_per_run // 3' <<<"$loop_json")
+    local recovery_cooldown
+    recovery_cooldown=$(jq -r '.recovery.cooldown_seconds // 60' <<<"$loop_json")
+    local recovery_on_unknown
+    recovery_on_unknown=$(jq -r '.recovery.on_unknown // "escalate"' <<<"$loop_json")
+    local -a recovery_auto_approve=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && recovery_auto_approve+=("$line")
+    done < <(jq -r '.recovery.auto_approve[]?' <<<"$loop_json")
+    local -a recovery_require_human=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && recovery_require_human+=("$line")
+    done < <(jq -r '.recovery.require_human[]?' <<<"$loop_json")
+
     if [[ "$reviewer_packet_enabled" != "true" ]]; then
       reviewer_packet=""
     fi
@@ -1629,6 +1670,49 @@ run_cmd() {
         --argjson details "$test_status_json" \
         '{status: $status, details: $details}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_end" "$tests_end_data"
+
+      # Infrastructure Recovery: check for recovery.json when tests fail
+      if [[ $tests_ok -eq 0 && "$recovery_enabled" == "true" ]]; then
+        local recovery_file="$loop_dir/recovery.json"
+        if [[ -f "$recovery_file" ]]; then
+          local recovery_rc=0
+          set +e
+          process_recovery "$repo" "$loop_dir" "$events_file" "$loop_id" "$iteration" "$run_id" \
+            "$recovery_enabled" "$recovery_max_per_run" "$recovery_cooldown" "$recovery_on_unknown" \
+            "${recovery_auto_approve[@]}" "---" "${recovery_require_human[@]}"
+          recovery_rc=$?
+          set -e
+
+          if [[ $recovery_rc -eq 0 ]]; then
+            # Recovery succeeded - re-run tests
+            echo "Recovery completed, re-running tests..."
+            local retest_start_data
+            retest_start_data=$(jq -n --arg reason "post_recovery" '{reason: $reason}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_rerun_start" "$retest_start_data"
+
+            if run_tests "$repo" "$loop_dir" "${test_commands[@]}"; then
+              tests_status="ok"
+              tests_ok=1
+              echo "Tests passed after recovery!"
+            else
+              tests_status="failed"
+              tests_ok=0
+              echo "Tests still failing after recovery"
+            fi
+
+            # Update test_status_json with new results
+            if [[ -f "$test_status" ]]; then
+              test_status_json=$(cat "$test_status")
+            fi
+            local retest_end_data
+            retest_end_data=$(jq -n \
+              --arg status "$tests_status" \
+              --argjson details "$test_status_json" \
+              '{status: $status, details: $details}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "tests_rerun_end" "$retest_end_data"
+          fi
+        fi
+      fi
 
       local validation_status="skipped"
       local validation_ok=1

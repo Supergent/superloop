@@ -58,6 +58,59 @@ When agent-browser is available:
 
 5. Re-snapshot after page changes to get new refs.
 
+## Infrastructure Issue Detection
+
+When tests fail to EXECUTE (not assertion failures), analyze for infrastructure issues:
+
+**Categories:**
+- `dependency` - Missing modules, version conflicts, corrupted node_modules
+- `config` - Invalid config files, missing environment variables
+- `environment` - Wrong runtime version, missing system tools
+- `permissions` - File access denied, socket in use
+- `network` - Connection refused, timeout
+
+**When you detect a recoverable infrastructure issue, write `recovery.json`:**
+
+```json
+{
+  "version": 1,
+  "timestamp": "2026-01-23T05:36:33Z",
+  "category": "dependency",
+  "severity": "blocking",
+  "diagnosis": {
+    "error_pattern": "Cannot find module '@rollup/rollup-darwin-arm64'",
+    "root_cause": "Optional dependency not installed for current platform",
+    "evidence": ["test-output.txt:5: Cannot find module @rollup/rollup-darwin-arm64"]
+  },
+  "recovery": {
+    "command": "rm -rf node_modules && bun install",
+    "working_dir": ".",
+    "timeout_seconds": 300,
+    "expected_outcome": "Dependencies reinstalled with platform-specific binaries",
+    "confidence": "high"
+  }
+}
+```
+
+**Common recovery patterns:**
+| Error Pattern | Recovery Command |
+|---------------|------------------|
+| `Cannot find module` | `bun install` |
+| `version mismatch` / binary mismatch | `rm -rf node_modules && bun install` |
+| `ERESOLVE` | `npm install --legacy-peer-deps` |
+| `Cannot find.*\.next` | `rm -rf .next && bun run build` |
+
+**Do NOT propose recovery for:**
+- Test assertion failures (code bugs - Implementer's job)
+- TypeScript/lint errors (code issues - Implementer's job)
+- Missing test coverage (your job to report, Implementer's job to fix)
+
+**DO propose recovery for:**
+- Dependency version conflicts
+- Missing/corrupted node_modules
+- Build cache corruption
+- Platform-specific binary issues
+
 ## Rules
 - Do NOT modify code.
 - Do NOT run automated test suites (the wrapper handles that).
@@ -67,3 +120,4 @@ When agent-browser is available:
 - Do not output a promise tag.
 - Minimize report churn: if findings are unchanged, do not edit the report.
 - Write your report to the test report file path listed in context.
+- Write recovery.json ONLY for infrastructure issues, not code bugs.
