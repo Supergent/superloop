@@ -8,36 +8,68 @@ update_stuck_state() {
   local state_file="$loop_dir/stuck.json"
   local report_file="$loop_dir/stuck-report.md"
 
-  local signature
-  signature=$(compute_signature "$repo" "${ignore_patterns[@]}") || return 1
+  # Compute code signature (existing)
+  local code_signature
+  code_signature=$(compute_signature "$repo" "${ignore_patterns[@]}") || return 1
 
-  local prev_signature=""
+  # Compute test failure signature (new)
+  local test_signature
+  test_signature=$(compute_test_failure_signature "$loop_dir")
+
+  # Load previous state
+  local prev_code_signature=""
+  local prev_test_signature=""
   local prev_streak=0
   if [[ -f "$state_file" ]]; then
-    prev_signature=$(jq -r '.signature // ""' "$state_file")
+    # Try new format first (code_signature + test_signature)
+    prev_code_signature=$(jq -r '.code_signature // ""' "$state_file")
+    prev_test_signature=$(jq -r '.test_signature // ""' "$state_file")
+
+    # Fallback to old format (signature field) for backward compatibility
+    if [[ -z "$prev_code_signature" ]]; then
+      prev_code_signature=$(jq -r '.signature // ""' "$state_file")
+    fi
+
     prev_streak=$(jq -r '.streak // 0' "$state_file")
   fi
 
+  # Increment streak if: same code changes OR same test failures
   local streak=1
-  if [[ "$signature" == "$prev_signature" ]]; then
+  local stuck_reason=""
+  if [[ "$code_signature" == "$prev_code_signature" && -n "$code_signature" ]]; then
     streak=$((prev_streak + 1))
+    stuck_reason="no_code_changes"
+  elif [[ -n "$test_signature" && "$test_signature" == "$prev_test_signature" && -n "$prev_test_signature" ]]; then
+    streak=$((prev_streak + 1))
+    stuck_reason="same_test_failures"
   fi
 
+  # Save both signatures
   jq -n \
-    --arg signature "$signature" \
+    --arg code_sig "$code_signature" \
+    --arg test_sig "$test_signature" \
     --argjson streak "$streak" \
     --argjson threshold "$threshold" \
+    --arg reason "$stuck_reason" \
     --arg updated_at "$(timestamp)" \
-    '{signature: $signature, streak: $streak, threshold: $threshold, updated_at: $updated_at}' \
+    '{code_signature: $code_sig, test_signature: $test_sig, streak: $streak, threshold: $threshold, reason: $reason, updated_at: $updated_at}' \
     > "$state_file"
 
+  # Trigger stuck detection if threshold reached
   if [[ "$streak" -ge "$threshold" ]]; then
     {
       echo "# Stuck Report"
       echo ""
       echo "No meaningful progress detected for $streak consecutive iterations."
       echo ""
-      echo "Signature: $signature"
+      if [[ "$stuck_reason" == "no_code_changes" ]]; then
+        echo "**Reason**: No code changes detected"
+      elif [[ "$stuck_reason" == "same_test_failures" ]]; then
+        echo "**Reason**: Same test failures persist despite code changes (thrashing)"
+      fi
+      echo ""
+      echo "**Code Signature**: \`$code_signature\`"
+      echo "**Test Failure Signature**: \`$test_signature\`"
       echo ""
       echo "Ignored paths:"
       printf '%s\n' "${ignore_patterns[@]}" | sed 's/^/- /'

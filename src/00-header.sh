@@ -345,3 +345,23 @@ compute_signature() {
 
   printf '%s\n' "${entries[@]}" | LC_ALL=C sort | hash_stdin
 }
+
+compute_test_failure_signature() {
+  local loop_dir="$1"
+  local test_output_file="$loop_dir/test-output.txt"
+
+  if [[ ! -f "$test_output_file" ]]; then
+    echo ""
+    return 0
+  fi
+
+  # Extract error messages, normalize line numbers/paths, hash
+  # Captures TypeScript errors (TS####), test failures (FAIL), and generic errors
+  grep -E "^(Error|FAIL|TS[0-9]+|error TS[0-9]+)" "$test_output_file" \
+    | sed -E 's/:[0-9]+:[0-9]+/:<line>:<col>/g' \
+    | sed -E 's/\([0-9]+,[0-9]+\)/(<line>,<col>)/g' \
+    | sed -E 's/line [0-9]+/line <num>/g' \
+    | sed -E 's/column [0-9]+/column <num>/g' \
+    | sort \
+    | hash_stdin || echo ""
+}
