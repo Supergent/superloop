@@ -1456,39 +1456,59 @@ MINIMAL_FALLBACK
           echo "**Reason**: $stuck_reason" >> "$prompt_file"
         fi
 
-        echo "" >> "$prompt_file"
-        echo "**Failing Pattern**:" >> "$prompt_file"
+        # Extract Reviewer's findings - they've seen this issue multiple times
+        if [[ -f "$reviewer_report" ]]; then
+          echo "" >> "$prompt_file"
+          echo "**⚠️ The Reviewer Has Identified The Same Issue $stuck_streak Times:**" >> "$prompt_file"
+          echo '```' >> "$prompt_file"
+          # Extract High and Medium findings (most critical issues)
+          awk '/### High/,/### Low/' "$reviewer_report" | head -30 >> "$prompt_file" 2>/dev/null || echo "(No findings in review report)" >> "$prompt_file"
+          echo '```' >> "$prompt_file"
+        fi
 
-        # Extract recent error patterns from test output
+        echo "" >> "$prompt_file"
+        echo "**Test Failures**:" >> "$prompt_file"
+        # Extract TypeScript errors and test failures
         if [[ -f "$test_output" ]]; then
           echo '```' >> "$prompt_file"
-          grep -E "^(Error|FAIL|TS[0-9]+|error TS[0-9]+)" "$test_output" | head -10 >> "$prompt_file" 2>/dev/null || echo "(No error patterns found)" >> "$prompt_file"
+          grep "error TS[0-9]" "$test_output" | head -10 >> "$prompt_file" 2>/dev/null
+          grep -E "^(FAIL|Error:)" "$test_output" | head -5 >> "$prompt_file" 2>/dev/null
+          if ! grep -q "error TS\|FAIL\|Error:" "$test_output" 2>/dev/null; then
+            echo "(No test failures found in output)" >> "$prompt_file"
+          fi
           echo '```' >> "$prompt_file"
         else
           echo "(Test output not available)" >> "$prompt_file"
         fi
 
         echo "" >> "$prompt_file"
-        echo "**What's Been Tried**:" >> "$prompt_file"
-
-        # Show recent iteration summaries from iteration notes
-        if [[ -f "$notes_file" ]]; then
-          echo '```' >> "$prompt_file"
-          grep "^# Iteration" "$notes_file" | tail -n "$stuck_streak" >> "$prompt_file" 2>/dev/null || echo "(No iteration history found)" >> "$prompt_file"
-          echo '```' >> "$prompt_file"
-        else
-          echo "(Iteration notes not available)" >> "$prompt_file"
-        fi
-
+        echo "---" >> "$prompt_file"
         echo "" >> "$prompt_file"
-        echo "**Guidance**:" >> "$prompt_file"
-        echo "The current approach is not working. Consider:" >> "$prompt_file"
+        echo "## 🛑 CRITICAL - You Are In A Stuck Loop" >> "$prompt_file"
         echo "" >> "$prompt_file"
-        echo "1. **Architectural rethink**: Is the fundamental design wrong?" >> "$prompt_file"
-        echo "2. **Different strategy**: Have all attempts been variations of the same idea?" >> "$prompt_file"
-        echo "3. **Missing knowledge**: Is this problem beyond what you can solve?" >> "$prompt_file"
+        echo "The same test failures have persisted for **$stuck_streak iterations** despite code changes." >> "$prompt_file"
+        echo "This means your **APPROACH is fundamentally wrong**, not just the implementation." >> "$prompt_file"
         echo "" >> "$prompt_file"
-        echo "If you cannot find a clean solution after reviewing this context, it may require human intervention. **Do not compromise code quality to pass gates.**" >> "$prompt_file"
+        echo "**REQUIRED ACTIONS:**" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "1. **Read the Reviewer's finding above** - it tells you what's actually failing" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "2. **Identify what conceptual approach you keep repeating**" >> "$prompt_file"
+        echo "   - Look at recent tasks - are they all variations of the same idea?" >> "$prompt_file"
+        echo "   - Example: If tasks 59-63 all say \"fix handler typing\" → you're repeating" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "3. **Try a FUNDAMENTALLY DIFFERENT solution** (not a variation):" >> "$prompt_file"
+        echo "   - If fixing types keeps failing → use runtime approach with type assertions (\`as any\`)" >> "$prompt_file"
+        echo "   - If adding generics keeps failing → use concrete types or \`unknown\`" >> "$prompt_file"
+        echo "   - If accessing private properties keeps failing → use different API or remove helper" >> "$prompt_file"
+        echo "   - If modifying test infrastructure keeps failing → rewrite tests without helpers" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "4. **If you cannot identify a fundamentally different approach** after reviewing the Reviewer's finding:" >> "$prompt_file"
+        echo "   - STOP trying variations of the same approach" >> "$prompt_file"
+        echo "   - State in your plan: \"This requires human intervention - recommend manual fix to [specific issue]\"" >> "$prompt_file"
+        echo "   - Create a task documenting what was tried and why it can't be automated" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "**Do not compromise code quality to pass gates. Better to acknowledge limits than create technical debt.**" >> "$prompt_file"
       fi
     fi
   fi
