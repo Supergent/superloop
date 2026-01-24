@@ -19,6 +19,7 @@ main() {
   local approver=""
   local note=""
   local reject=0
+  local static=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -74,6 +75,10 @@ main() {
         dry_run=1
         shift
         ;;
+      --static)
+        static=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -117,7 +122,7 @@ main() {
       cancel_cmd "$repo"
       ;;
     validate)
-      validate_cmd "$repo" "$config_path" "$schema_path"
+      validate_cmd "$repo" "$config_path" "$schema_path" "$static"
       ;;
     report)
       report_cmd "$repo" "$config_path" "$loop_id" "$out_path"

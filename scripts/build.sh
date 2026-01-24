@@ -18,6 +18,7 @@ PARTS=(
   "45-git.sh"
   "50-events.sh"
   "55-recovery.sh"
+  "56-validate-static.sh"
   "60-commands.sh"
   "70-report.sh"
   "99-main.sh"

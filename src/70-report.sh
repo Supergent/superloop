@@ -14,6 +14,7 @@ validate_cmd() {
   local repo="$1"
   local config_path="$2"
   local schema_path="$3"
+  local static_only="${4:-0}"
 
   if [[ ! -f "$config_path" ]]; then
     die "config not found: $config_path"
@@ -28,6 +29,7 @@ validate_cmd() {
     die "missing python3/python for schema validation"
   fi
 
+  # Run schema validation first
   "$python_bin" - "$schema_path" "$config_path" <<'PY'
 import json
 import sys
@@ -139,6 +141,20 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 PY
+  local schema_rc=$?
+  if [[ $schema_rc -ne 0 ]]; then
+    return 1
+  fi
+
+  # Run static validation if requested
+  if [[ "$static_only" == "1" || "$static_only" == "--static" ]]; then
+    echo ""
+    echo "Running static analysis..."
+    if ! validate_static "$repo" "$config_path"; then
+      return 1
+    fi
+    echo "ok: static analysis passed"
+  fi
 }
 
 report_cmd() {
