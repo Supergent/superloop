@@ -6694,15 +6694,30 @@ run_cmd() {
 
   local loop_index=0
   local iteration=1
+  local was_active="false"
   if [[ "${dry_run:-0}" -ne 1 && -f "$state_file" ]]; then
     loop_index=$(jq -r '.loop_index // 0' "$state_file")
     iteration=$(jq -r '.iteration // 1' "$state_file")
     local active
     active=$(jq -r '.active // true' "$state_file")
+    if [[ "$active" == "true" ]]; then
+      was_active="true"
+    fi
     if [[ "$active" != "true" ]]; then
       loop_index=0
       iteration=1
     fi
+  fi
+
+  # Check if loop is already active
+  if [[ "$was_active" == "true" && -z "$target_loop_id" ]]; then
+    echo "Error: A loop is already running (state.json shows active: true)" >&2
+    echo "" >&2
+    echo "To start a new loop run:" >&2
+    echo "  1. Stop the running loop first, OR" >&2
+    echo "  2. Reset the state manually:" >&2
+    echo "     echo '{\"active\": false, \"loop_index\": 0, \"iteration\": 0}' > $state_file" >&2
+    return 1
   fi
 
   if [[ -n "$target_loop_id" ]]; then
@@ -6767,8 +6782,34 @@ run_cmd() {
     local usage_file="$loop_dir/usage.jsonl"
 
     local tasks_dir="$loop_dir/tasks"
+    local stuck_file="$loop_dir/stuck.json"
     mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
+
+    # Check if stuck threshold has been reached
+    if [[ -f "$stuck_file" ]]; then
+      local stuck_streak
+      local stuck_threshold
+      stuck_streak=$(jq -r '.streak // 0' "$stuck_file" 2>/dev/null || echo "0")
+      stuck_threshold=$(jq -r '.threshold // 3' "$stuck_file" 2>/dev/null || echo "3")
+
+      if [[ "$stuck_streak" -ge "$stuck_threshold" && "$stuck_threshold" -gt 0 ]]; then
+        local stuck_reason
+        stuck_reason=$(jq -r '.reason // "unknown"' "$stuck_file" 2>/dev/null || echo "unknown")
+
+        echo "Error: Loop has reached stuck threshold ($stuck_streak/$stuck_threshold iterations)" >&2
+        echo "" >&2
+        echo "Reason: $stuck_reason" >&2
+        echo "" >&2
+        echo "The loop has been making no meaningful progress. To restart:" >&2
+        echo "  1. Review the stuck state: cat $stuck_file" >&2
+        echo "  2. Review recent iterations: ls -lt $loop_dir/logs/" >&2
+        echo "  3. Reset stuck state if you want to retry:" >&2
+        echo "     echo '{\"code_signature\": \"\", \"test_signature\": \"\", \"streak\": 0, \"threshold\": 3, \"reason\": \"\"}' > $stuck_file" >&2
+        echo "  4. OR fix the underlying issue manually before restarting" >&2
+        return 1
+      fi
+    fi
 
     # Parse roles - can be array or object with runner assignments
     local roles_type
