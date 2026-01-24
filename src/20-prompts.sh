@@ -187,4 +187,66 @@ MINIMAL_FALLBACK
       fi
     fi
   fi
+
+  # Add stuck detection context for planner role
+  if [[ "$role" == "planner" ]]; then
+    local stuck_file="$loop_dir/stuck.json"
+    if [[ -f "$stuck_file" ]]; then
+      local stuck_streak
+      stuck_streak=$(jq -r '.streak // 0' "$stuck_file" 2>/dev/null || echo "0")
+
+      if [[ "$stuck_streak" -ge 2 ]]; then
+        local stuck_reason
+        stuck_reason=$(jq -r '.reason // ""' "$stuck_file" 2>/dev/null || echo "")
+
+        echo "" >> "$prompt_file"
+        echo "## ⚠️ Stuck Detection Alert" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "You have been stuck for $stuck_streak consecutive iterations." >> "$prompt_file"
+        echo "" >> "$prompt_file"
+
+        if [[ "$stuck_reason" == "no_code_changes" ]]; then
+          echo "**Reason**: No code changes detected" >> "$prompt_file"
+        elif [[ "$stuck_reason" == "same_test_failures" ]]; then
+          echo "**Reason**: Same test failures persist despite code changes (thrashing)" >> "$prompt_file"
+        else
+          echo "**Reason**: $stuck_reason" >> "$prompt_file"
+        fi
+
+        echo "" >> "$prompt_file"
+        echo "**Failing Pattern**:" >> "$prompt_file"
+
+        # Extract recent error patterns from test output
+        if [[ -f "$test_output" ]]; then
+          echo '```' >> "$prompt_file"
+          grep -E "^(Error|FAIL|TS[0-9]+|error TS[0-9]+)" "$test_output" | head -10 >> "$prompt_file" 2>/dev/null || echo "(No error patterns found)" >> "$prompt_file"
+          echo '```' >> "$prompt_file"
+        else
+          echo "(Test output not available)" >> "$prompt_file"
+        fi
+
+        echo "" >> "$prompt_file"
+        echo "**What's Been Tried**:" >> "$prompt_file"
+
+        # Show recent iteration summaries from iteration notes
+        if [[ -f "$notes_file" ]]; then
+          echo '```' >> "$prompt_file"
+          grep "^# Iteration" "$notes_file" | tail -n "$stuck_streak" >> "$prompt_file" 2>/dev/null || echo "(No iteration history found)" >> "$prompt_file"
+          echo '```' >> "$prompt_file"
+        else
+          echo "(Iteration notes not available)" >> "$prompt_file"
+        fi
+
+        echo "" >> "$prompt_file"
+        echo "**Guidance**:" >> "$prompt_file"
+        echo "The current approach is not working. Consider:" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "1. **Architectural rethink**: Is the fundamental design wrong?" >> "$prompt_file"
+        echo "2. **Different strategy**: Have all attempts been variations of the same idea?" >> "$prompt_file"
+        echo "3. **Missing knowledge**: Is this problem beyond what you can solve?" >> "$prompt_file"
+        echo "" >> "$prompt_file"
+        echo "If you cannot find a clean solution after reviewing this context, it may require human intervention. **Do not compromise code quality to pass gates.**" >> "$prompt_file"
+      fi
+    fi
+  fi
 }
