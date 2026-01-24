@@ -346,6 +346,26 @@ compute_signature() {
   printf '%s\n' "${entries[@]}" | LC_ALL=C sort | hash_stdin
 }
 
+compute_test_failure_signature() {
+  local loop_dir="$1"
+  local test_output_file="$loop_dir/test-output.txt"
+
+  if [[ ! -f "$test_output_file" ]]; then
+    echo ""
+    return 0
+  fi
+
+  # Extract error messages, normalize line numbers/paths, hash
+  # Captures TypeScript errors (TS####), test failures (FAIL), and generic errors
+  grep -E "^(Error|FAIL|TS[0-9]+|error TS[0-9]+)" "$test_output_file" \
+    | sed -E 's/:[0-9]+:[0-9]+/:<line>:<col>/g' \
+    | sed -E 's/\([0-9]+,[0-9]+\)/(<line>,<col>)/g' \
+    | sed -E 's/line [0-9]+/line <num>/g' \
+    | sed -E 's/column [0-9]+/column <num>/g' \
+    | sort \
+    | hash_stdin || echo ""
+}
+
 update_stuck_state() {
   local repo="$1"
   local loop_dir="$2"
@@ -356,36 +376,68 @@ update_stuck_state() {
   local state_file="$loop_dir/stuck.json"
   local report_file="$loop_dir/stuck-report.md"
 
-  local signature
-  signature=$(compute_signature "$repo" "${ignore_patterns[@]}") || return 1
+  # Compute code signature (existing)
+  local code_signature
+  code_signature=$(compute_signature "$repo" "${ignore_patterns[@]}") || return 1
 
-  local prev_signature=""
+  # Compute test failure signature (new)
+  local test_signature
+  test_signature=$(compute_test_failure_signature "$loop_dir")
+
+  # Load previous state
+  local prev_code_signature=""
+  local prev_test_signature=""
   local prev_streak=0
   if [[ -f "$state_file" ]]; then
-    prev_signature=$(jq -r '.signature // ""' "$state_file")
+    # Try new format first (code_signature + test_signature)
+    prev_code_signature=$(jq -r '.code_signature // ""' "$state_file")
+    prev_test_signature=$(jq -r '.test_signature // ""' "$state_file")
+
+    # Fallback to old format (signature field) for backward compatibility
+    if [[ -z "$prev_code_signature" ]]; then
+      prev_code_signature=$(jq -r '.signature // ""' "$state_file")
+    fi
+
     prev_streak=$(jq -r '.streak // 0' "$state_file")
   fi
 
+  # Increment streak if: same code changes OR same test failures
   local streak=1
-  if [[ "$signature" == "$prev_signature" ]]; then
+  local stuck_reason=""
+  if [[ "$code_signature" == "$prev_code_signature" && -n "$code_signature" ]]; then
     streak=$((prev_streak + 1))
+    stuck_reason="no_code_changes"
+  elif [[ -n "$test_signature" && "$test_signature" == "$prev_test_signature" && -n "$prev_test_signature" ]]; then
+    streak=$((prev_streak + 1))
+    stuck_reason="same_test_failures"
   fi
 
+  # Save both signatures
   jq -n \
-    --arg signature "$signature" \
+    --arg code_sig "$code_signature" \
+    --arg test_sig "$test_signature" \
     --argjson streak "$streak" \
     --argjson threshold "$threshold" \
+    --arg reason "$stuck_reason" \
     --arg updated_at "$(timestamp)" \
-    '{signature: $signature, streak: $streak, threshold: $threshold, updated_at: $updated_at}' \
+    '{code_signature: $code_sig, test_signature: $test_sig, streak: $streak, threshold: $threshold, reason: $reason, updated_at: $updated_at}' \
     > "$state_file"
 
+  # Trigger stuck detection if threshold reached
   if [[ "$streak" -ge "$threshold" ]]; then
     {
       echo "# Stuck Report"
       echo ""
       echo "No meaningful progress detected for $streak consecutive iterations."
       echo ""
-      echo "Signature: $signature"
+      if [[ "$stuck_reason" == "no_code_changes" ]]; then
+        echo "**Reason**: No code changes detected"
+      elif [[ "$stuck_reason" == "same_test_failures" ]]; then
+        echo "**Reason**: Same test failures persist despite code changes (thrashing)"
+      fi
+      echo ""
+      echo "**Code Signature**: \`$code_signature\`"
+      echo "**Test Failure Signature**: \`$test_signature\`"
       echo ""
       echo "Ignored paths:"
       printf '%s\n' "${ignore_patterns[@]}" | sed 's/^/- /'
@@ -7625,23 +7677,39 @@ run_cmd() {
         evidence_gate_ok=$evidence_ok
       fi
 
-      local progress_signature_prev=""
-      local progress_signature_current=""
+      local progress_code_sig_prev=""
+      local progress_test_sig_prev=""
+      local progress_code_sig_current=""
+      local progress_test_sig_current=""
       local no_progress="false"
       if [[ "$stuck_enabled" == "true" && "$checklist_status_text" != "ok" ]]; then
         if [[ -f "$loop_dir/stuck.json" ]]; then
-          progress_signature_prev=$(jq -r '.signature // ""' "$loop_dir/stuck.json" 2>/dev/null || true)
+          # Try new format first (code_signature + test_signature)
+          progress_code_sig_prev=$(jq -r '.code_signature // ""' "$loop_dir/stuck.json" 2>/dev/null || true)
+          progress_test_sig_prev=$(jq -r '.test_signature // ""' "$loop_dir/stuck.json" 2>/dev/null || true)
+
+          # Fallback to old format (signature field) for backward compatibility
+          if [[ -z "$progress_code_sig_prev" ]]; then
+            progress_code_sig_prev=$(jq -r '.signature // ""' "$loop_dir/stuck.json" 2>/dev/null || true)
+          fi
         fi
-        if [[ -n "$progress_signature_prev" ]]; then
+        if [[ -n "$progress_code_sig_prev" || -n "$progress_test_sig_prev" ]]; then
           local signature_rc=0
           set +e
-          progress_signature_current=$(compute_signature "$repo" "${stuck_ignore[@]}")
+          progress_code_sig_current=$(compute_signature "$repo" "${stuck_ignore[@]}")
           signature_rc=$?
           set -e
           if [[ $signature_rc -ne 0 ]]; then
             die "stuck signature computation failed for loop '$loop_id'"
           fi
-          if [[ "$progress_signature_current" == "$progress_signature_prev" ]]; then
+
+          # Compute test failure signature
+          progress_test_sig_current=$(compute_test_failure_signature "$loop_dir")
+
+          # No progress if: same code changes OR same test failures
+          if [[ "$progress_code_sig_current" == "$progress_code_sig_prev" && -n "$progress_code_sig_current" ]]; then
+            no_progress="true"
+          elif [[ -n "$progress_test_sig_current" && "$progress_test_sig_current" == "$progress_test_sig_prev" && -n "$progress_test_sig_prev" ]]; then
             no_progress="true"
           fi
         fi
@@ -7685,10 +7753,11 @@ run_cmd() {
             local no_progress_data
             no_progress_data=$(jq -n \
               --arg reason "checklist_remaining_no_change" \
-              --arg signature "$progress_signature_current" \
+              --arg code_sig "$progress_code_sig_current" \
+              --arg test_sig "$progress_test_sig_current" \
               --argjson streak "$stuck_streak" \
               --argjson threshold "$stuck_threshold" \
-              '{reason: $reason, signature: $signature, streak: $streak, threshold: $threshold}')
+              '{reason: $reason, code_signature: $code_sig, test_signature: $test_sig, streak: $streak, threshold: $threshold}')
             log_event "$events_file" "$loop_id" "$iteration" "$run_id" "no_progress_stop" "$no_progress_data" "" "blocked"
             local loop_stop_data
             loop_stop_data=$(jq -n --arg reason "no_progress" --argjson streak "$stuck_streak" --argjson threshold "$stuck_threshold" '{reason: $reason, streak: $streak, threshold: $threshold}')
