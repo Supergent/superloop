@@ -6034,7 +6034,7 @@ init_cmd() {
       },
       "stuck": {
         "enabled": true,
-        "threshold": 3,
+        "threshold": 5,
         "action": "report_and_stop",
         "ignore": [
           ".superloop/**",
@@ -6793,7 +6793,7 @@ run_cmd() {
       local stuck_streak
       local stuck_threshold
       stuck_streak=$(jq -r '.streak // 0' "$stuck_file" 2>/dev/null || echo "0")
-      stuck_threshold=$(jq -r '.threshold // 3' "$stuck_file" 2>/dev/null || echo "3")
+      stuck_threshold=$(jq -r '.threshold // 5' "$stuck_file" 2>/dev/null || echo "5")
 
       if [[ "$stuck_streak" -ge "$stuck_threshold" && "$stuck_threshold" -gt 0 ]]; then
         local stuck_reason
@@ -6807,7 +6807,7 @@ run_cmd() {
         echo "  1. Review the stuck state: cat $stuck_file" >&2
         echo "  2. Review recent iterations: ls -lt $loop_dir/logs/" >&2
         echo "  3. Reset stuck state if you want to retry:" >&2
-        echo "     echo '{\"code_signature\": \"\", \"test_signature\": \"\", \"streak\": 0, \"threshold\": 3, \"reason\": \"\"}' > $stuck_file" >&2
+        echo "     echo '{\"code_signature\": \"\", \"test_signature\": \"\", \"streak\": 0, \"threshold\": 5, \"reason\": \"\"}' > $stuck_file" >&2
         echo "  4. OR fix the underlying issue manually before restarting" >&2
         return 1
       fi
