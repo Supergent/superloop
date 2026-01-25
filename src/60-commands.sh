@@ -608,6 +608,7 @@ run_cmd() {
   local target_loop_id="$3"
   local fast_mode="$4"
   local dry_run="$5"
+  local skip_validate="${6:-0}"
 
   need_cmd jq
 
@@ -616,6 +617,18 @@ run_cmd() {
 
   if [[ ! -f "$config_path" ]]; then
     die "config not found: $config_path"
+  fi
+
+  # Pre-run validation (Phase 3 of Config Validation)
+  if [[ "$skip_validate" != "1" ]]; then
+    echo "Validating config before starting loop..."
+    if ! validate_static "$repo" "$config_path" >/dev/null; then
+      echo ""
+      echo "Config validation failed. Fix errors above or use --skip-validate to bypass."
+      return 1
+    fi
+    echo "Config validation passed."
+    echo ""
   fi
 
   local loop_count

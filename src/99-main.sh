@@ -20,6 +20,7 @@ main() {
   local note=""
   local reject=0
   local static=0
+  local skip_validate=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -79,6 +80,10 @@ main() {
         static=1
         shift
         ;;
+      --skip-validate)
+        skip_validate=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -107,7 +112,7 @@ main() {
       list_cmd "$repo" "$config_path"
       ;;
     run)
-      run_cmd "$repo" "$config_path" "$loop_id" "$fast" "$dry_run"
+      run_cmd "$repo" "$config_path" "$loop_id" "$fast" "$dry_run" "$skip_validate"
       ;;
     status)
       status_cmd "$repo" "$summary" "$loop_id" "$config_path"
