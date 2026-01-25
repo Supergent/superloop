@@ -5971,6 +5971,323 @@ output_static_validation_results() {
   return 0
 }
 
+# =============================================================================
+# PROBE VALIDATION (Phase 2)
+# =============================================================================
+
+# Error codes for probes
+PROBE_ERR_COMMAND_NOT_FOUND="PROBE_COMMAND_NOT_FOUND"
+PROBE_ERR_ENV_ERROR="PROBE_ENV_ERROR"
+PROBE_ERR_RUNNER_FAILED="PROBE_RUNNER_FAILED"
+PROBE_ERR_TIMEOUT="PROBE_TIMEOUT"
+
+# Probe results storage
+PROBE_RESULTS=""
+PROBE_ERROR_COUNT=0
+PROBE_WARNING_COUNT=0
+
+probe_add_error() {
+  local code="$1"
+  local message="$2"
+  local location="$3"
+  local json
+  json=$(jq -nc \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg location "$location" \
+    --arg severity "error" \
+    '{code: $code, message: $message, location: $location, severity: $severity}')
+  if [[ -n "$PROBE_RESULTS" ]]; then
+    PROBE_RESULTS="$PROBE_RESULTS"$'\n'"$json"
+  else
+    PROBE_RESULTS="$json"
+  fi
+  ((PROBE_ERROR_COUNT++))
+}
+
+probe_add_warning() {
+  local code="$1"
+  local message="$2"
+  local location="$3"
+  local json
+  json=$(jq -nc \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg location "$location" \
+    --arg severity "warning" \
+    '{code: $code, message: $message, location: $location, severity: $severity}')
+  if [[ -n "$PROBE_RESULTS" ]]; then
+    PROBE_RESULTS="$PROBE_RESULTS"$'\n'"$json"
+  else
+    PROBE_RESULTS="$json"
+  fi
+  ((PROBE_WARNING_COUNT++))
+}
+
+# Probe a test command to verify it works
+# Usage: probe_test_command <repo> <command> <location> <timeout_seconds>
+probe_test_command() {
+  local repo="$1"
+  local cmd="$2"
+  local location="$3"
+  local timeout_secs="${4:-30}"
+
+  local original_dir
+  original_dir=$(pwd)
+  cd "$repo" || return 1
+
+  local test_output
+  local test_rc
+
+  # Run the actual command with timeout
+  set +e
+  if command -v timeout &>/dev/null; then
+    test_output=$(timeout "$timeout_secs" bash -c "$cmd" 2>&1)
+    test_rc=$?
+    # timeout returns 124 when command times out
+    if [[ $test_rc -eq 124 ]]; then
+      probe_add_warning "$PROBE_ERR_TIMEOUT" \
+        "Test command '$cmd' timed out after ${timeout_secs}s (may still be valid)" \
+        "$location"
+      cd "$original_dir"
+      return 0  # Timeout is a warning, not an error
+    fi
+  else
+    # No timeout command available, run directly with shorter approach
+    test_output=$(bash -c "$cmd" 2>&1 &
+      local pid=$!
+      sleep "$timeout_secs" && kill -9 $pid 2>/dev/null &
+      wait $pid 2>/dev/null)
+    test_rc=$?
+  fi
+  set -e
+
+  cd "$original_dir"
+
+  # Analyze exit code
+  if [[ $test_rc -eq 127 ]]; then
+    probe_add_error "$PROBE_ERR_COMMAND_NOT_FOUND" \
+      "Test command not found: $cmd" \
+      "$location"
+    return 1
+  fi
+
+  # Analyze output for common errors
+  if [[ "$test_output" == *"command not found"* ]]; then
+    probe_add_error "$PROBE_ERR_COMMAND_NOT_FOUND" \
+      "Test command not found: $cmd" \
+      "$location"
+    return 1
+  fi
+
+  if [[ "$test_output" == *"not found"* && "$test_output" == *"error"* ]]; then
+    probe_add_error "$PROBE_ERR_COMMAND_NOT_FOUND" \
+      "Test command dependency not found: $cmd (${test_output:0:200})" \
+      "$location"
+    return 1
+  fi
+
+  # Check for ReferenceError (common vitest-in-bun-native issue)
+  if [[ "$test_output" == *"ReferenceError"* && "$test_output" == *"is not defined"* ]]; then
+    probe_add_error "$PROBE_ERR_ENV_ERROR" \
+      "Test command has environment error: ReferenceError detected. Check if you meant 'bun run test' instead of 'bun test'. Output: ${test_output:0:300}" \
+      "$location"
+    return 1
+  fi
+
+  # Check for other common environment issues
+  if [[ "$test_output" == *"Cannot find module"* ]]; then
+    probe_add_error "$PROBE_ERR_ENV_ERROR" \
+      "Test command missing module: $cmd (${test_output:0:200})" \
+      "$location"
+    return 1
+  fi
+
+  # Exit 0 = tests pass (great)
+  # Exit 1 = tests fail (but command works, that's fine for validation)
+  if [[ $test_rc -le 1 ]]; then
+    return 0
+  fi
+
+  # Exit 2+ could be various issues
+  probe_add_warning "$PROBE_ERR_ENV_ERROR" \
+    "Test command exited with code $test_rc: $cmd (${test_output:0:200})" \
+    "$location"
+  return 0  # Treat as warning, not error
+}
+
+# Probe a runner to verify it works
+# Usage: probe_runner <runner_name> <command_json> <location>
+probe_runner() {
+  local runner_name="$1"
+  local command_json="$2"
+  local location="$3"
+
+  local runner_cmd
+  runner_cmd=$(echo "$command_json" | jq -r '.[0] // ""')
+
+  if [[ -z "$runner_cmd" || "$runner_cmd" == "null" ]]; then
+    probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
+      "Runner '$runner_name' has no command specified" \
+      "$location"
+    return 1
+  fi
+
+  # Try --version first
+  set +e
+  if "$runner_cmd" --version &>/dev/null; then
+    set -e
+    return 0
+  fi
+
+  # Try --help
+  if "$runner_cmd" --help &>/dev/null; then
+    set -e
+    return 0
+  fi
+
+  # Try just running it (some commands don't have --version/--help)
+  if "$runner_cmd" 2>&1 | head -1 &>/dev/null; then
+    set -e
+    return 0
+  fi
+  set -e
+
+  probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
+    "Runner '$runner_name' command '$runner_cmd' doesn't respond to --version or --help" \
+    "$location"
+  return 1
+}
+
+# Main probe validation function
+# Usage: validate_probe <repo> <config_path>
+# Returns: 0 if valid, 1 if errors found
+validate_probe() {
+  local repo="$1"
+  local config_path="$2"
+
+  # Reset globals
+  PROBE_RESULTS=""
+  PROBE_ERROR_COUNT=0
+  PROBE_WARNING_COUNT=0
+
+  if [[ ! -f "$config_path" ]]; then
+    echo "error: config not found: $config_path" >&2
+    return 1
+  fi
+
+  local config_json
+  config_json=$(cat "$config_path")
+
+  echo "Probing runners..." >&2
+
+  # Probe runners
+  local runner_names
+  runner_names=$(echo "$config_json" | jq -r '.runners | keys[]' 2>/dev/null)
+  while IFS= read -r runner_name; do
+    if [[ -n "$runner_name" ]]; then
+      local command_json
+      command_json=$(echo "$config_json" | jq -c ".runners[\"$runner_name\"].command // []")
+      echo "  Probing runner: $runner_name" >&2
+      probe_runner "$runner_name" "$command_json" "runners.$runner_name.command"
+    fi
+  done <<< "$runner_names"
+
+  echo "Probing test commands..." >&2
+
+  # Probe test commands for each loop
+  local loop_count
+  loop_count=$(echo "$config_json" | jq '.loops | length' 2>/dev/null || echo 0)
+
+  for ((i = 0; i < loop_count; i++)); do
+    local loop_json
+    loop_json=$(echo "$config_json" | jq -c ".loops[$i]")
+    local loop_id
+    loop_id=$(echo "$loop_json" | jq -r '.id // "unknown"')
+
+    # Probe test commands
+    local test_commands
+    test_commands=$(echo "$loop_json" | jq -r '.tests.commands[]? // empty' 2>/dev/null)
+    local cmd_idx=0
+    while IFS= read -r cmd; do
+      if [[ -n "$cmd" ]]; then
+        echo "  Probing test command ($loop_id): $cmd" >&2
+        probe_test_command "$repo" "$cmd" "loops[$i].tests.commands[$cmd_idx]" 30
+        ((cmd_idx++))
+      fi
+    done <<< "$test_commands"
+
+    # Probe validation commands
+    local validation_commands
+    validation_commands=$(echo "$loop_json" | jq -r '.validation.commands[]? // empty' 2>/dev/null)
+    cmd_idx=0
+    while IFS= read -r cmd; do
+      if [[ -n "$cmd" ]]; then
+        echo "  Probing validation command ($loop_id): $cmd" >&2
+        probe_test_command "$repo" "$cmd" "loops[$i].validation.commands[$cmd_idx]" 60
+        ((cmd_idx++))
+      fi
+    done <<< "$validation_commands"
+  done
+
+  # Output results
+  output_probe_validation_results
+}
+
+# Output probe validation results
+output_probe_validation_results() {
+  local results_json="[]"
+
+  if [[ -n "$PROBE_RESULTS" ]]; then
+    results_json=$(echo "$PROBE_RESULTS" | jq -s '.')
+  fi
+
+  local valid="true"
+  if [[ $PROBE_ERROR_COUNT -gt 0 ]]; then
+    valid="false"
+  fi
+
+  jq -n \
+    --argjson valid "$valid" \
+    --argjson results "$results_json" \
+    --argjson error_count "$PROBE_ERROR_COUNT" \
+    --argjson warning_count "$PROBE_WARNING_COUNT" \
+    '{
+      valid: $valid,
+      error_count: $error_count,
+      warning_count: $warning_count,
+      probes: $results
+    }'
+
+  # Print human-readable summary to stderr
+  if [[ $PROBE_ERROR_COUNT -gt 0 || $PROBE_WARNING_COUNT -gt 0 ]]; then
+    echo "" >&2
+    echo "Probe Validation Results:" >&2
+    echo "=========================" >&2
+
+    while IFS= read -r result; do
+      if [[ -n "$result" ]]; then
+        local severity msg loc
+        severity=$(echo "$result" | jq -r '.severity')
+        msg=$(echo "$result" | jq -r '.message')
+        loc=$(echo "$result" | jq -r '.location')
+        if [[ "$severity" == "error" ]]; then
+          echo "  ✗ [$loc] $msg" >&2
+        else
+          echo "  ⚠ [$loc] $msg" >&2
+        fi
+      fi
+    done <<< "$PROBE_RESULTS"
+
+    echo "" >&2
+  fi
+
+  if [[ $PROBE_ERROR_COUNT -gt 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
 init_cmd() {
   local repo="$1"
   local force="$2"
@@ -8371,14 +8688,26 @@ PY
     return 1
   fi
 
-  # Run static validation if requested
-  if [[ "$static_only" == "1" || "$static_only" == "--static" ]]; then
+  local probe_mode="${5:-0}"
+
+  # Run static validation if requested (--static or --probe)
+  if [[ "$static_only" == "1" || "$static_only" == "--static" || "$probe_mode" == "1" ]]; then
     echo ""
     echo "Running static analysis..."
     if ! validate_static "$repo" "$config_path"; then
       return 1
     fi
     echo "ok: static analysis passed"
+  fi
+
+  # Run probe validation if requested (--probe)
+  if [[ "$probe_mode" == "1" ]]; then
+    echo ""
+    echo "Running probe validation (this may take a moment)..."
+    if ! validate_probe "$repo" "$config_path"; then
+      return 1
+    fi
+    echo "ok: probe validation passed"
   fi
 }
 
@@ -8808,6 +9137,7 @@ main() {
   local note=""
   local reject=0
   local static=0
+  local probe=0
   local skip_validate=0
 
   while [[ $# -gt 0 ]]; do
@@ -8868,6 +9198,10 @@ main() {
         static=1
         shift
         ;;
+      --probe)
+        probe=1
+        shift
+        ;;
       --skip-validate)
         skip_validate=1
         shift
@@ -8915,7 +9249,7 @@ main() {
       cancel_cmd "$repo"
       ;;
     validate)
-      validate_cmd "$repo" "$config_path" "$schema_path" "$static"
+      validate_cmd "$repo" "$config_path" "$schema_path" "$static" "$probe"
       ;;
     report)
       report_cmd "$repo" "$config_path" "$loop_id" "$out_path"

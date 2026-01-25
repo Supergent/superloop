@@ -20,6 +20,7 @@ main() {
   local note=""
   local reject=0
   local static=0
+  local probe=0
   local skip_validate=0
 
   while [[ $# -gt 0 ]]; do
@@ -80,6 +81,10 @@ main() {
         static=1
         shift
         ;;
+      --probe)
+        probe=1
+        shift
+        ;;
       --skip-validate)
         skip_validate=1
         shift
@@ -127,7 +132,7 @@ main() {
       cancel_cmd "$repo"
       ;;
     validate)
-      validate_cmd "$repo" "$config_path" "$schema_path" "$static"
+      validate_cmd "$repo" "$config_path" "$schema_path" "$static" "$probe"
       ;;
     report)
       report_cmd "$repo" "$config_path" "$loop_id" "$out_path"

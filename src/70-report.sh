@@ -146,14 +146,26 @@ PY
     return 1
   fi
 
-  # Run static validation if requested
-  if [[ "$static_only" == "1" || "$static_only" == "--static" ]]; then
+  local probe_mode="${5:-0}"
+
+  # Run static validation if requested (--static or --probe)
+  if [[ "$static_only" == "1" || "$static_only" == "--static" || "$probe_mode" == "1" ]]; then
     echo ""
     echo "Running static analysis..."
     if ! validate_static "$repo" "$config_path"; then
       return 1
     fi
     echo "ok: static analysis passed"
+  fi
+
+  # Run probe validation if requested (--probe)
+  if [[ "$probe_mode" == "1" ]]; then
+    echo ""
+    echo "Running probe validation (this may take a moment)..."
+    if ! validate_probe "$repo" "$config_path"; then
+      return 1
+    fi
+    echo "ok: probe validation passed"
   fi
 }
 
