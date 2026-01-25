@@ -1289,6 +1289,10 @@ run_cmd() {
       iteration_start_data=$(jq -n --arg started_at "$iteration_started_at" '{started_at: $started_at}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_start" "$iteration_start_data"
 
+      # Setup error logging for this iteration
+      local error_log="$log_dir/errors.log"
+      touch "$error_log" 2>/dev/null || true
+
       local last_role=""
       for role in "${roles[@]}"; do
         local role_template="$role_dir/$role.md"
@@ -1297,7 +1301,9 @@ run_cmd() {
         fi
 
         local prompt_file="$prompt_dir/${role}.md"
-        build_role_prompt \
+        echo "[$(timestamp)] Building prompt for role: $role" >> "$error_log"
+
+        if ! build_role_prompt \
           "$role" \
           "$role_template" \
           "$prompt_file" \
@@ -1319,7 +1325,16 @@ run_cmd() {
           "$changed_files_implementer" \
           "$changed_files_all" \
           "$tester_exploration_json" \
-          "$tasks_dir"
+          "$tasks_dir" 2>> "$error_log"; then
+          echo "[$(timestamp)] ERROR: build_role_prompt failed for role: $role" >> "$error_log"
+          echo "Error: Failed to build prompt for role '$role' in iteration $iteration" >&2
+          echo "See $error_log for details" >&2
+          if [[ "${dry_run:-0}" -ne 1 ]]; then
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+          fi
+          return 1
+        fi
+        echo "[$(timestamp)] Successfully built prompt for role: $role" >> "$error_log"
 
         if [[ "$role" == "reviewer" && "$reviewer_packet_enabled" == "true" && -n "$reviewer_packet" ]]; then
           write_reviewer_packet \

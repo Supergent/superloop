@@ -1458,27 +1458,29 @@ MINIMAL_FALLBACK
 
         # Extract Reviewer's findings - they've seen this issue multiple times
         if [[ -f "$reviewer_report" ]]; then
-          echo "" >> "$prompt_file"
-          echo "**⚠️ The Reviewer Has Identified The Same Issue $stuck_streak Times:**" >> "$prompt_file"
-          echo '```' >> "$prompt_file"
+          echo "" >> "$prompt_file" || return 1
+          echo "**⚠️ The Reviewer Has Identified The Same Issue $stuck_streak Times:**" >> "$prompt_file" || return 1
+          echo '```' >> "$prompt_file" || return 1
           # Extract High and Medium findings (most critical issues)
-          awk '/### High/,/### Low/' "$reviewer_report" | head -30 >> "$prompt_file" 2>/dev/null || echo "(No findings in review report)" >> "$prompt_file"
-          echo '```' >> "$prompt_file"
+          if ! awk '/### High/,/### Low/' "$reviewer_report" 2>/dev/null | head -30 >> "$prompt_file" 2>/dev/null; then
+            echo "(No findings in review report)" >> "$prompt_file" || return 1
+          fi
+          echo '```' >> "$prompt_file" || return 1
         fi
 
-        echo "" >> "$prompt_file"
-        echo "**Test Failures**:" >> "$prompt_file"
+        echo "" >> "$prompt_file" || return 1
+        echo "**Test Failures**:" >> "$prompt_file" || return 1
         # Extract TypeScript errors and test failures
         if [[ -f "$test_output" ]]; then
-          echo '```' >> "$prompt_file"
-          grep "error TS[0-9]" "$test_output" | head -10 >> "$prompt_file" 2>/dev/null
-          grep -E "^(FAIL|Error:)" "$test_output" | head -5 >> "$prompt_file" 2>/dev/null
+          echo '```' >> "$prompt_file" || return 1
+          grep "error TS[0-9]" "$test_output" 2>/dev/null | head -10 >> "$prompt_file" 2>/dev/null || true
+          grep -E "^(FAIL|Error:)" "$test_output" 2>/dev/null | head -5 >> "$prompt_file" 2>/dev/null || true
           if ! grep -q "error TS\|FAIL\|Error:" "$test_output" 2>/dev/null; then
-            echo "(No test failures found in output)" >> "$prompt_file"
+            echo "(No test failures found in output)" >> "$prompt_file" || return 1
           fi
-          echo '```' >> "$prompt_file"
+          echo '```' >> "$prompt_file" || return 1
         else
-          echo "(Test output not available)" >> "$prompt_file"
+          echo "(Test output not available)" >> "$prompt_file" || return 1
         fi
 
         echo "" >> "$prompt_file"
@@ -7260,6 +7262,10 @@ run_cmd() {
       iteration_start_data=$(jq -n --arg started_at "$iteration_started_at" '{started_at: $started_at}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_start" "$iteration_start_data"
 
+      # Setup error logging for this iteration
+      local error_log="$log_dir/errors.log"
+      touch "$error_log" 2>/dev/null || true
+
       local last_role=""
       for role in "${roles[@]}"; do
         local role_template="$role_dir/$role.md"
@@ -7268,7 +7274,9 @@ run_cmd() {
         fi
 
         local prompt_file="$prompt_dir/${role}.md"
-        build_role_prompt \
+        echo "[$(timestamp)] Building prompt for role: $role" >> "$error_log"
+
+        if ! build_role_prompt \
           "$role" \
           "$role_template" \
           "$prompt_file" \
@@ -7290,7 +7298,16 @@ run_cmd() {
           "$changed_files_implementer" \
           "$changed_files_all" \
           "$tester_exploration_json" \
-          "$tasks_dir"
+          "$tasks_dir" 2>> "$error_log"; then
+          echo "[$(timestamp)] ERROR: build_role_prompt failed for role: $role" >> "$error_log"
+          echo "Error: Failed to build prompt for role '$role' in iteration $iteration" >&2
+          echo "See $error_log for details" >&2
+          if [[ "${dry_run:-0}" -ne 1 ]]; then
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+          fi
+          return 1
+        fi
+        echo "[$(timestamp)] Successfully built prompt for role: $role" >> "$error_log"
 
         if [[ "$role" == "reviewer" && "$reviewer_packet_enabled" == "true" && -n "$reviewer_packet" ]]; then
           write_reviewer_packet \

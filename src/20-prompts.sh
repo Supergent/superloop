@@ -215,27 +215,29 @@ MINIMAL_FALLBACK
 
         # Extract Reviewer's findings - they've seen this issue multiple times
         if [[ -f "$reviewer_report" ]]; then
-          echo "" >> "$prompt_file"
-          echo "**⚠️ The Reviewer Has Identified The Same Issue $stuck_streak Times:**" >> "$prompt_file"
-          echo '```' >> "$prompt_file"
+          echo "" >> "$prompt_file" || return 1
+          echo "**⚠️ The Reviewer Has Identified The Same Issue $stuck_streak Times:**" >> "$prompt_file" || return 1
+          echo '```' >> "$prompt_file" || return 1
           # Extract High and Medium findings (most critical issues)
-          awk '/### High/,/### Low/' "$reviewer_report" | head -30 >> "$prompt_file" 2>/dev/null || echo "(No findings in review report)" >> "$prompt_file"
-          echo '```' >> "$prompt_file"
+          if ! awk '/### High/,/### Low/' "$reviewer_report" 2>/dev/null | head -30 >> "$prompt_file" 2>/dev/null; then
+            echo "(No findings in review report)" >> "$prompt_file" || return 1
+          fi
+          echo '```' >> "$prompt_file" || return 1
         fi
 
-        echo "" >> "$prompt_file"
-        echo "**Test Failures**:" >> "$prompt_file"
+        echo "" >> "$prompt_file" || return 1
+        echo "**Test Failures**:" >> "$prompt_file" || return 1
         # Extract TypeScript errors and test failures
         if [[ -f "$test_output" ]]; then
-          echo '```' >> "$prompt_file"
-          grep "error TS[0-9]" "$test_output" | head -10 >> "$prompt_file" 2>/dev/null
-          grep -E "^(FAIL|Error:)" "$test_output" | head -5 >> "$prompt_file" 2>/dev/null
+          echo '```' >> "$prompt_file" || return 1
+          grep "error TS[0-9]" "$test_output" 2>/dev/null | head -10 >> "$prompt_file" 2>/dev/null || true
+          grep -E "^(FAIL|Error:)" "$test_output" 2>/dev/null | head -5 >> "$prompt_file" 2>/dev/null || true
           if ! grep -q "error TS\|FAIL\|Error:" "$test_output" 2>/dev/null; then
-            echo "(No test failures found in output)" >> "$prompt_file"
+            echo "(No test failures found in output)" >> "$prompt_file" || return 1
           fi
-          echo '```' >> "$prompt_file"
+          echo '```' >> "$prompt_file" || return 1
         else
-          echo "(Test output not available)" >> "$prompt_file"
+          echo "(Test output not available)" >> "$prompt_file" || return 1
         fi
 
         echo "" >> "$prompt_file"
