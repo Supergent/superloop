@@ -37,6 +37,19 @@ This guides you through creating `spec.md` and `config.json`.
 
 The loop runs until all gates pass: promise emitted, tests pass, checklists complete, evidence exists.
 
+## Feature Initiation (Repository Workflow)
+
+For any new feature in this repo, follow the initiation workflow:
+`handbook/features/INITIATION.MD`.
+
+Optional scaffold:
+
+```bash
+scripts/init-feature.sh <feature-name> [slug]
+```
+
+This creates `feat/<feature-name>/<slug>/PLAN.MD` and `tasks/PHASE_1.MD`.
+
 ## How It Works
 
 Each iteration runs four roles in sequence:
