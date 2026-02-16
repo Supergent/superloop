@@ -6,6 +6,38 @@ on:
   pull_request:
 
 jobs:
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure generated/vendor directories are not tracked
+        run: |
+          set -euo pipefail
+          bad_paths="$(git ls-files | grep -E '/(node_modules|dist)/' || true)"
+          if [ -n "$bad_paths" ]; then
+            echo "::error::Tracked generated/vendor files detected:"
+            echo "$bad_paths"
+            exit 1
+          fi
+      - name: Ensure local settings file is not tracked
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -q '^\.claude/settings\.local\.json$'; then
+            echo "::error::.claude/settings.local.json must not be tracked"
+            exit 1
+          fi
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   validate:
     runs-on: ubuntu-latest
     steps:

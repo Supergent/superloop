@@ -165,9 +165,12 @@ The `/superloop-view` skill generates custom dashboard views for specific questi
 
 ## Packages
 
-Superloop includes standalone packages that can be used independently:
+Superloop includes these workspace packages:
 
-- **[convex-scanner](packages/convex-scanner/README.md)** - Static security analysis tool for Convex backend code. Detects authentication issues, validates input handling, and identifies security anti-patterns.
+- **[json-render-core](packages/json-render-core/)** - Core generative UI schema, validation, and action model.
+- **[json-render-react](packages/json-render-react/)** - React renderer for `json-render-core` UITrees.
+- **[superloop-ui](packages/superloop-ui/)** - Liquid dashboard and prototype viewer.
+- **[superloop-viz](packages/superloop-viz/)** - Visualization package for loop data and artifacts.
 
 ## Commands
 
@@ -227,10 +230,10 @@ superloop/
 │   ├── build.sh           # Assembles src/ into superloop.sh
 │   └── validation/        # Smoke test utilities
 ├── packages/
-│   ├── convex-scanner/    # Static security analysis for Convex backend code
 │   ├── json-render-core/  # Generative UI framework (catalog, validation, actions)
 │   ├── json-render-react/ # React renderer for UITrees
-│   └── superloop-ui/      # Liquid dashboard and prototype viewer
+│   ├── superloop-ui/      # Liquid dashboard and prototype viewer
+│   └── superloop-viz/     # Visualization tooling for loops and reports
 ├── .superloop/
 │   ├── config.json        # Loop configuration
 │   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
@@ -286,6 +289,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the rationale behind Superloop's desi
 - Why gates and the promise system
 - Why atomic tasks with checkboxes
 - Why spec-driven testing (AC coverage verification)
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and disclosure guidance.
 
 ## License
 

@@ -28,6 +28,31 @@ export type DevServerOptions = {
 
 type SseClient = http.ServerResponse;
 
+const SAFE_DIST_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const MAIN_BUNDLE_NAME = /^main[A-Za-z0-9._-]*\.js(?:\.map)?$/;
+
+function resolveDistAssetPath(distWebRoot: string, requestPath: string): string | null {
+  let decodedPath = requestPath;
+  try {
+    decodedPath = decodeURIComponent(requestPath);
+  } catch {
+    return null;
+  }
+
+  const assetName = decodedPath.replace(/^\/+/, "");
+  if (!SAFE_DIST_ASSET_NAME.test(assetName)) {
+    return null;
+  }
+
+  const distRoot = path.resolve(distWebRoot);
+  const filePath = path.resolve(distRoot, assetName);
+  if (filePath !== distRoot && !filePath.startsWith(`${distRoot}${path.sep}`)) {
+    return null;
+  }
+
+  return filePath;
+}
+
 export async function startDevServer(options: DevServerOptions): Promise<void> {
   const packageRoot = resolvePackageRoot(import.meta.url);
   const webRoot = path.join(packageRoot, "src", "web");
@@ -231,7 +256,12 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
 
     // Liquid Dashboard: Serve JS bundle
     if (url.pathname === "/liquid-main.js" || url.pathname === "/liquid-main.js.map") {
-      const filePath = path.join(distWebRoot, url.pathname.replace("/", ""));
+      const filePath = resolveDistAssetPath(distWebRoot, url.pathname);
+      if (!filePath) {
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Invalid asset path");
+        return;
+      }
       if (!(await fileExists(filePath))) {
         res.writeHead(503, { "Content-Type": "text/plain" });
         res.end("Liquid dashboard bundle not ready. Waiting for build...");
@@ -264,7 +294,19 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     }
 
     if (url.pathname.startsWith("/main")) {
-      const filePath = path.join(distWebRoot, url.pathname.replace("/", ""));
+      const assetName = url.pathname.slice(1);
+      if (!MAIN_BUNDLE_NAME.test(assetName)) {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
+        return;
+      }
+
+      const filePath = resolveDistAssetPath(distWebRoot, url.pathname);
+      if (!filePath) {
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Invalid asset path");
+        return;
+      }
       if (!(await fileExists(filePath))) {
         res.writeHead(503, { "Content-Type": "text/plain" });
         res.end("Web bundle not ready. Waiting for build...");

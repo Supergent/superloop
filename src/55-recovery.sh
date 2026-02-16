@@ -38,6 +38,49 @@ is_recovery_blocked() {
   return 1
 }
 
+# Check whether a path is inside the repository root.
+# Returns 0 if inside, 1 if outside.
+is_path_within_repo() {
+  local path_to_check="$1"
+  local repo_root="$2"
+  [[ "$path_to_check" == "$repo_root" || "$path_to_check" == "$repo_root/"* ]]
+}
+
+# Reject recovery commands that rely on shell substitution primitives.
+# Returns 0 if safe enough to execute, 1 otherwise.
+is_recovery_command_safe() {
+  local command="$1"
+
+  if [[ "$command" == *$'\n'* || "$command" == *$'\r'* ]]; then
+    return 1
+  fi
+
+  if [[ "$command" == *'`'* || "$command" == *'$('* || "$command" == *'${'* ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+# Resolve working directory and ensure it remains inside the repository.
+# Outputs resolved absolute path on success.
+resolve_recovery_working_dir() {
+  local repo="$1"
+  local working_dir="${2:-.}"
+
+  local repo_root
+  repo_root=$(cd "$repo" 2>/dev/null && pwd -P) || return 1
+
+  local resolved_dir
+  resolved_dir=$(cd "$repo_root" 2>/dev/null && cd "$working_dir" 2>/dev/null && pwd -P) || return 1
+
+  if ! is_path_within_repo "$resolved_dir" "$repo_root"; then
+    return 1
+  fi
+
+  printf '%s\n' "$resolved_dir"
+}
+
 # Execute a recovery command
 # Returns exit code of the command
 execute_recovery() {
@@ -46,13 +89,20 @@ execute_recovery() {
   local working_dir="${3:-.}"
   local timeout_seconds="${4:-120}"
 
-  local full_dir="$repo"
-  if [[ "$working_dir" != "." && "$working_dir" != "./" ]]; then
-    full_dir="$repo/$working_dir"
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -le 0 ]]; then
+    echo "Invalid recovery timeout_seconds: $timeout_seconds" >&2
+    return 1
   fi
 
-  if [[ ! -d "$full_dir" ]]; then
-    echo "Recovery working directory does not exist: $full_dir" >&2
+  if ! is_recovery_command_safe "$command"; then
+    echo "Recovery command rejected due to unsafe shell substitutions: $command" >&2
+    return 1
+  fi
+
+  local full_dir
+  full_dir=$(resolve_recovery_working_dir "$repo" "$working_dir")
+  if [[ -z "$full_dir" ]]; then
+    echo "Recovery working directory is invalid or outside repository: $working_dir" >&2
     return 1
   fi
 
@@ -63,7 +113,7 @@ execute_recovery() {
   local output
   local exit_code
   set +e
-  output=$(cd "$full_dir" && timeout "$timeout_seconds" bash -c "$command" 2>&1)
+  output=$(cd "$full_dir" && timeout "$timeout_seconds" bash -o pipefail -c "$command" 2>&1)
   exit_code=$?
   set -e
 

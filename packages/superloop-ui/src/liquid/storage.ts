@@ -35,6 +35,8 @@ const VERSIONS_DIR = "versions";
 const META_FILENAME = "meta.json";
 const VERSION_EXTENSION = ".json";
 const TIMESTAMP_PATTERN = /^(\d{8}-\d{6})/;
+const SAFE_VIEW_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const SAFE_VERSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // ===================
 // Timestamp Utilities
@@ -85,8 +87,36 @@ export function resolveLiquidRoot(repoRoot: string): string {
   return path.join(repoRoot, LIQUID_DIR);
 }
 
+function isValidViewName(viewName: string): boolean {
+  return SAFE_VIEW_NAME_PATTERN.test(viewName);
+}
+
+function assertValidViewName(viewName: string): void {
+  if (!isValidViewName(viewName)) {
+    throw new Error(`Invalid view name: ${viewName}`);
+  }
+}
+
+function assertValidVersionId(versionId: string): void {
+  if (!SAFE_VERSION_ID_PATTERN.test(versionId)) {
+    throw new Error(`Invalid version ID: ${versionId}`);
+  }
+}
+
+function resolvePathWithin(baseDir: string, relativePath: string): string {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedPath = path.resolve(resolvedBase, relativePath);
+
+  if (resolvedPath !== resolvedBase && !resolvedPath.startsWith(`${resolvedBase}${path.sep}`)) {
+    throw new Error(`Path escapes base directory: ${relativePath}`);
+  }
+
+  return resolvedPath;
+}
+
 export function resolveViewDir(repoRoot: string, viewName: string): string {
-  return path.join(resolveLiquidRoot(repoRoot), viewName);
+  assertValidViewName(viewName);
+  return resolvePathWithin(resolveLiquidRoot(repoRoot), viewName);
 }
 
 export function resolveVersionsDir(repoRoot: string, viewName: string): string {
@@ -111,7 +141,7 @@ export async function listViews(repoRoot: string): Promise<LiquidView[]> {
   const views: LiquidView[] = [];
 
   for (const entry of entries) {
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && isValidViewName(entry.name)) {
       const view = await loadView({ repoRoot, viewName: entry.name });
       if (view) {
         views.push(view);
@@ -277,6 +307,9 @@ export async function setActiveVersion(params: {
   }
 
   // Validate version exists if specified
+  if (versionId) {
+    assertValidVersionId(versionId);
+  }
   if (versionId && !meta.versions.some((v) => v.id === versionId)) {
     throw new Error(`Version not found: ${versionId}`);
   }
@@ -296,6 +329,7 @@ export async function loadVersion(params: {
   versionId: string;
 }): Promise<ViewVersion | null> {
   const { repoRoot, viewName, versionId } = params;
+  assertValidVersionId(versionId);
 
   const view = await loadView({ repoRoot, viewName });
   if (!view) {
@@ -314,6 +348,7 @@ export async function deleteVersion(params: {
   versionId: string;
 }): Promise<void> {
   const { repoRoot, viewName, versionId } = params;
+  assertValidVersionId(versionId);
 
   const versionsDir = resolveVersionsDir(repoRoot, viewName);
   const filename = `${versionId}${VERSION_EXTENSION}`;

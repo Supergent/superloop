@@ -1,156 +1,20 @@
 {
   "runners": {
     "codex": {
-      "command": ["orb", "-m", "codex2", "codex", "exec"],
+      "command": ["codex", "exec"],
       "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--full-auto", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "codex2": {
-      "command": ["orb", "-m", "codex2", "codex", "exec"],
-      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "codex3": {
-      "command": ["orb", "-m", "codex3", "codex", "exec"],
-      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "codex4": {
-      "command": ["orb", "-m", "codex4", "codex", "exec"],
-      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "codex5": {
-      "command": ["orb", "-m", "codex5", "codex", "exec"],
-      "args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"xhigh\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "fast_args": ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=\"low\"", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
     },
     "claude-vanilla": {
-      "command": ["claude"],
-      "args": ["--dangerously-skip-permissions", "--print", "-"],
+      "command": ["claude-vanilla"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    },
+    "claude-glm-mantic": {
+      "command": ["claude-glm-mantic"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
       "prompt_mode": "stdin"
     }
   },
-  "loops": [
-    {
-      "id": "convex-scanner",
-      "spec_file": ".superloop/specs/convex-scanner.md",
-      "max_iterations": 15,
-      "completion_promise": "SUPERLOOP_COMPLETE",
-      "checklists": [],
-      "tests": {
-        "mode": "on_promise",
-        "commands": [
-          "cd packages/convex-scanner && npm test",
-          "cd packages/convex-scanner && npx tsc --noEmit"
-        ]
-      },
-      "evidence": {
-        "enabled": false,
-        "require_on_completion": false,
-        "artifacts": []
-      },
-      "approval": {
-        "enabled": false,
-        "require_on_completion": false
-      },
-      "reviewer_packet": {
-        "enabled": false
-      },
-      "timeouts": {
-        "enabled": true,
-        "default": 300,
-        "planner": 3600,
-        "implementer": 1800,
-        "tester": 300,
-        "reviewer": 7200
-      },
-      "stuck": {
-        "enabled": true,
-        "threshold": 3,
-        "action": "report_and_stop",
-        "ignore": []
-      },
-      "git": {
-        "commit_strategy": "per_iteration"
-      },
-      "roles": {
-        "planner": {
-          "runner": "codex2"
-        },
-        "implementer": {
-          "runner": "claude-vanilla"
-        },
-        "tester": {
-          "runner": "claude-vanilla"
-        },
-        "reviewer": {
-          "runner": "codex4"
-        }
-      }
-    },
-    {
-      "id": "valet-mvp",
-      "spec_file": ".superloop/specs/valet-mvp.md",
-      "max_iterations": 20,
-      "completion_promise": "SUPERLOOP_COMPLETE",
-      "checklists": [],
-      "tests": {
-        "mode": "on_promise",
-        "commands": [
-          "cd packages/valet && if grep -q 'no test specified' package.json; then echo 'Skipping: placeholder test script'; else npm test; fi",
-          "cd packages/valet && if grep -q '\"test:mole\":' package.json; then npm run test:mole; else echo 'Skipping: no test:mole script'; fi",
-          "cd packages/valet && if grep -q '\"test:agent\":' package.json; then npm run test:agent; else echo 'Skipping: no test:agent script'; fi"
-        ]
-      },
-      "evidence": {
-        "enabled": false,
-        "require_on_completion": false,
-        "artifacts": []
-      },
-      "approval": {
-        "enabled": false,
-        "require_on_completion": false
-      },
-      "reviewer_packet": {
-        "enabled": false
-      },
-      "timeouts": {
-        "enabled": true,
-        "default": 300,
-        "planner": 3600,
-        "implementer": 1800,
-        "tester": 300,
-        "reviewer": 7200
-      },
-      "stuck": {
-        "enabled": true,
-        "threshold": 3,
-        "action": "report_and_stop",
-        "ignore": []
-      },
-      "git": {
-        "commit_strategy": "per_iteration"
-      },
-      "roles": {
-        "planner": {
-          "runner": "codex4"
-        },
-        "implementer": {
-          "runner": "claude-vanilla"
-        },
-        "tester": {
-          "runner": "claude-vanilla"
-        },
-        "reviewer": {
-          "runner": "codex5"
-        }
-      }
-    }
-  ]
+  "loops": []
 }

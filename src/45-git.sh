@@ -97,7 +97,8 @@ auto_commit_iteration() {
     echo "[superloop] Running pre-commit commands: $pre_commit_commands" >&2
     local pre_commit_output
     local pre_commit_exit_code
-    pre_commit_output=$(cd "$repo" && eval "$pre_commit_commands" 2>&1)
+    # Execute exactly once via a shell to avoid eval's double expansion.
+    pre_commit_output=$(cd "$repo" && bash -o pipefail -c "$pre_commit_commands" 2>&1)
     pre_commit_exit_code=$?
 
     # Log pre-commit execution to events (for reviewer visibility)
