@@ -308,9 +308,10 @@ check_rlms_config() {
     check_timeout "rlms.timeout_seconds" "$timeout_seconds" "$location_prefix.rlms.limits.timeout_seconds"
   fi
 
-  local max_steps max_depth
+  local max_steps max_depth max_subcalls
   max_steps=$(echo "$loop_json" | jq -r '.rlms.limits.max_steps // 0' 2>/dev/null || echo "0")
   max_depth=$(echo "$loop_json" | jq -r '.rlms.limits.max_depth // 0' 2>/dev/null || echo "0")
+  max_subcalls=$(echo "$loop_json" | jq -r '.rlms.limits.max_subcalls // 0' 2>/dev/null || echo "0")
 
   if [[ "$max_steps" =~ ^[0-9]+$ && "$max_steps" -gt 0 && "$max_steps" -gt 500 ]]; then
     static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
@@ -322,6 +323,12 @@ check_rlms_config() {
     static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
       "rlms.limits.max_depth is $max_depth which may cause deep recursion and high cost" \
       "$location_prefix.rlms.limits.max_depth"
+  fi
+
+  if [[ "$max_subcalls" =~ ^[0-9]+$ && "$max_subcalls" -gt 0 && "$max_subcalls" -gt 2000 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_subcalls is $max_subcalls which may be expensive; consider lower defaults" \
+      "$location_prefix.rlms.limits.max_subcalls"
   fi
 }
 

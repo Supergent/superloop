@@ -135,7 +135,8 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "limits": {
         "max_steps": 40,
         "max_depth": 2,
-        "timeout_seconds": 240
+        "timeout_seconds": 240,
+        "max_subcalls": 80
       },
       "policy": {
         "force_on": false,
@@ -167,6 +168,7 @@ When `loops[].rlms.enabled=true`, Superloop can run a bounded REPL-style recursi
 - `mode=requested`: trigger only when `request_keyword` appears in loop context files.
 - `mode=hybrid`: run when either auto or requested trigger is true.
 - `policy.fail_mode=warn_and_continue|fail_role`: choose whether RLMS failures are non-fatal or role-fatal.
+- `limits.max_subcalls`: cap recursive sub-LLM call count per role execution.
 - Root/subcall CLI wiring: by default RLMS inherits the role's resolved runner command/args/model/thinking settings.
 - Optional env overrides:
   - `SUPERLOOP_RLMS_ROOT_COMMAND_JSON`, `SUPERLOOP_RLMS_ROOT_ARGS_JSON`, `SUPERLOOP_RLMS_ROOT_PROMPT_MODE`

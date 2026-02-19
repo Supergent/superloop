@@ -131,6 +131,19 @@ PY
 EOF
   chmod +x "$ROOT_DEPTH_LLM"
 
+  ROOT_TWO_SUBCALLS_LLM="$TEMP_DIR/mock-root-two-subcalls.sh"
+  cat > "$ROOT_TWO_SUBCALLS_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+sub_rlm("first", depth=1)
+sub_rlm("second", depth=1)
+set_final({"highlights": ["two_subcalls"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_TWO_SUBCALLS_LLM"
+
   SUBCALL_SUCCESS_LLM="$TEMP_DIR/mock-subcall-success.sh"
   cat > "$SUBCALL_SUCCESS_LLM" <<'EOF'
 #!/usr/bin/env bash
@@ -183,7 +196,7 @@ write_loop_config() {
       "request_keyword": "$request_keyword",
       "auto": {"max_lines": $max_lines, "max_estimated_tokens": $max_tokens, "max_files": 40},
       "roles": {"reviewer": true},
-      "limits": {"max_steps": 20, "max_depth": 2, "timeout_seconds": 60},
+      "limits": {"max_steps": 20, "max_depth": 2, "timeout_seconds": 60, "max_subcalls": 40},
       "output": {"format": "json", "require_citations": true},
       "policy": {"force_on": $force_on, "force_off": false, "fail_mode": "$fail_mode"}
     },
@@ -372,4 +385,79 @@ EOF
   run jq -r '.error' "$output_dir/result.json"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "depth exceeded" ]]
+}
+
+@test "rlms REPL worker enforces max_subcalls budget" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-max-subcalls-fail"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_TWO_SUBCALLS_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run "$PROJECT_ROOT/scripts/rlms" \
+    --repo "$TEMP_DIR" \
+    --loop-id rlms-loop \
+    --role reviewer \
+    --iteration 1 \
+    --context-file-list "$context_file_list" \
+    --output-dir "$output_dir" \
+    --max-steps 5 \
+    --max-depth 2 \
+    --timeout-seconds 60 \
+    --max-subcalls 1 \
+    --root-command-json "$root_command_json" \
+    --root-args-json '[]' \
+    --root-prompt-mode stdin \
+    --subcall-command-json "$subcall_command_json" \
+    --subcall-args-json '[]' \
+    --subcall-prompt-mode stdin \
+    --require-citations true \
+    --format json
+  [ "$status" -ne 0 ]
+
+  run jq -r '.error_code' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "limit_exceeded" ]
+
+  run jq -r '.error' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "subcall limit exceeded" ]]
+}
+
+@test "rlms superloop path supports root/subcall env overrides with real artifacts" {
+  write_loop_config "auto" "warn_and_continue" "true" 999999 999999 "NOT_PRESENT"
+
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_SUCCESS_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run env \
+    SUPERLOOP_RLMS_ROOT_COMMAND_JSON="$root_command_json" \
+    SUPERLOOP_RLMS_ROOT_ARGS_JSON='[]' \
+    SUPERLOOP_RLMS_ROOT_PROMPT_MODE='stdin' \
+    SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON="$subcall_command_json" \
+    SUPERLOOP_RLMS_SUBCALL_ARGS_JSON='[]' \
+    SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE='stdin' \
+    MOCK_SUBCALL_LOG_FILE="$TEMP_DIR/subcall-e2e.log" \
+    "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop rlms-loop
+  [ "$status" -eq 0 ]
+
+  local latest_dir="$TEMP_DIR/.superloop/loops/rlms-loop/rlms/latest"
+  [ -f "$latest_dir/reviewer.status.json" ]
+  [ -f "$latest_dir/reviewer.json" ]
+
+  run jq -r '.status' "$latest_dir/reviewer.status.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+
+  run jq -r '.ok' "$latest_dir/reviewer.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.citations | length' "$latest_dir/reviewer.json"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
 }

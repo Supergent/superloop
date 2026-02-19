@@ -390,6 +390,12 @@
                     "type": "integer",
                     "minimum": 1,
                     "default": 240
+                  },
+                  "max_subcalls": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 80,
+                    "description": "Maximum number of sub-LLM calls RLMS can execute before failing"
                   }
                 }
               },

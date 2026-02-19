@@ -943,6 +943,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", required=True, type=int)
     parser.add_argument("--max-depth", required=True, type=int)
     parser.add_argument("--timeout-seconds", required=True, type=int)
+    parser.add_argument("--max-subcalls", required=False, default=0, type=int)
 
     parser.add_argument("--root-command-json", required=False, default="[]")
     parser.add_argument("--root-args-json", required=False, default="[]")
@@ -1013,12 +1014,16 @@ def main() -> int:
     root_cli = CliConfig(command=root_command, args=root_args, prompt_mode=root_prompt_mode, label="root")
     sub_cli = CliConfig(command=sub_command, args=sub_args, prompt_mode=sub_prompt_mode, label="subcall")
 
+    configured_max_subcalls = int(args.max_subcalls or 0)
+    if configured_max_subcalls <= 0:
+        configured_max_subcalls = max(1, int(args.max_steps) * 2)
+
     state = ExecutionState(
         started_at_monotonic=time.monotonic(),
         max_steps=max(1, int(args.max_steps)),
         max_depth=max(1, int(args.max_depth)),
         timeout_seconds=max(1, int(args.timeout_seconds)),
-        max_subcalls=max(1, int(args.max_steps) * 2),
+        max_subcalls=max(1, configured_max_subcalls),
     )
 
     require_citations = parse_bool(args.require_citations)
