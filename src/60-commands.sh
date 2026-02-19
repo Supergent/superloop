@@ -595,7 +595,7 @@ list_cmd() {
 
     printf "%-20s %-12s %-40s %s\n" "$display_id" "$status" "$display_spec" "$last_run"
 
-    ((i++))
+    ((i += 1))
   done
 
   echo ""
