@@ -75,6 +75,71 @@ MD
 exit 1
 EOF
   chmod +x "$FAILING_RLMS"
+
+  SAMPLE_CONTEXT_FILE="$TEMP_DIR/sample-context.py"
+  cat > "$SAMPLE_CONTEXT_FILE" <<'EOF'
+class ExampleService:
+  def run(self):
+    return "ok"
+
+def helper():
+  return 42
+EOF
+
+  ROOT_SUCCESS_LLM="$TEMP_DIR/mock-root-success.sh"
+  cat > "$ROOT_SUCCESS_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+files = list_files()
+if files:
+    snippet = read_file(files[0], 1, 80)
+    summary = sub_rlm("summarize:\\n" + snippet, depth=1)
+    append_highlight("subcall:" + summary)
+    matches = grep("class\\s+", files[0], 3, "")
+    for m in matches:
+        add_citation(m["path"], m["start_line"], m["end_line"], m["signal"], m["snippet"])
+set_final({"highlights": ["root_complete"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_SUCCESS_LLM"
+
+  ROOT_IMPORT_LLM="$TEMP_DIR/mock-root-import.sh"
+  cat > "$ROOT_IMPORT_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+import os
+set_final({"highlights": ["should_not_run"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_IMPORT_LLM"
+
+  ROOT_DEPTH_LLM="$TEMP_DIR/mock-root-depth.sh"
+  cat > "$ROOT_DEPTH_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+sub_rlm("first", depth=2)
+set_final({"highlights": ["depth"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_DEPTH_LLM"
+
+  SUBCALL_SUCCESS_LLM="$TEMP_DIR/mock-subcall-success.sh"
+  cat > "$SUBCALL_SUCCESS_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+payload="$(cat)"
+if [[ -n "${MOCK_SUBCALL_LOG_FILE:-}" ]]; then
+  printf '%s\n' "$payload" >> "$MOCK_SUBCALL_LOG_FILE"
+fi
+echo "chunk-ok"
+EOF
+  chmod +x "$SUBCALL_SUCCESS_LLM"
 }
 
 teardown() {
@@ -188,4 +253,121 @@ EOF
   run jq -r '.rlms.latest | length' "$evidence_file"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
+}
+
+@test "rlms REPL worker executes sandboxed root code with subcall CLI" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-success"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_SUCCESS_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run env MOCK_SUBCALL_LOG_FILE="$TEMP_DIR/subcall.log" \
+    "$PROJECT_ROOT/scripts/rlms" \
+      --repo "$TEMP_DIR" \
+      --loop-id rlms-loop \
+      --role reviewer \
+      --iteration 1 \
+      --context-file-list "$context_file_list" \
+      --output-dir "$output_dir" \
+      --max-steps 5 \
+      --max-depth 2 \
+      --timeout-seconds 60 \
+      --root-command-json "$root_command_json" \
+      --root-args-json '[]' \
+      --root-prompt-mode stdin \
+      --subcall-command-json "$subcall_command_json" \
+      --subcall-args-json '[]' \
+      --subcall-prompt-mode stdin \
+      --require-citations true \
+      --format json
+  [ "$status" -eq 0 ]
+
+  run jq -r '.ok' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.stats.subcall_count // 0' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run jq -r '.citations | length' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  [ -f "$TEMP_DIR/subcall.log" ]
+}
+
+@test "rlms REPL worker rejects sandbox violations from root code" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-sandbox-fail"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_IMPORT_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run "$PROJECT_ROOT/scripts/rlms" \
+    --repo "$TEMP_DIR" \
+    --loop-id rlms-loop \
+    --role reviewer \
+    --iteration 1 \
+    --context-file-list "$context_file_list" \
+    --output-dir "$output_dir" \
+    --max-steps 5 \
+    --max-depth 2 \
+    --timeout-seconds 60 \
+    --root-command-json "$root_command_json" \
+    --root-args-json '[]' \
+    --root-prompt-mode stdin \
+    --subcall-command-json "$subcall_command_json" \
+    --subcall-args-json '[]' \
+    --subcall-prompt-mode stdin \
+    --require-citations true \
+    --format json
+  [ "$status" -ne 0 ]
+
+  run jq -r '.error_code' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sandbox_violation" ]
+}
+
+@test "rlms REPL worker enforces subcall depth limits" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-depth-fail"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_DEPTH_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run "$PROJECT_ROOT/scripts/rlms" \
+    --repo "$TEMP_DIR" \
+    --loop-id rlms-loop \
+    --role reviewer \
+    --iteration 1 \
+    --context-file-list "$context_file_list" \
+    --output-dir "$output_dir" \
+    --max-steps 5 \
+    --max-depth 1 \
+    --timeout-seconds 60 \
+    --root-command-json "$root_command_json" \
+    --root-args-json '[]' \
+    --root-prompt-mode stdin \
+    --subcall-command-json "$subcall_command_json" \
+    --subcall-args-json '[]' \
+    --subcall-prompt-mode stdin \
+    --require-citations true \
+    --format json
+  [ "$status" -ne 0 ]
+
+  run jq -r '.error_code' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "limit_exceeded" ]
+
+  run jq -r '.error' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "depth exceeded" ]]
 }

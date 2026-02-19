@@ -161,12 +161,16 @@ See `schema/config.schema.json` for all options.
 
 ### RLMS Hybrid Long-Context Mode
 
-When `loops[].rlms.enabled=true`, Superloop can run a bounded recursive context analyzer before each role:
+When `loops[].rlms.enabled=true`, Superloop can run a bounded REPL-style recursive analyzer before each role:
 
 - `mode=auto`: trigger from context size thresholds.
 - `mode=requested`: trigger only when `request_keyword` appears in loop context files.
 - `mode=hybrid`: run when either auto or requested trigger is true.
 - `policy.fail_mode=warn_and_continue|fail_role`: choose whether RLMS failures are non-fatal or role-fatal.
+- Root/subcall CLI wiring: by default RLMS inherits the role's resolved runner command/args/model/thinking settings.
+- Optional env overrides:
+  - `SUPERLOOP_RLMS_ROOT_COMMAND_JSON`, `SUPERLOOP_RLMS_ROOT_ARGS_JSON`, `SUPERLOOP_RLMS_ROOT_PROMPT_MODE`
+  - `SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON`, `SUPERLOOP_RLMS_SUBCALL_ARGS_JSON`, `SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE`
 
 Artifacts are written under `.superloop/loops/<loop-id>/rlms/` and linked into prompts, evidence, events, and run summaries.
 
