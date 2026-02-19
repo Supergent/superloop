@@ -66,6 +66,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install runner stubs for static checks
+        run: ./scripts/ci/install-runner-stubs.sh
       - name: Build wrapper
         run: ./scripts/build.sh
       - name: Verify generated script is up to date
@@ -85,6 +87,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install runner stubs for static checks
+        run: ./scripts/ci/install-runner-stubs.sh
       - name: Build wrapper
         run: ./scripts/build.sh
       - name: Verify generated script is up to date
@@ -149,6 +153,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install runner stubs for static checks
+        run: ./scripts/ci/install-runner-stubs.sh
       - name: Setup bats
         uses: mig4/setup-bats@af9a00deb21b5d795cabfeaa8d9060410377686d # v1.2.0
         with:
@@ -169,8 +175,12 @@ jobs:
       # superloop-viz is deprecated and intentionally excluded from package CI.
       - name: Install dependencies - json-render-core
         run: cd packages/json-render-core && bun install --frozen-lockfile
+      - name: Build package - json-render-core
+        run: cd packages/json-render-core && bun run build
       - name: Install dependencies - json-render-react
         run: cd packages/json-render-react && bun install --frozen-lockfile
+      - name: Build package - json-render-react
+        run: cd packages/json-render-react && bun run build
       - name: Install dependencies - superloop-ui
         run: cd packages/superloop-ui && bun install --frozen-lockfile
       - name: Run tests - json-render-core
