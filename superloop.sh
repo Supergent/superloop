@@ -6791,16 +6791,6 @@ init_cmd() {
       "command": ["codex", "exec"],
       "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
       "prompt_mode": "stdin"
-    },
-    "claude-vanilla": {
-      "command": ["claude-vanilla"],
-      "args": ["--dangerously-skip-permissions", "--print", "-"],
-      "prompt_mode": "stdin"
-    },
-    "claude-glm-mantic": {
-      "command": ["claude-glm-mantic"],
-      "args": ["--dangerously-skip-permissions", "--print", "-"],
-      "prompt_mode": "stdin"
     }
   },
   "loops": [
@@ -6876,8 +6866,8 @@ init_cmd() {
       },
       "roles": {
         "planner": {"runner": "codex"},
-        "implementer": {"runner": "claude-vanilla"},
-        "tester": {"runner": "claude-glm-mantic"},
+        "implementer": {"runner": "codex"},
+        "tester": {"runner": "codex"},
         "reviewer": {"runner": "codex"}
       }
     }

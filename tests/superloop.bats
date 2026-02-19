@@ -410,6 +410,30 @@ EOF
   rm -rf "$INIT_DIR"
 }
 
+@test "init scaffolds codex-only runners and role mappings" {
+  INIT_DIR="$(mktemp -d)"
+
+  run "$PROJECT_ROOT/superloop.sh" init --repo "$INIT_DIR"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.runners | keys | join(",")' "$INIT_DIR/.superloop/config.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex" ]
+
+  run jq -r '.loops[0].roles.implementer.runner' "$INIT_DIR/.superloop/config.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex" ]
+
+  run jq -r '.loops[0].roles.tester.runner' "$INIT_DIR/.superloop/config.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex" ]
+
+  run jq -e '.runners["claude-vanilla"] == null and .runners["claude-glm-mantic"] == null' "$INIT_DIR/.superloop/config.json"
+  [ "$status" -eq 0 ]
+
+  rm -rf "$INIT_DIR"
+}
+
 # =============================================================================
 # Dry Run
 # =============================================================================

@@ -74,6 +74,8 @@ jobs:
         run: git diff --exit-code superloop.sh
       - name: Validate config schema
         run: ./superloop.sh validate --repo .
+      - name: Validate runner smoke checks
+        run: ./superloop.sh runner-smoke --repo .
       - name: Validate static config checks
         run: ./superloop.sh validate --repo . --static
       - name: List loops
