@@ -51,6 +51,66 @@ jobs:
       - name: List loops
         run: ./superloop.sh list --repo .
 
+  rlms-canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wrapper
+        run: ./scripts/build.sh
+      - name: Verify generated script is up to date
+        run: git diff --exit-code superloop.sh
+      - name: Configure deterministic canary role runner
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          jq '
+            .runners["ci-shell"] = {
+              command: ["bash"],
+              args: ["-lc", "echo \"<promise>SUPERLOOP_COMPLETE</promise>\" > \"{last_message_file}\""],
+              prompt_mode: "stdin"
+            }
+            | (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.runner) = "ci-shell"
+            | del(
+                (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.model),
+                (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.thinking)
+              )
+          ' .superloop/config.json > "$tmp"
+          mv "$tmp" .superloop/config.json
+      - name: Validate config schema
+        run: ./superloop.sh validate --repo .
+      - name: Run rlms-canary loop
+        run: |
+          set -euo pipefail
+          root_command_json="$(jq -cn --arg cmd "$PWD/scripts/rlms-mock-root.sh" '[$cmd]')"
+          subcall_command_json="$(jq -cn --arg cmd "$PWD/scripts/rlms-mock-subcall.sh" '[$cmd]')"
+          SUPERLOOP_RLMS_ROOT_COMMAND_JSON="$root_command_json" \
+          SUPERLOOP_RLMS_ROOT_ARGS_JSON='[]' \
+          SUPERLOOP_RLMS_ROOT_PROMPT_MODE='stdin' \
+          SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON="$subcall_command_json" \
+          SUPERLOOP_RLMS_SUBCALL_ARGS_JSON='[]' \
+          SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE='stdin' \
+          ./superloop.sh run --repo . --loop rlms-canary
+      - name: Assert rlms-canary status and quality
+        run: |
+          set -euo pipefail
+          scripts/assert-rlms-canary.sh \
+            --status-file .superloop/loops/rlms-canary/rlms/latest/reviewer.status.json \
+            --result-file .superloop/loops/rlms-canary/rlms/latest/reviewer.json \
+            --require-should-run true \
+            --min-citations "${RLMS_CANARY_MIN_CITATIONS:-1}" \
+            --min-non-fallback-citations "${RLMS_CANARY_MIN_NON_FALLBACK_CITATIONS:-1}" \
+            --fallback-signals "${RLMS_CANARY_FALLBACK_SIGNALS:-file_reference}" \
+            --require-highlight-pattern "${RLMS_CANARY_REQUIRE_HIGHLIGHT_PATTERN:-mock_root_complete}"
+      - name: Dump rlms-canary artifacts on failure
+        if: failure()
+        run: |
+          set +e
+          find .superloop/loops/rlms-canary -maxdepth 4 -type f | sort
+          echo "--- reviewer.status.json ---"
+          cat .superloop/loops/rlms-canary/rlms/latest/reviewer.status.json
+          echo "--- reviewer.json ---"
+          cat .superloop/loops/rlms-canary/rlms/latest/reviewer.json
+
   test:
     runs-on: ubuntu-latest
     steps:
