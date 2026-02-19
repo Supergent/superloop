@@ -2164,6 +2164,14 @@ run_role() {
   local status=0
   local max_retries="${SUPERLOOP_RATE_LIMIT_MAX_RETRIES:-3}"
   local retry_count=0
+  local original_prompt_mode="$prompt_mode"
+  local codex_resume_on_rate_limit="${SUPERLOOP_CODEX_RESUME_ON_RATE_LIMIT:-0}"
+  local codex_resume_enabled=0
+  case "$codex_resume_on_rate_limit" in
+    1|true|TRUE|True|yes|YES|on|ON)
+      codex_resume_enabled=1
+      ;;
+  esac
 
   # Build env prefix array for command execution
   local -a env_prefix=()
@@ -2241,24 +2249,37 @@ run_role() {
         cmd=("claude" "--resume" "$USAGE_SESSION_ID" "-p" "continue from where you left off")
         prompt_mode="arg"  # Resume uses prompt as argument
       elif [[ "$runner_type" == "codex" ]]; then
-        # For Codex, try multiple methods to get thread_id for resume
-        if [[ -z "$USAGE_THREAD_ID" ]]; then
-          # Method 1: Extract from log output
-          if [[ -f "$log_file" ]]; then
-            USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+        if [[ "$codex_resume_enabled" -eq 1 ]]; then
+          # For Codex, try multiple methods to get thread_id for resume
+          if [[ -z "$USAGE_THREAD_ID" ]]; then
+            # Method 1: Extract from log output
+            if [[ -f "$log_file" ]]; then
+              USAGE_THREAD_ID=$(grep -o '"thread_id":\s*"[^"]*"' "$log_file" | sed 's/"thread_id":\s*"//' | sed 's/"$//' | tail -1 || true)
+            fi
+            # Method 2: Extract from session filename (most reliable)
+            if [[ -z "$USAGE_THREAD_ID" && -n "$USAGE_START_TIME" ]]; then
+              local codex_start_ts=$((USAGE_START_TIME / 1000))
+              find_and_set_codex_thread_id "$codex_start_ts" 2>/dev/null || true
+            fi
           fi
-          # Method 2: Extract from session filename (most reliable)
-          if [[ -z "$USAGE_THREAD_ID" && -n "$USAGE_START_TIME" ]]; then
-            local codex_start_ts=$((USAGE_START_TIME / 1000))
-            find_and_set_codex_thread_id "$codex_start_ts" 2>/dev/null || true
+          if [[ -n "$USAGE_THREAD_ID" ]]; then
+            echo "[superloop] Resuming Codex thread: $USAGE_THREAD_ID" >&2
+            cmd=("codex" "exec" "resume" "$USAGE_THREAD_ID" "continue from where you left off")
+            prompt_mode="arg"  # Resume uses prompt as argument
+          else
+            echo "[superloop] No Codex thread_id found, retrying from scratch" >&2
+            # Rebuild original command
+            cmd=()
+            for part in "${runner_command[@]}"; do
+              cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+            done
+            for part in "${runner_args[@]}"; do
+              cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
+            done
+            prompt_mode="$original_prompt_mode"
           fi
-        fi
-        if [[ -n "$USAGE_THREAD_ID" ]]; then
-          echo "[superloop] Resuming Codex thread: $USAGE_THREAD_ID" >&2
-          cmd=("codex" "exec" "resume" "$USAGE_THREAD_ID" "continue from where you left off")
-          prompt_mode="arg"  # Resume uses prompt as argument
         else
-          echo "[superloop] No Codex thread_id found, retrying from scratch" >&2
+          echo "[superloop] Codex resume disabled; retrying from scratch" >&2
           # Rebuild original command
           cmd=()
           for part in "${runner_command[@]}"; do
@@ -2267,6 +2288,7 @@ run_role() {
           for part in "${runner_args[@]}"; do
             cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
           done
+          prompt_mode="$original_prompt_mode"
         fi
       else
         echo "[superloop] Retrying from scratch" >&2
@@ -2278,6 +2300,7 @@ run_role() {
         for part in "${runner_args[@]}"; do
           cmd+=("$(expand_runner_arg "$part" "$repo" "$prompt_file" "$last_message_file")")
         done
+        prompt_mode="$original_prompt_mode"
       fi
 
       # Clear rate limit file for next attempt

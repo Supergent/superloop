@@ -46,7 +46,7 @@
         "planner": 120,
         "implementer": 120,
         "tester": 120,
-        "reviewer": 120
+        "reviewer": 1200
       },
       "stuck": {
         "enabled": false,

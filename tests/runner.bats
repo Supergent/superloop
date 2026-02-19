@@ -245,6 +245,75 @@ EOF
   [[ "$message" == *"Rate limit"* ]]
 }
 
+@test "runner: codex rate-limit retries from scratch by default" {
+  if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+    skip "Python required for rate limit detection"
+  fi
+
+  die() {
+    echo "$*" >&2
+    return 1
+  }
+  detect_runner_type() {
+    echo "codex"
+  }
+  track_usage() {
+    :
+  }
+  wait_for_rate_limit_reset() {
+    return 0
+  }
+
+  local prompt_file="$TEMP_DIR/prompt.txt"
+  local last_message_file="$TEMP_DIR/last-message.txt"
+  local log_file="$TEMP_DIR/runner.log"
+  local usage_file="$TEMP_DIR/usage.jsonl"
+  local count_file="$TEMP_DIR/call-count.txt"
+  local invocation_log="$TEMP_DIR/invocations.log"
+  local mock_runner="$TEMP_DIR/mock-codex-runner.sh"
+
+  echo "review prompt" > "$prompt_file"
+
+  cat > "$mock_runner" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+count_file="$count_file"
+invocation_log="$invocation_log"
+count=0
+if [[ -f "\$count_file" ]]; then
+  count=\$(cat "\$count_file")
+fi
+count=\$((count + 1))
+echo "\$count" > "\$count_file"
+echo "run-\$count args:\$*" >> "\$invocation_log"
+if [[ "\$count" -eq 1 ]]; then
+  echo "HTTP/1.1 429 Too Many Requests" >&2
+  exit 1
+fi
+echo "retry ok"
+exit 0
+EOF
+  chmod +x "$mock_runner"
+
+  set +e
+  USAGE_TRACKING_ENABLED=1 \
+    SUPERLOOP_RATE_LIMIT_MAX_RETRIES=1 \
+    run_role "$TEMP_DIR" "reviewer" "$prompt_file" "$last_message_file" "$log_file" \
+      30 "stdin" 0 "$usage_file" 1 "" "$mock_runner" -- \
+      > "$TEMP_DIR/run-role.stdout" 2> "$TEMP_DIR/run-role.stderr"
+  local status=$?
+  set -e
+
+  [ "$status" -eq 0 ]
+  [ -f "$count_file" ]
+  [ "$(cat "$count_file")" -eq 2 ]
+
+  [ -f "$invocation_log" ]
+  run grep -c '^run-' "$invocation_log"
+  [ "$status" -eq 0 ]
+  [ "$output" -eq 2 ]
+}
+
 # ============================================================================
 # Timeout Behavior Tests
 # ============================================================================
