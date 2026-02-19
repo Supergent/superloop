@@ -24,6 +24,7 @@ build_role_prompt() {
   local rlms_result_file="${23:-}"
   local rlms_summary_file="${24:-}"
   local rlms_status_file="${25:-}"
+  local delegation_status_file="${26:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -77,6 +78,14 @@ EOF
   fi
   if [[ -n "$rlms_status_file" && -f "$rlms_status_file" ]]; then
     echo "- RLMS status: $rlms_status_file" >> "$prompt_file"
+  fi
+  if [[ -n "$delegation_status_file" && -f "$delegation_status_file" ]]; then
+    echo "- Delegation status: $delegation_status_file" >> "$prompt_file"
+    local delegation_summary_from_status
+    delegation_summary_from_status=$(jq -r '.summary_file // empty' "$delegation_status_file" 2>/dev/null || echo "")
+    if [[ -n "$delegation_summary_from_status" && "$delegation_summary_from_status" != "null" ]]; then
+      echo "- Delegation summary: $delegation_summary_from_status" >> "$prompt_file"
+    fi
   fi
 
   # Add phase files context for planner and implementer

@@ -1332,6 +1332,7 @@ build_role_prompt() {
   local rlms_result_file="${23:-}"
   local rlms_summary_file="${24:-}"
   local rlms_status_file="${25:-}"
+  local delegation_status_file="${26:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -1385,6 +1386,14 @@ EOF
   fi
   if [[ -n "$rlms_status_file" && -f "$rlms_status_file" ]]; then
     echo "- RLMS status: $rlms_status_file" >> "$prompt_file"
+  fi
+  if [[ -n "$delegation_status_file" && -f "$delegation_status_file" ]]; then
+    echo "- Delegation status: $delegation_status_file" >> "$prompt_file"
+    local delegation_summary_from_status
+    delegation_summary_from_status=$(jq -r '.summary_file // empty' "$delegation_status_file" 2>/dev/null || echo "")
+    if [[ -n "$delegation_summary_from_status" && "$delegation_summary_from_status" != "null" ]]; then
+      echo "- Delegation summary: $delegation_summary_from_status" >> "$prompt_file"
+    fi
   fi
 
   # Add phase files context for planner and implementer
@@ -5006,6 +5015,64 @@ log_event() {
     >> "$events_file" || true
 }
 
+summarize_delegation_iteration_metrics() {
+  local delegation_index_file="$1"
+  local run_id="$2"
+  local iteration="$3"
+
+  if [[ ! -f "$delegation_index_file" ]]; then
+    echo '{}'
+    return 0
+  fi
+
+  jq -c \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    '
+    (.entries // []) as $all
+    | [ $all[] | select((.run_id // "") == $run_id and ((.iteration // -1) == $iteration)) ] as $entries
+    | {
+        role_entries: ($entries | length),
+        enabled_roles: ($entries | map(select(.enabled == true)) | length),
+        requested_children: ($entries | map(.requested_children // 0) | add // 0),
+        executed_children: ($entries | map(.executed_children // 0) | add // 0),
+        succeeded_children: ($entries | map(.succeeded_children // 0) | add // 0),
+        failed_children: ($entries | map(.failed_children // 0) | add // 0),
+        adaptation_attempted: ($entries | map(.adaptation_attempted // 0) | add // 0),
+        adaptation_applied: ($entries | map(.adaptation_applied // 0) | add // 0),
+        adaptation_skipped: ($entries | map(.adaptation_skipped // 0) | add // 0),
+        fail_role_triggered: ($entries | map(select(.fail_role_triggered == true)) | length),
+        recon_violations: ($entries | map(.recon_violations // 0) | add // 0),
+        statuses: (
+          [ $entries[] | (.status // "unknown") ] as $statuses
+          | reduce $statuses[] as $s ({}; .[$s] = ((.[$s] // 0) + 1))
+        ),
+        by_role: (
+          reduce $entries[] as $e ({};
+            .[$e.role] = {
+              enabled: ($e.enabled // false),
+              mode: ($e.mode // "standard"),
+              dispatch_mode: ($e.dispatch_mode // "serial"),
+              wake_policy: ($e.wake_policy // "on_wave_complete"),
+              status: ($e.status // "unknown"),
+              reason: ($e.reason // null),
+              requested_children: ($e.requested_children // 0),
+              executed_children: ($e.executed_children // 0),
+              succeeded_children: ($e.succeeded_children // 0),
+              failed_children: ($e.failed_children // 0),
+              adaptation_attempted: ($e.adaptation_attempted // 0),
+              adaptation_applied: ($e.adaptation_applied // 0),
+              adaptation_skipped: ($e.adaptation_skipped // 0),
+              fail_role_triggered: ($e.fail_role_triggered // false),
+              recon_violations: ($e.recon_violations // 0),
+              status_file: ($e.status_file // null)
+            }
+          )
+        )
+      }
+    ' "$delegation_index_file" 2>/dev/null || echo '{}'
+}
+
 append_run_summary() {
   local summary_file="$1"
   local repo="$2"
@@ -5045,14 +5112,16 @@ append_run_summary() {
   local decisions_jsonl="$loop_dir/decisions.jsonl"
   local decisions_md="$loop_dir/decisions.md"
   local rlms_index_file="$loop_dir/rlms/index.json"
+  local delegation_index_file="$loop_dir/delegation/index.json"
   local validation_status_file="$loop_dir/validation-status.json"
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
-  local rlms_index_meta
+  local rlms_index_meta delegation_index_meta
   local validation_status_meta validation_results_meta
+  local delegation_metrics_json
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
   plan_meta=$(json_or_default "$plan_meta" "{}")
@@ -5092,6 +5161,10 @@ append_run_summary() {
   decisions_md_meta=$(json_or_default "$decisions_md_meta" "{}")
   rlms_index_meta=$(file_meta_json "${rlms_index_file#$repo/}" "$rlms_index_file")
   rlms_index_meta=$(json_or_default "$rlms_index_meta" "{}")
+  delegation_index_meta=$(file_meta_json "${delegation_index_file#$repo/}" "$delegation_index_file")
+  delegation_index_meta=$(json_or_default "$delegation_index_meta" "{}")
+  delegation_metrics_json=$(summarize_delegation_iteration_metrics "$delegation_index_file" "$run_id" "$iteration")
+  delegation_metrics_json=$(json_or_default "$delegation_metrics_json" "{}")
 
   local artifacts_json
   artifacts_json=$(jq -n \
@@ -5114,6 +5187,7 @@ append_run_summary() {
     --argjson decisions "$decisions_meta" \
     --argjson decisions_md "$decisions_md_meta" \
     --argjson rlms_index "$rlms_index_meta" \
+    --argjson delegation_index "$delegation_index_meta" \
     '{
       plan: $plan,
       implementer: $implementer,
@@ -5133,7 +5207,8 @@ append_run_summary() {
       approval: $approval,
       decisions: $decisions,
       decisions_md: $decisions_md,
-      rlms_index: $rlms_index
+      rlms_index: $rlms_index,
+      delegation_index: $delegation_index
     }')
   artifacts_json=$(json_or_default "$artifacts_json" "{}")
 
@@ -5165,6 +5240,7 @@ append_run_summary() {
     --arg stuck_threshold "$stuck_threshold" \
     --arg completion_ok "$completion_json" \
     --arg artifacts "$artifacts_json" \
+    --arg delegation "$delegation_metrics_json" \
     '{
       run_id: $run_id,
       iteration: ($iteration | tonumber? // $iteration),
@@ -5187,6 +5263,7 @@ append_run_summary() {
         streak: ($stuck_streak | tonumber? // 0),
         threshold: ($stuck_threshold | tonumber? // 0)
       },
+      delegation: ($delegation | fromjson? // {}),
       completion_ok: ($completion_ok | fromjson? // false),
       artifacts: ($artifacts | fromjson? // {})
     } | with_entries(select(.value != null))')
@@ -5230,7 +5307,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
@@ -6864,6 +6941,18 @@ init_cmd() {
           ".cache/**"
         ]
       },
+      "delegation": {
+        "enabled": false,
+        "dispatch_mode": "serial",
+        "wake_policy": "on_wave_complete",
+        "failure_policy": "warn_and_continue",
+        "max_children": 1,
+        "max_waves": 1,
+        "child_timeout_seconds": 300,
+        "retry_limit": 0,
+        "retry_backoff_seconds": 0,
+        "retry_backoff_max_seconds": 30
+      },
       "recovery": {
         "enabled": true,
         "auto_approve": [
@@ -7383,7 +7472,7 @@ list_cmd() {
 
     printf "%-20s %-12s %-40s %s\n" "$display_id" "$status" "$display_spec" "$last_run"
 
-    ((i += 1))
+    i=$((i + 1))
   done
 
   echo ""
@@ -7582,6 +7671,161 @@ append_rlms_index_entry() {
   fi
 
   mv "$tmp_file" "$index_file"
+}
+
+append_delegation_index_entry() {
+  local index_file="$1"
+  local loop_id="$2"
+  local entry_json="$3"
+
+  local tmp_file="${index_file}.tmp"
+  mkdir -p "$(dirname "$index_file")"
+
+  if [[ -f "$index_file" ]]; then
+    jq -n \
+      --argjson entry "$entry_json" \
+      --arg updated_at "$(timestamp)" \
+      --slurpfile existing "$index_file" \
+      '($existing[0] // {}) as $root
+      | {
+          version: ($root.version // 1),
+          loop_id: ($root.loop_id // null),
+          updated_at: $updated_at,
+          entries: (($root.entries // []) + [$entry])
+        }' > "$tmp_file"
+  else
+    jq -n \
+      --arg loop_id "$loop_id" \
+      --arg updated_at "$(timestamp)" \
+      --argjson entry "$entry_json" \
+      '{version: 1, loop_id: $loop_id, updated_at: $updated_at, entries: [$entry]}' > "$tmp_file"
+  fi
+
+  mv "$tmp_file" "$index_file"
+}
+
+normalize_delegation_dispatch_mode() {
+  local value="${1:-}"
+  case "$value" in
+    parallel) echo "parallel" ;;
+    serial) echo "serial" ;;
+    *) echo "serial" ;;
+  esac
+}
+
+normalize_delegation_wake_policy() {
+  local value="${1:-}"
+  case "$value" in
+    on_child_complete|immediate) echo "on_child_complete" ;;
+    on_wave_complete|after_all) echo "on_wave_complete" ;;
+    *) echo "on_wave_complete" ;;
+  esac
+}
+
+normalize_delegation_failure_policy() {
+  local value="${1:-}"
+  case "$value" in
+    fail_role) echo "fail_role" ;;
+    warn_and_continue) echo "warn_and_continue" ;;
+    *) echo "warn_and_continue" ;;
+  esac
+}
+
+normalize_delegation_mode() {
+  local value="${1:-}"
+  case "$value" in
+    reconnaissance|recon) echo "reconnaissance" ;;
+    standard|"") echo "standard" ;;
+    *) echo "standard" ;;
+  esac
+}
+
+compute_delegation_retry_backoff_seconds() {
+  local base_seconds="$1"
+  local max_seconds="$2"
+  local failed_attempt="$3"
+
+  base_seconds=$(rlms_safe_int "$base_seconds" 0)
+  max_seconds=$(rlms_safe_int "$max_seconds" 0)
+  failed_attempt=$(rlms_safe_int "$failed_attempt" 1)
+
+  if [[ "$base_seconds" -le 0 ]]; then
+    echo "0"
+    return 0
+  fi
+  if [[ "$failed_attempt" -lt 1 ]]; then
+    failed_attempt=1
+  fi
+
+  local delay="$base_seconds"
+  local step=1
+  while [[ "$step" -lt "$failed_attempt" ]]; do
+    delay=$((delay * 2))
+    if [[ "$max_seconds" -gt 0 && "$delay" -ge "$max_seconds" ]]; then
+      delay="$max_seconds"
+      break
+    fi
+    step=$((step + 1))
+  done
+
+  if [[ "$max_seconds" -gt 0 && "$delay" -gt "$max_seconds" ]]; then
+    delay="$max_seconds"
+  fi
+  if [[ "$delay" -lt 0 ]]; then
+    delay=0
+  fi
+  echo "$delay"
+}
+
+collect_dirty_paths() {
+  local repo="$1"
+  local output_file="$2"
+  : > "$output_file"
+
+  if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$repo" diff --name-only >> "$output_file" 2>/dev/null || true
+    git -C "$repo" diff --cached --name-only >> "$output_file" 2>/dev/null || true
+    git -C "$repo" status --porcelain | awk '{print $2}' >> "$output_file" 2>/dev/null || true
+  else
+    while IFS= read -r -d '' file; do
+      local rel="${file#$repo/}"
+      if [[ "$rel" == .superloop/* || "$rel" == .git/* ]]; then
+        continue
+      fi
+      printf '%s\n' "$rel" >> "$output_file"
+    done < <(find "$repo" -type f -print0 2>/dev/null)
+  fi
+
+  awk 'NF && $0 !~ /^\.superloop\// && $0 !~ /^\.git\// && !seen[$0]++' "$output_file" | LC_ALL=C sort > "${output_file}.tmp"
+  mv "${output_file}.tmp" "$output_file"
+}
+
+append_usage_records_file() {
+  local source_file="$1"
+  local target_file="$2"
+  if [[ -z "$source_file" || -z "$target_file" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$source_file" ]]; then
+    return 0
+  fi
+  cat "$source_file" >> "$target_file" 2>/dev/null || true
+}
+
+sanitize_delegation_id() {
+  local raw="$1"
+  if [[ -z "$raw" ]]; then
+    echo "child"
+    return 0
+  fi
+  local sanitized
+  sanitized=$(printf '%s' "$raw" | tr -cs 'A-Za-z0-9._-' '-')
+  sanitized="${sanitized#-}"
+  sanitized="${sanitized%-}"
+  if [[ -z "$sanitized" ]]; then
+    sanitized="child"
+  fi
+  echo "$sanitized"
 }
 
 run_cmd() {
@@ -7807,10 +8051,13 @@ run_cmd() {
     local rlms_root_dir="$loop_dir/rlms"
     local rlms_latest_dir="$rlms_root_dir/latest"
     local rlms_index_file="$rlms_root_dir/index.json"
+    local delegation_root_dir="$loop_dir/delegation"
+    local delegation_latest_dir="$delegation_root_dir/latest"
+    local delegation_index_file="$delegation_root_dir/index.json"
 
     local tasks_dir="$loop_dir/tasks"
     local stuck_file="$loop_dir/stuck.json"
-    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir" "$rlms_latest_dir"
+    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir" "$rlms_latest_dir" "$delegation_latest_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
 
     # Check if stuck threshold has been reached
@@ -8047,6 +8294,65 @@ run_cmd() {
     local tester_exploration_json
     tester_exploration_json=$(jq -c '.tester_exploration // {}' <<<"$loop_json")
 
+    # Delegation (role-local nested orchestration) configuration
+    local delegation_enabled
+    delegation_enabled=$(jq -r '.delegation.enabled // false' <<<"$loop_json")
+    local delegation_dispatch_mode_raw
+    delegation_dispatch_mode_raw=$(jq -r '.delegation.dispatch_mode // "serial"' <<<"$loop_json")
+    local delegation_dispatch_mode
+    delegation_dispatch_mode=$(normalize_delegation_dispatch_mode "$delegation_dispatch_mode_raw")
+    local delegation_wake_policy_raw
+    delegation_wake_policy_raw=$(jq -r '.delegation.wake_policy // "on_wave_complete"' <<<"$loop_json")
+    local delegation_wake_policy
+    delegation_wake_policy=$(normalize_delegation_wake_policy "$delegation_wake_policy_raw")
+    local delegation_failure_policy_raw
+    delegation_failure_policy_raw=$(jq -r '.delegation.failure_policy // "warn_and_continue"' <<<"$loop_json")
+    local delegation_failure_policy
+    delegation_failure_policy=$(normalize_delegation_failure_policy "$delegation_failure_policy_raw")
+    local delegation_failure_policy_explicit
+    delegation_failure_policy_explicit=$(jq -r 'if ((.delegation // {}) | has("failure_policy")) then "true" else "false" end' <<<"$loop_json")
+    local delegation_max_children
+    delegation_max_children=$(jq -r '.delegation.max_children // 1' <<<"$loop_json")
+    local delegation_max_waves
+    delegation_max_waves=$(jq -r '.delegation.max_waves // 1' <<<"$loop_json")
+    local delegation_child_timeout_seconds
+    delegation_child_timeout_seconds=$(jq -r '.delegation.child_timeout_seconds // 300' <<<"$loop_json")
+    local delegation_retry_limit
+    delegation_retry_limit=$(jq -r '.delegation.retry_limit // 0' <<<"$loop_json")
+    local delegation_retry_backoff_seconds
+    delegation_retry_backoff_seconds=$(jq -r '.delegation.retry_backoff_seconds // 0' <<<"$loop_json")
+    local delegation_retry_backoff_max_seconds
+    delegation_retry_backoff_max_seconds=$(jq -r '.delegation.retry_backoff_max_seconds // 30' <<<"$loop_json")
+
+    delegation_max_children=$(rlms_safe_int "$delegation_max_children" 1)
+    delegation_max_waves=$(rlms_safe_int "$delegation_max_waves" 1)
+    delegation_child_timeout_seconds=$(rlms_safe_int "$delegation_child_timeout_seconds" 300)
+    delegation_retry_limit=$(rlms_safe_int "$delegation_retry_limit" 0)
+    delegation_retry_backoff_seconds=$(rlms_safe_int "$delegation_retry_backoff_seconds" 0)
+    delegation_retry_backoff_max_seconds=$(rlms_safe_int "$delegation_retry_backoff_max_seconds" 30)
+
+    if [[ "$delegation_max_children" -lt 1 ]]; then delegation_max_children=1; fi
+    if [[ "$delegation_max_waves" -lt 1 ]]; then delegation_max_waves=1; fi
+    if [[ "$delegation_child_timeout_seconds" -lt 1 ]]; then delegation_child_timeout_seconds=300; fi
+    if [[ "$delegation_retry_limit" -lt 0 ]]; then delegation_retry_limit=0; fi
+    if [[ "$delegation_retry_backoff_seconds" -lt 0 ]]; then delegation_retry_backoff_seconds=0; fi
+    if [[ "$delegation_retry_backoff_max_seconds" -lt 0 ]]; then delegation_retry_backoff_max_seconds=0; fi
+    if [[ "$delegation_retry_backoff_max_seconds" -gt 0 && "$delegation_retry_backoff_max_seconds" -lt "$delegation_retry_backoff_seconds" ]]; then
+      delegation_retry_backoff_max_seconds="$delegation_retry_backoff_seconds"
+    fi
+
+    if [[ "$delegation_dispatch_mode_raw" != "$delegation_dispatch_mode" && "$delegation_enabled" == "true" ]]; then
+      echo "warning: delegation.dispatch_mode '$delegation_dispatch_mode_raw' is invalid; using '$delegation_dispatch_mode'" >&2
+    fi
+    if [[ "$delegation_wake_policy_raw" == "immediate" || "$delegation_wake_policy_raw" == "after_all" ]]; then
+      echo "warning: delegation.wake_policy '$delegation_wake_policy_raw' is deprecated; use '$delegation_wake_policy'" >&2
+    elif [[ "$delegation_wake_policy_raw" != "$delegation_wake_policy" && "$delegation_enabled" == "true" ]]; then
+      echo "warning: delegation.wake_policy '$delegation_wake_policy_raw' is invalid; using '$delegation_wake_policy'" >&2
+    fi
+    if [[ "$delegation_failure_policy_raw" != "$delegation_failure_policy" && "$delegation_enabled" == "true" ]]; then
+      echo "warning: delegation.failure_policy '$delegation_failure_policy_raw' is invalid; using '$delegation_failure_policy'" >&2
+    fi
+
     # RLMS (recursive language model scaffold) configuration
     local rlms_enabled
     rlms_enabled=$(jq -r '.rlms.enabled // false' <<<"$loop_json")
@@ -8200,9 +8506,41 @@ run_cmd() {
       --arg tests_mode "$tests_mode" \
       --argjson test_commands "$test_commands_json" \
       --argjson checklists "$checklist_patterns_json" \
+      --argjson delegation_enabled "$(if [[ "$delegation_enabled" == "true" ]]; then echo true; else echo false; fi)" \
+      --arg delegation_dispatch_mode "$delegation_dispatch_mode" \
+      --arg delegation_wake_policy "$delegation_wake_policy" \
+      --arg delegation_failure_policy "$delegation_failure_policy" \
+      --argjson delegation_max_children "$delegation_max_children" \
+      --argjson delegation_max_waves "$delegation_max_waves" \
+      --argjson delegation_child_timeout_seconds "$delegation_child_timeout_seconds" \
+      --argjson delegation_retry_limit "$delegation_retry_limit" \
+      --argjson delegation_retry_backoff_seconds "$delegation_retry_backoff_seconds" \
+      --argjson delegation_retry_backoff_max_seconds "$delegation_retry_backoff_max_seconds" \
       --argjson rlms_enabled "$(if [[ "$rlms_enabled" == "true" ]]; then echo true; else echo false; fi)" \
       --arg rlms_mode "$rlms_mode" \
-      '{spec_file: $spec_file, max_iterations: $max_iterations, tests_mode: $tests_mode, test_commands: $test_commands, checklists: $checklists, rlms: {enabled: $rlms_enabled, mode: $rlms_mode}}')
+      '{
+        spec_file: $spec_file,
+        max_iterations: $max_iterations,
+        tests_mode: $tests_mode,
+        test_commands: $test_commands,
+        checklists: $checklists,
+        delegation: {
+          enabled: $delegation_enabled,
+          dispatch_mode: $delegation_dispatch_mode,
+          wake_policy: $delegation_wake_policy,
+          failure_policy: $delegation_failure_policy,
+          max_children: $delegation_max_children,
+          max_waves: $delegation_max_waves,
+          child_timeout_seconds: $delegation_child_timeout_seconds,
+          retry_limit: $delegation_retry_limit,
+          retry_backoff_seconds: $delegation_retry_backoff_seconds,
+          retry_backoff_max_seconds: $delegation_retry_backoff_max_seconds
+        },
+        rlms: {
+          enabled: $rlms_enabled,
+          mode: $rlms_mode
+        }
+      }')
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_start" "$loop_start_data"
 
     local approval_required=0
@@ -8349,6 +8687,1504 @@ run_cmd() {
         local rlms_result_for_prompt=""
         local rlms_summary_for_prompt=""
         local rlms_status_for_prompt=""
+        local role_delegation_status_for_prompt=""
+
+        local role_delegation_enabled="$delegation_enabled"
+        local role_delegation_dispatch_mode="$delegation_dispatch_mode"
+        local role_delegation_wake_policy="$delegation_wake_policy"
+        local role_delegation_failure_policy="$delegation_failure_policy"
+        local role_delegation_max_children="$delegation_max_children"
+        local role_delegation_max_waves="$delegation_max_waves"
+        local role_delegation_child_timeout_seconds="$delegation_child_timeout_seconds"
+        local role_delegation_retry_limit="$delegation_retry_limit"
+        local role_delegation_retry_backoff_seconds="$delegation_retry_backoff_seconds"
+        local role_delegation_retry_backoff_max_seconds="$delegation_retry_backoff_max_seconds"
+        local role_delegation_mode="standard"
+        local role_delegation_reason="disabled"
+        local role_delegation_failure_policy_override_present
+        role_delegation_failure_policy_override_present=$(jq -r --arg role "$role" '
+          if ((.delegation.roles[$role] // {}) | has("failure_policy")) then
+            "true"
+          else
+            "false"
+          end' <<<"$loop_json")
+
+        local role_delegation_enabled_override
+        role_delegation_enabled_override=$(jq -r --arg role "$role" '
+          if ((.delegation.roles[$role] // {}) | has("enabled")) then
+            (.delegation.roles[$role].enabled | tostring)
+          else
+            empty
+          end' <<<"$loop_json")
+        if [[ -n "$role_delegation_enabled_override" && "$role_delegation_enabled_override" != "null" ]]; then
+          role_delegation_enabled="$role_delegation_enabled_override"
+        fi
+
+        local role_delegation_dispatch_mode_override
+        role_delegation_dispatch_mode_override=$(jq -r --arg role "$role" '.delegation.roles[$role].dispatch_mode // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_dispatch_mode_override" && "$role_delegation_dispatch_mode_override" != "null" ]]; then
+          role_delegation_dispatch_mode=$(normalize_delegation_dispatch_mode "$role_delegation_dispatch_mode_override")
+        fi
+
+        local role_delegation_wake_policy_override
+        role_delegation_wake_policy_override=$(jq -r --arg role "$role" '.delegation.roles[$role].wake_policy // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_wake_policy_override" && "$role_delegation_wake_policy_override" != "null" ]]; then
+          role_delegation_wake_policy=$(normalize_delegation_wake_policy "$role_delegation_wake_policy_override")
+          if [[ "$role_delegation_wake_policy_override" == "immediate" || "$role_delegation_wake_policy_override" == "after_all" ]]; then
+            echo "warning: delegation.roles.$role.wake_policy '$role_delegation_wake_policy_override' is deprecated; use '$role_delegation_wake_policy'" >&2
+          elif [[ "$role_delegation_wake_policy_override" != "$role_delegation_wake_policy" ]]; then
+            echo "warning: delegation.roles.$role.wake_policy '$role_delegation_wake_policy_override' is invalid; using '$role_delegation_wake_policy'" >&2
+          fi
+        fi
+
+        local role_delegation_failure_policy_override
+        role_delegation_failure_policy_override=$(jq -r --arg role "$role" '.delegation.roles[$role].failure_policy // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_failure_policy_override" && "$role_delegation_failure_policy_override" != "null" ]]; then
+          role_delegation_failure_policy=$(normalize_delegation_failure_policy "$role_delegation_failure_policy_override")
+          if [[ "$role_delegation_failure_policy_override" != "$role_delegation_failure_policy" ]]; then
+            echo "warning: delegation.roles.$role.failure_policy '$role_delegation_failure_policy_override' is invalid; using '$role_delegation_failure_policy'" >&2
+          fi
+        fi
+
+        local role_delegation_max_children_override
+        role_delegation_max_children_override=$(jq -r --arg role "$role" '.delegation.roles[$role].max_children // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_max_children_override" && "$role_delegation_max_children_override" != "null" ]]; then
+          role_delegation_max_children=$(rlms_safe_int "$role_delegation_max_children_override" "$role_delegation_max_children")
+        fi
+
+        local role_delegation_max_waves_override
+        role_delegation_max_waves_override=$(jq -r --arg role "$role" '.delegation.roles[$role].max_waves // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_max_waves_override" && "$role_delegation_max_waves_override" != "null" ]]; then
+          role_delegation_max_waves=$(rlms_safe_int "$role_delegation_max_waves_override" "$role_delegation_max_waves")
+        fi
+
+        local role_delegation_child_timeout_override
+        role_delegation_child_timeout_override=$(jq -r --arg role "$role" '.delegation.roles[$role].child_timeout_seconds // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_child_timeout_override" && "$role_delegation_child_timeout_override" != "null" ]]; then
+          role_delegation_child_timeout_seconds=$(rlms_safe_int "$role_delegation_child_timeout_override" "$role_delegation_child_timeout_seconds")
+        fi
+
+        local role_delegation_retry_limit_override
+        role_delegation_retry_limit_override=$(jq -r --arg role "$role" '.delegation.roles[$role].retry_limit // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_retry_limit_override" && "$role_delegation_retry_limit_override" != "null" ]]; then
+          role_delegation_retry_limit=$(rlms_safe_int "$role_delegation_retry_limit_override" "$role_delegation_retry_limit")
+        fi
+
+        local role_delegation_retry_backoff_seconds_override
+        role_delegation_retry_backoff_seconds_override=$(jq -r --arg role "$role" '.delegation.roles[$role].retry_backoff_seconds // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_retry_backoff_seconds_override" && "$role_delegation_retry_backoff_seconds_override" != "null" ]]; then
+          role_delegation_retry_backoff_seconds=$(rlms_safe_int "$role_delegation_retry_backoff_seconds_override" "$role_delegation_retry_backoff_seconds")
+        fi
+
+        local role_delegation_retry_backoff_max_seconds_override
+        role_delegation_retry_backoff_max_seconds_override=$(jq -r --arg role "$role" '.delegation.roles[$role].retry_backoff_max_seconds // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_retry_backoff_max_seconds_override" && "$role_delegation_retry_backoff_max_seconds_override" != "null" ]]; then
+          role_delegation_retry_backoff_max_seconds=$(rlms_safe_int "$role_delegation_retry_backoff_max_seconds_override" "$role_delegation_retry_backoff_max_seconds")
+        fi
+
+        local role_delegation_mode_override
+        role_delegation_mode_override=$(jq -r --arg role "$role" '.delegation.roles[$role].mode // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_mode_override" && "$role_delegation_mode_override" != "null" ]]; then
+          role_delegation_mode=$(normalize_delegation_mode "$role_delegation_mode_override")
+          if [[ "$role_delegation_mode_override" != "$role_delegation_mode" ]]; then
+            echo "warning: delegation.roles.$role.mode '$role_delegation_mode_override' is invalid; using '$role_delegation_mode'" >&2
+          fi
+        fi
+
+        if [[ "$role_delegation_max_children" -lt 1 ]]; then role_delegation_max_children=1; fi
+        if [[ "$role_delegation_max_waves" -lt 1 ]]; then role_delegation_max_waves=1; fi
+        if [[ "$role_delegation_child_timeout_seconds" -lt 1 ]]; then role_delegation_child_timeout_seconds=300; fi
+        if [[ "$role_delegation_retry_limit" -lt 0 ]]; then role_delegation_retry_limit=0; fi
+        if [[ "$role_delegation_retry_backoff_seconds" -lt 0 ]]; then role_delegation_retry_backoff_seconds=0; fi
+        if [[ "$role_delegation_retry_backoff_max_seconds" -lt 0 ]]; then role_delegation_retry_backoff_max_seconds=0; fi
+        if [[ "$role_delegation_retry_backoff_max_seconds" -gt 0 && "$role_delegation_retry_backoff_max_seconds" -lt "$role_delegation_retry_backoff_seconds" ]]; then
+          role_delegation_retry_backoff_max_seconds="$role_delegation_retry_backoff_seconds"
+        fi
+
+        if [[ "$role_delegation_enabled" == "true" ]]; then
+          role_delegation_reason="enabled_by_config"
+        fi
+
+        # Phase 4 guardrail: allow implementer and planner reconnaissance only.
+        if [[ "$role_delegation_enabled" == "true" && "$role" != "implementer" && "$role" != "planner" ]]; then
+          role_delegation_enabled="false"
+          role_delegation_reason="phase4_role_guardrail"
+        fi
+
+        if [[ "$role_delegation_enabled" == "true" && "$role" == "planner" ]]; then
+          role_delegation_mode="reconnaissance"
+          if [[ "$role_delegation_reason" == "enabled_by_config" ]]; then
+            role_delegation_reason="enabled_by_config,planner_reconnaissance"
+          elif [[ -n "$role_delegation_reason" && "$role_delegation_reason" != *"planner_reconnaissance"* ]]; then
+            role_delegation_reason="${role_delegation_reason},planner_reconnaissance"
+          else
+            role_delegation_reason="planner_reconnaissance"
+          fi
+          if [[ "$role_delegation_failure_policy_override_present" != "true" && "$delegation_failure_policy_explicit" != "true" ]]; then
+            role_delegation_failure_policy="fail_role"
+            if [[ -n "$role_delegation_reason" && "$role_delegation_reason" != *"planner_recon_default_fail_role"* ]]; then
+              role_delegation_reason="${role_delegation_reason},planner_recon_default_fail_role"
+            elif [[ -z "$role_delegation_reason" ]]; then
+              role_delegation_reason="planner_recon_default_fail_role"
+            fi
+          fi
+        fi
+
+        if [[ "$role_delegation_enabled" != "true" && "$role_delegation_reason" == "disabled" ]]; then
+          role_delegation_reason="disabled_by_config"
+        fi
+
+        local role_delegation_dir="$delegation_root_dir/iter-$iteration/$role"
+        local role_delegation_request_iter_file="$role_delegation_dir/request.json"
+        local role_delegation_request_shared_file="$delegation_root_dir/requests/${role}.json"
+
+        # Parent-handshake pass: let the parent role author request.json before child execution.
+        if [[ "$role_delegation_enabled" == "true" && ( "$role" == "implementer" || "$role" == "planner" ) && ! -f "$role_delegation_request_iter_file" && ! -f "$role_delegation_request_shared_file" ]]; then
+          mkdir -p "$role_delegation_dir"
+          local delegation_request_prompt_file="$prompt_dir/${role}.delegation_request.md"
+          local delegation_request_log_file="$log_dir/${role}.delegation_request.log"
+          local delegation_request_last_message_file="$last_messages_dir/${role}.delegation_request.txt"
+
+          cat > "$delegation_request_prompt_file" <<EOF
+You are preparing a delegation request for Superloop role '$role'.
+
+Write delegation request JSON to this exact file path:
+$role_delegation_request_iter_file
+
+Required JSON shape:
+{
+  "waves": [
+    {
+      "id": "wave-1",
+      "children": [
+        {
+          "id": "task-1",
+          "prompt": "Concrete subtask instruction",
+          "context_files": ["repo/relative/path"]
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Keep requests concrete and bounded.
+- Use repo-relative paths in context_files.
+- If no delegation is needed, write: {"waves":[]}
+- Do not modify canonical reports or code in this pass.
+
+Context files:
+- Spec: $repo/$spec_file
+- Plan: $plan_file
+- Notes: $notes_file
+- Implementer report: $implementer_report
+- Tasks dir: $tasks_dir
+EOF
+
+          if [[ "$role" == "planner" ]]; then
+            cat >> "$delegation_request_prompt_file" <<'EOF'
+
+Planner reconnaissance constraints:
+- Child prompts must be read-heavy reconnaissance work (analysis/synthesis only).
+- Do not ask children to modify code, PLAN.MD, or PHASE task files.
+- Ask children to return concise findings with file references and suggested planner follow-ups.
+EOF
+          fi
+
+          local delegation_request_start_data
+          delegation_request_start_data=$(jq -n \
+            --arg role "$role" \
+            --arg request_file "${role_delegation_request_iter_file#$repo/}" \
+            --arg prompt_file "${delegation_request_prompt_file#$repo/}" \
+            '{role: $role, request_file: $request_file, prompt_file: $prompt_file}')
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_request_pass_start" "$delegation_request_start_data" "$role"
+
+          local delegation_request_runner_name
+          delegation_request_runner_name=$(get_role_runner_name "$role")
+          local delegation_request_runner_config
+          delegation_request_runner_config=$(get_runner_for_role "$role" "$delegation_request_runner_name")
+
+          local -a delegation_request_runner_command=()
+          local -a delegation_request_runner_args=()
+          local -a delegation_request_runner_fast_args=()
+          local delegation_request_runner_prompt_mode="stdin"
+
+          if [[ -n "$delegation_request_runner_config" ]]; then
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && delegation_request_runner_command+=("$line")
+            done < <(jq -r '.command[]?' <<<"$delegation_request_runner_config")
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && delegation_request_runner_args+=("$line")
+            done < <(jq -r '.args[]?' <<<"$delegation_request_runner_config")
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && delegation_request_runner_fast_args+=("$line")
+            done < <(jq -r '.fast_args[]?' <<<"$delegation_request_runner_config")
+            delegation_request_runner_prompt_mode=$(jq -r '.prompt_mode // "stdin"' <<<"$delegation_request_runner_config")
+          fi
+
+          if [[ ${#delegation_request_runner_command[@]} -eq 0 ]]; then
+            delegation_request_runner_command=("${runner_command[@]}")
+            delegation_request_runner_args=("${runner_args[@]}")
+            delegation_request_runner_fast_args=("${runner_fast_args[@]}")
+            delegation_request_runner_prompt_mode="$runner_prompt_mode"
+          fi
+
+          local -a delegation_request_runner_active_args=("${delegation_request_runner_args[@]}")
+          if [[ "${fast_mode:-0}" -eq 1 && ${#delegation_request_runner_fast_args[@]} -gt 0 ]]; then
+            delegation_request_runner_active_args=("${delegation_request_runner_fast_args[@]}")
+          fi
+
+          local delegation_request_role_model delegation_request_role_thinking delegation_request_runner_type
+          delegation_request_role_model=$(get_role_model "$role")
+          delegation_request_role_thinking=$(get_role_thinking "$role")
+          delegation_request_runner_type=$(detect_runner_type_from_cmd "${delegation_request_runner_command[0]:-}")
+          local delegation_request_thinking_env=""
+
+          if [[ -n "$delegation_request_role_model" && "$delegation_request_role_model" != "null" ]]; then
+            delegation_request_runner_active_args=("--model" "$delegation_request_role_model" "${delegation_request_runner_active_args[@]}")
+          fi
+          if [[ -n "$delegation_request_role_thinking" && "$delegation_request_role_thinking" != "null" ]]; then
+            local -a delegation_request_thinking_flags=()
+            while IFS= read -r flag; do
+              [[ -n "$flag" ]] && delegation_request_thinking_flags+=("$flag")
+            done < <(get_thinking_flags "$delegation_request_runner_type" "$delegation_request_role_thinking")
+            if [[ ${#delegation_request_thinking_flags[@]} -gt 0 ]]; then
+              delegation_request_runner_active_args=("${delegation_request_thinking_flags[@]}" "${delegation_request_runner_active_args[@]}")
+            fi
+            delegation_request_thinking_env=$(get_thinking_env "$delegation_request_runner_type" "$delegation_request_role_thinking")
+          fi
+
+          local delegation_request_rc=0
+          set +e
+          (
+            run_role \
+              "$repo" \
+              "${role}-delegation-request" \
+              "$delegation_request_prompt_file" \
+              "$delegation_request_last_message_file" \
+              "$delegation_request_log_file" \
+              "$role_delegation_child_timeout_seconds" \
+              "$delegation_request_runner_prompt_mode" \
+              "$timeout_inactivity" \
+              "$usage_file" \
+              "$iteration" \
+              "$delegation_request_thinking_env" \
+              "${delegation_request_runner_command[@]}" \
+              -- \
+              "${delegation_request_runner_active_args[@]}"
+          )
+          delegation_request_rc=$?
+          set -e
+
+          if [[ ! -f "$role_delegation_request_iter_file" && -f "$delegation_request_last_message_file" ]]; then
+            local extracted_request_json=""
+            extracted_request_json=$(sed -n '/```json/,/```/p' "$delegation_request_last_message_file" | sed '1d;$d')
+            if [[ -z "$extracted_request_json" ]]; then
+              extracted_request_json=$(sed -n '/^{/,$p' "$delegation_request_last_message_file")
+            fi
+            if [[ -n "$extracted_request_json" ]] && jq -e '.' >/dev/null 2>&1 <<<"$extracted_request_json"; then
+              printf '%s\n' "$extracted_request_json" > "$role_delegation_request_iter_file"
+            fi
+          fi
+
+          local delegation_request_pass_status="failed"
+          if [[ -f "$role_delegation_request_iter_file" ]] && jq -e '.' "$role_delegation_request_iter_file" >/dev/null 2>&1; then
+            delegation_request_pass_status="ok"
+          elif [[ "$delegation_request_rc" -eq 0 ]]; then
+            delegation_request_pass_status="no_request"
+          fi
+
+          local delegation_request_end_data
+          delegation_request_end_data=$(jq -n \
+            --arg role "$role" \
+            --arg status "$delegation_request_pass_status" \
+            --arg request_file "${role_delegation_request_iter_file#$repo/}" \
+            --arg last_message_file "${delegation_request_last_message_file#$repo/}" \
+            --argjson exit_code "$delegation_request_rc" \
+            '{role: $role, status: $status, request_file: $request_file, last_message_file: $last_message_file, exit_code: $exit_code}')
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_request_pass_end" "$delegation_request_end_data" "$role"
+
+          if [[ "$delegation_request_pass_status" == "failed" ]]; then
+            echo "warning: delegation request pass failed for role '$role' (continuing without generated request)" >&2
+          fi
+        fi
+
+        if [[ "$delegation_enabled" == "true" || -n "$role_delegation_enabled_override" ]]; then
+          local role_delegation_status_file="$role_delegation_dir/status.json"
+          local role_delegation_summary_file="$role_delegation_dir/summary.md"
+          local role_delegation_children_dir="$role_delegation_dir/children"
+          local role_delegation_waves_dir="$role_delegation_dir/waves"
+          mkdir -p "$role_delegation_dir" "$role_delegation_children_dir" "$role_delegation_waves_dir"
+
+          local role_delegation_enabled_json="false"
+          if [[ "$role_delegation_enabled" == "true" ]]; then
+            role_delegation_enabled_json="true"
+          fi
+
+          local role_delegation_status_text="disabled"
+          local role_delegation_effective_dispatch_mode="$role_delegation_dispatch_mode"
+          local role_delegation_effective_wake_policy="$role_delegation_wake_policy"
+          local role_delegation_execution_reason="$role_delegation_reason"
+          local role_delegation_request_file=""
+          local role_delegation_requested_waves=0
+          local role_delegation_executed_waves=0
+          local role_delegation_requested_children=0
+          local role_delegation_executed_children=0
+          local role_delegation_succeeded_children=0
+          local role_delegation_failed_children=0
+          local role_delegation_skipped_children=0
+          local role_delegation_recon_violation_count=0
+          local role_delegation_recon_violation_wave_id=""
+          local role_delegation_recon_violation_child_id=""
+          local role_delegation_fail_role_triggered=0
+          local role_delegation_fail_role_wave_id=""
+          local role_delegation_fail_role_child_id=""
+          local role_delegation_adaptation_dir="$role_delegation_dir/adaptation"
+          local role_delegation_adaptation_status="disabled"
+          local role_delegation_adaptation_reason="wake_policy_not_on_child_complete"
+          local role_delegation_adaptation_max_replans_per_wave=0
+          local role_delegation_adaptation_max_replans_per_iteration=0
+          local role_delegation_adaptation_attempted=0
+          local role_delegation_adaptation_applied=0
+          local role_delegation_adaptation_skipped=0
+          local role_delegation_stop_after_wave=0
+          local role_delegation_stop_reason=""
+
+          {
+            echo "# Delegation Summary"
+            echo ""
+            echo "- loop: $loop_id"
+            echo "- run_id: $run_id"
+            echo "- iteration: $iteration"
+            echo "- role: $role"
+            echo ""
+          } > "$role_delegation_summary_file"
+
+          if [[ -f "$role_delegation_request_iter_file" ]]; then
+            role_delegation_request_file="$role_delegation_request_iter_file"
+          elif [[ -f "$role_delegation_request_shared_file" ]]; then
+            role_delegation_request_file="$role_delegation_request_shared_file"
+          fi
+
+          # Phase 3: bounded serial/parallel dispatch + adaptive wake on child completion.
+          if [[ "$role_delegation_enabled" == "true" ]]; then
+            role_delegation_status_text="enabled"
+            mkdir -p "$role_delegation_adaptation_dir"
+
+            if [[ "$role_delegation_mode" == "reconnaissance" && "$role_delegation_effective_dispatch_mode" == "parallel" ]]; then
+              echo "warning: delegation mode=reconnaissance requested for role '$role' with dispatch_mode=parallel; using serial dispatch" >&2
+              role_delegation_effective_dispatch_mode="serial"
+              if [[ -n "$role_delegation_execution_reason" ]]; then
+                role_delegation_execution_reason="${role_delegation_execution_reason},reconnaissance_requires_serial"
+              else
+                role_delegation_execution_reason="reconnaissance_requires_serial"
+              fi
+            fi
+
+            if [[ "$role_delegation_effective_wake_policy" == "on_child_complete" && "$role_delegation_effective_dispatch_mode" == "parallel" ]]; then
+              echo "warning: delegation wake_policy=on_child_complete requested for role '$role' with dispatch_mode=parallel; using on_wave_complete semantics" >&2
+              role_delegation_effective_wake_policy="on_wave_complete"
+              role_delegation_adaptation_status="disabled_parallel_dispatch"
+              role_delegation_adaptation_reason="on_child_complete_requires_serial"
+              if [[ -n "$role_delegation_execution_reason" ]]; then
+                role_delegation_execution_reason="${role_delegation_execution_reason},on_child_complete_requires_serial"
+              else
+                role_delegation_execution_reason="on_child_complete_requires_serial"
+              fi
+            elif [[ "$role_delegation_effective_wake_policy" == "on_child_complete" ]]; then
+              role_delegation_adaptation_status="enabled"
+              role_delegation_adaptation_reason="on_child_complete"
+            fi
+
+            if [[ -z "$role_delegation_request_file" ]]; then
+              role_delegation_status_text="enabled_no_request"
+              echo "- status: enabled but no delegation request file found" >> "$role_delegation_summary_file"
+            elif ! jq -e '.' "$role_delegation_request_file" >/dev/null 2>&1; then
+              role_delegation_status_text="request_invalid"
+              role_delegation_execution_reason="request_invalid_json"
+              echo "warning: invalid delegation request JSON for role '$role': ${role_delegation_request_file#$repo/}" >&2
+              echo "- status: invalid request JSON (${role_delegation_request_file#$repo/})" >> "$role_delegation_summary_file"
+            else
+              local role_delegation_waves_json
+              role_delegation_waves_json=$(jq -c '
+                if (.waves | type) == "array" then .waves
+                elif (.children | type) == "array" then [{id: "wave-1", children: .children}]
+                else []
+                end' "$role_delegation_request_file" 2>/dev/null || echo "[]")
+
+              role_delegation_requested_waves=$(jq -r 'length' <<<"$role_delegation_waves_json" 2>/dev/null || echo "0")
+              role_delegation_requested_waves=$(rlms_safe_int "$role_delegation_requested_waves" 0)
+
+              if [[ "$role_delegation_requested_waves" -le 0 ]]; then
+                role_delegation_status_text="request_empty"
+                echo "- status: request contained no waves/children" >> "$role_delegation_summary_file"
+              else
+                local role_delegation_waves_to_run="$role_delegation_requested_waves"
+                if [[ "$role_delegation_waves_to_run" -gt "$role_delegation_max_waves" ]]; then
+                  role_delegation_waves_to_run="$role_delegation_max_waves"
+                fi
+                if [[ "$role_delegation_requested_waves" -gt "$role_delegation_waves_to_run" ]]; then
+                  echo "- waves truncated by max_waves (${role_delegation_waves_to_run}/${role_delegation_requested_waves})" >> "$role_delegation_summary_file"
+                fi
+
+                if [[ "$role_delegation_adaptation_status" == "enabled" ]]; then
+                  role_delegation_adaptation_max_replans_per_wave="$role_delegation_max_children"
+                  role_delegation_adaptation_max_replans_per_iteration=$((role_delegation_waves_to_run * role_delegation_adaptation_max_replans_per_wave))
+                  if [[ "$role_delegation_adaptation_max_replans_per_wave" -lt 1 ]]; then
+                    role_delegation_adaptation_max_replans_per_wave=1
+                  fi
+                  if [[ "$role_delegation_adaptation_max_replans_per_iteration" -lt 1 ]]; then
+                    role_delegation_adaptation_max_replans_per_iteration="$role_delegation_adaptation_max_replans_per_wave"
+                  fi
+                fi
+
+                local delegation_runner_name
+                delegation_runner_name=$(get_role_runner_name "$role")
+                local delegation_runner_config
+                delegation_runner_config=$(get_runner_for_role "$role" "$delegation_runner_name")
+
+                local -a delegation_runner_command=()
+                local -a delegation_runner_args=()
+                local -a delegation_runner_fast_args=()
+                local delegation_runner_prompt_mode="stdin"
+
+                if [[ -n "$delegation_runner_config" ]]; then
+                  while IFS= read -r line; do
+                    [[ -n "$line" ]] && delegation_runner_command+=("$line")
+                  done < <(jq -r '.command[]?' <<<"$delegation_runner_config")
+                  while IFS= read -r line; do
+                    [[ -n "$line" ]] && delegation_runner_args+=("$line")
+                  done < <(jq -r '.args[]?' <<<"$delegation_runner_config")
+                  while IFS= read -r line; do
+                    [[ -n "$line" ]] && delegation_runner_fast_args+=("$line")
+                  done < <(jq -r '.fast_args[]?' <<<"$delegation_runner_config")
+                  delegation_runner_prompt_mode=$(jq -r '.prompt_mode // "stdin"' <<<"$delegation_runner_config")
+                fi
+
+                if [[ ${#delegation_runner_command[@]} -eq 0 ]]; then
+                  delegation_runner_command=("${runner_command[@]}")
+                  delegation_runner_args=("${runner_args[@]}")
+                  delegation_runner_fast_args=("${runner_fast_args[@]}")
+                  delegation_runner_prompt_mode="$runner_prompt_mode"
+                fi
+                if [[ "$delegation_runner_prompt_mode" != "stdin" && "$delegation_runner_prompt_mode" != "file" ]]; then
+                  delegation_runner_prompt_mode="stdin"
+                fi
+
+                local -a delegation_runner_active_args=("${delegation_runner_args[@]}")
+                if [[ "${fast_mode:-0}" -eq 1 && ${#delegation_runner_fast_args[@]} -gt 0 ]]; then
+                  delegation_runner_active_args=("${delegation_runner_fast_args[@]}")
+                fi
+
+                local delegation_role_model delegation_role_thinking delegation_runner_type delegation_thinking_env
+                delegation_role_model=$(get_role_model "$role")
+                delegation_role_thinking=$(get_role_thinking "$role")
+                delegation_runner_type=$(detect_runner_type_from_cmd "${delegation_runner_command[0]:-}")
+                delegation_thinking_env=""
+
+                if [[ -n "$delegation_role_model" && "$delegation_role_model" != "null" ]]; then
+                  delegation_runner_active_args=("--model" "$delegation_role_model" "${delegation_runner_active_args[@]}")
+                fi
+                if [[ -n "$delegation_role_thinking" && "$delegation_role_thinking" != "null" ]]; then
+                  local -a delegation_thinking_flags=()
+                  while IFS= read -r flag; do
+                    [[ -n "$flag" ]] && delegation_thinking_flags+=("$flag")
+                  done < <(get_thinking_flags "$delegation_runner_type" "$delegation_role_thinking")
+                  if [[ ${#delegation_thinking_flags[@]} -gt 0 ]]; then
+                    delegation_runner_active_args=("${delegation_thinking_flags[@]}" "${delegation_runner_active_args[@]}")
+                  fi
+                  delegation_thinking_env=$(get_thinking_env "$delegation_runner_type" "$delegation_role_thinking")
+                fi
+
+                if [[ ${#delegation_runner_command[@]} -eq 0 ]]; then
+                  role_delegation_status_text="child_runner_missing"
+                  role_delegation_execution_reason="child_runner_missing"
+                  echo "warning: delegation is enabled for role '$role' but no runner command is configured" >&2
+                  echo "- status: child runner missing" >> "$role_delegation_summary_file"
+                else
+                  echo "- request file: ${role_delegation_request_file#$repo/}" >> "$role_delegation_summary_file"
+                  echo "- executing waves: ${role_delegation_waves_to_run}" >> "$role_delegation_summary_file"
+                  echo "- dispatch: ${role_delegation_effective_dispatch_mode}" >> "$role_delegation_summary_file"
+                  echo "- wake policy: ${role_delegation_effective_wake_policy}" >> "$role_delegation_summary_file"
+                  echo "- mode: ${role_delegation_mode}" >> "$role_delegation_summary_file"
+                  echo "- failure policy: ${role_delegation_failure_policy}" >> "$role_delegation_summary_file"
+                  echo "- retry limit: ${role_delegation_retry_limit}" >> "$role_delegation_summary_file"
+                  echo "- retry backoff seconds: ${role_delegation_retry_backoff_seconds}" >> "$role_delegation_summary_file"
+                  echo "- retry backoff max seconds: ${role_delegation_retry_backoff_max_seconds}" >> "$role_delegation_summary_file"
+                  echo "- adaptation status: ${role_delegation_adaptation_status}" >> "$role_delegation_summary_file"
+                  if [[ "$role_delegation_adaptation_status" == "enabled" ]]; then
+                    echo "- adaptation max replans per wave: ${role_delegation_adaptation_max_replans_per_wave}" >> "$role_delegation_summary_file"
+                    echo "- adaptation max replans per iteration: ${role_delegation_adaptation_max_replans_per_iteration}" >> "$role_delegation_summary_file"
+                  else
+                    echo "- adaptation reason: ${role_delegation_adaptation_reason}" >> "$role_delegation_summary_file"
+                  fi
+                  echo "" >> "$role_delegation_summary_file"
+
+                  local wave_number
+                  for ((wave_number=1; wave_number<=role_delegation_waves_to_run; wave_number++)); do
+                    local wave_json
+                    wave_json=$(jq -c ".[$((wave_number - 1))]" <<<"$role_delegation_waves_json")
+                    local wave_id
+                    wave_id=$(jq -r --arg default "wave-$wave_number" '.id // $default' <<<"$wave_json")
+                    wave_id=$(sanitize_delegation_id "$wave_id")
+                    local wave_dir="$role_delegation_waves_dir/$wave_id"
+                    mkdir -p "$wave_dir"
+
+                    local wave_children_json
+                    wave_children_json=$(jq -c '.children // []' <<<"$wave_json")
+                    local wave_requested_children wave_children_to_run
+                    wave_requested_children=$(jq -r 'length' <<<"$wave_children_json" 2>/dev/null || echo "0")
+                    wave_requested_children=$(rlms_safe_int "$wave_requested_children" 0)
+                    wave_children_to_run="$wave_requested_children"
+                    if [[ "$wave_children_to_run" -gt "$role_delegation_max_children" ]]; then
+                      wave_children_to_run="$role_delegation_max_children"
+                    fi
+                    if [[ "$wave_children_to_run" -lt 0 ]]; then
+                      wave_children_to_run=0
+                    fi
+
+                    role_delegation_requested_children=$((role_delegation_requested_children + wave_requested_children))
+
+                    local delegation_wave_start_data
+                    delegation_wave_start_data=$(jq -n \
+                      --arg role "$role" \
+                      --arg wave_id "$wave_id" \
+                      --arg dispatch_mode "$role_delegation_effective_dispatch_mode" \
+                      --arg wake_policy "$role_delegation_effective_wake_policy" \
+                      --argjson enabled "$role_delegation_enabled_json" \
+                      --argjson requested_children "$wave_requested_children" \
+                      --argjson children_to_run "$wave_children_to_run" \
+                      --argjson wave "$wave_number" \
+                      '{role: $role, wave_id: $wave_id, wave: $wave, dispatch_mode: $dispatch_mode, wake_policy: $wake_policy, enabled: $enabled, requested_children: $requested_children, children_to_run: $children_to_run}')
+                    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_start" "$delegation_wave_start_data" "$role"
+
+                    local wave_executed_children=0
+                    local wave_succeeded_children=0
+                    local wave_failed_children=0
+                    local wave_adaptation_attempted=0
+                    local wave_adaptation_stopped=0
+
+                    if [[ "$wave_children_to_run" -gt 0 ]]; then
+                      local -a wave_parallel_pids=()
+                      local -a wave_parallel_child_ids=()
+                      local -a wave_parallel_child_status_files=()
+                      local -a wave_parallel_child_log_files=()
+                      local -a wave_parallel_child_last_files=()
+                      local -a wave_parallel_child_usage_files=()
+
+                      local child_number
+                      for ((child_number=1; child_number<=wave_children_to_run; child_number++)); do
+                        local child_json
+                        child_json=$(jq -c ".[$((child_number - 1))]" <<<"$wave_children_json")
+
+                        local child_id
+                        child_id=$(jq -r --arg default "child-$child_number" '.id // $default' <<<"$child_json")
+                        child_id=$(sanitize_delegation_id "$child_id")
+
+                        local child_prompt_text
+                        child_prompt_text=$(jq -r '.prompt // .task // .instruction // empty' <<<"$child_json")
+                        if [[ -z "$child_prompt_text" ]]; then
+                          child_prompt_text="Summarize relevant code context and propose concrete implementation steps for this delegated subtask."
+                        fi
+
+                        local child_dir="$role_delegation_children_dir/$wave_id/$child_id"
+                        local child_prompt_file="$child_dir/prompt.md"
+                        local child_log_file="$child_dir/output.log"
+                        local child_last_message_file="$child_dir/last_message.txt"
+                        local child_status_file="$child_dir/status.json"
+                        local child_context_file="$child_dir/context-files.txt"
+                        local child_usage_file="$child_dir/usage.jsonl"
+                        mkdir -p "$child_dir"
+                        : > "$child_context_file"
+                        : > "$child_usage_file"
+
+                        while IFS= read -r ctx_path; do
+                          [[ -z "$ctx_path" || "$ctx_path" == "null" ]] && continue
+                          local ctx_abs_path="$ctx_path"
+                          if [[ "$ctx_path" != /* ]]; then
+                            ctx_abs_path="$repo/$ctx_path"
+                          fi
+                          if [[ -f "$ctx_abs_path" ]]; then
+                            printf '%s\n' "$ctx_abs_path" >> "$child_context_file"
+                          fi
+                        done < <(jq -r '.context_files[]? // empty' <<<"$child_json")
+
+                        {
+                          echo "You are a delegated child agent in Superloop."
+                          echo ""
+                          echo "Parent role: $role"
+                          echo "Loop: $loop_id"
+                          echo "Run: $run_id"
+                          echo "Iteration: $iteration"
+                          echo "Wave: $wave_id"
+                          echo "Child: $child_id"
+                          echo ""
+                          echo "Subtask:"
+                          echo "$child_prompt_text"
+                          echo ""
+                          echo "Constraints:"
+                          echo "- Focus only on this subtask."
+                          echo "- Do not claim overall loop completion."
+                          echo "- Return concise actionable output for the parent role."
+                          if [[ "$role_delegation_mode" == "reconnaissance" ]]; then
+                            echo "- Reconnaissance-only mode: analyze existing context; do not apply code or file edits."
+                            echo "- Do not modify PLAN.MD, PHASE task files, or canonical role reports."
+                            echo "- Prefer findings, risks, and suggested planner follow-up tasks with file references."
+                          fi
+                          if [[ -s "$child_context_file" ]]; then
+                            echo ""
+                            echo "Context files (read as needed):"
+                            sed 's#^#- #' "$child_context_file"
+                          fi
+                        } > "$child_prompt_file"
+
+                        local child_start_data
+                        child_start_data=$(jq -n \
+                          --arg role "$role" \
+                          --arg wave_id "$wave_id" \
+                          --arg child_id "$child_id" \
+                          --arg prompt_file "${child_prompt_file#$repo/}" \
+                          --argjson max_retries "$role_delegation_retry_limit" \
+                          '{role: $role, wave_id: $wave_id, child_id: $child_id, prompt_file: $prompt_file, max_retries: $max_retries}')
+                        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_child_start" "$child_start_data" "$role"
+
+                        if [[ "$role_delegation_effective_dispatch_mode" == "parallel" ]]; then
+                          (
+                            set +e
+                            child_attempt=0
+                            child_max_attempts=$((role_delegation_retry_limit + 1))
+                            child_rc=1
+                            while [[ "$child_attempt" -lt "$child_max_attempts" ]]; do
+                              child_attempt=$((child_attempt + 1))
+                              (
+                                run_role \
+                                  "$repo" \
+                                  "${role}-child-${wave_id}-${child_id}" \
+                                  "$child_prompt_file" \
+                                  "$child_last_message_file" \
+                                  "$child_log_file" \
+                                  "$role_delegation_child_timeout_seconds" \
+                                  "$delegation_runner_prompt_mode" \
+                                  "$timeout_inactivity" \
+                                  "$child_usage_file" \
+                                  "$iteration" \
+                                  "$delegation_thinking_env" \
+                                  "${delegation_runner_command[@]}" \
+                                  -- \
+                                  "${delegation_runner_active_args[@]}"
+                              )
+                              child_rc=$?
+                              if [[ "$child_rc" -eq 0 ]]; then
+                                break
+                              fi
+                              if [[ "$child_attempt" -lt "$child_max_attempts" ]]; then
+                                child_backoff_seconds=$(compute_delegation_retry_backoff_seconds "$role_delegation_retry_backoff_seconds" "$role_delegation_retry_backoff_max_seconds" "$child_attempt")
+                                if [[ "$child_backoff_seconds" -gt 0 ]]; then
+                                  sleep "$child_backoff_seconds"
+                                fi
+                              fi
+                            done
+
+                            child_status_text="failed"
+                            if [[ "$child_rc" -eq 0 ]]; then
+                              child_status_text="ok"
+                            elif [[ "$child_rc" -eq 124 ]]; then
+                              child_status_text="timeout"
+                            elif [[ "$child_rc" -eq 125 ]]; then
+                              child_status_text="rate_limited"
+                            fi
+
+                            jq -n \
+                              --arg generated_at "$(timestamp)" \
+                              --arg role "$role" \
+                              --arg wave_id "$wave_id" \
+                              --arg child_id "$child_id" \
+                              --arg status "$child_status_text" \
+                              --argjson exit_code "$child_rc" \
+                              --argjson attempts "$child_attempt" \
+                              --arg prompt_file "${child_prompt_file#$repo/}" \
+                              --arg log_file "${child_log_file#$repo/}" \
+                              --arg last_message_file "${child_last_message_file#$repo/}" \
+                              --arg usage_file "${child_usage_file#$repo/}" \
+                              '{
+                                generated_at: $generated_at,
+                                role: $role,
+                                wave_id: $wave_id,
+                                child_id: $child_id,
+                                status: $status,
+                                exit_code: $exit_code,
+                                attempts: $attempts,
+                                prompt_file: $prompt_file,
+                                log_file: $log_file,
+                                last_message_file: $last_message_file,
+                                usage_file: $usage_file
+                              }' > "$child_status_file"
+                          ) &
+                          wave_parallel_pids+=("$!")
+                          wave_parallel_child_ids+=("$child_id")
+                          wave_parallel_child_status_files+=("$child_status_file")
+                          wave_parallel_child_log_files+=("$child_log_file")
+                          wave_parallel_child_last_files+=("$child_last_message_file")
+                          wave_parallel_child_usage_files+=("$child_usage_file")
+                          continue
+                        fi
+
+                        local recon_before_dirty_file="$child_dir/recon.before.dirty.txt"
+                        local recon_after_dirty_file="$child_dir/recon.after.dirty.txt"
+                        local recon_violation_file="$child_dir/recon.violation.txt"
+                        local recon_before_signature=""
+                        local recon_after_signature=""
+                        local recon_violation_detected=0
+                        : > "$recon_violation_file"
+                        if [[ "$role_delegation_mode" == "reconnaissance" ]]; then
+                          collect_dirty_paths "$repo" "$recon_before_dirty_file"
+                          recon_before_signature=$(compute_signature "$repo" ".superloop/**" ".git/**")
+                        fi
+
+                        local child_attempt=0
+                        local child_max_attempts=$((role_delegation_retry_limit + 1))
+                        local child_rc=1
+                        while [[ "$child_attempt" -lt "$child_max_attempts" ]]; do
+                          child_attempt=$((child_attempt + 1))
+                          set +e
+                          (
+                            run_role \
+                              "$repo" \
+                              "${role}-child-${wave_id}-${child_id}" \
+                              "$child_prompt_file" \
+                              "$child_last_message_file" \
+                              "$child_log_file" \
+                              "$role_delegation_child_timeout_seconds" \
+                              "$delegation_runner_prompt_mode" \
+                              "$timeout_inactivity" \
+                              "$child_usage_file" \
+                              "$iteration" \
+                              "$delegation_thinking_env" \
+                              "${delegation_runner_command[@]}" \
+                              -- \
+                              "${delegation_runner_active_args[@]}"
+                          )
+                          child_rc=$?
+                          set -e
+                          if [[ "$child_rc" -eq 0 ]]; then
+                            break
+                          fi
+                          if [[ "$child_attempt" -lt "$child_max_attempts" ]]; then
+                            local child_backoff_seconds
+                            child_backoff_seconds=$(compute_delegation_retry_backoff_seconds "$role_delegation_retry_backoff_seconds" "$role_delegation_retry_backoff_max_seconds" "$child_attempt")
+                            if [[ "$child_backoff_seconds" -gt 0 ]]; then
+                              sleep "$child_backoff_seconds"
+                            fi
+                          fi
+                        done
+
+                        if [[ "$role_delegation_mode" == "reconnaissance" ]]; then
+                          collect_dirty_paths "$repo" "$recon_after_dirty_file"
+                          recon_after_signature=$(compute_signature "$repo" ".superloop/**" ".git/**")
+                          if [[ "$recon_before_signature" != "$recon_after_signature" ]]; then
+                            recon_violation_detected=1
+                            awk 'NR==FNR { before[$0]=1; next } !($0 in before) { print }' "$recon_before_dirty_file" "$recon_after_dirty_file" > "$recon_violation_file" || true
+                            if [[ ! -s "$recon_violation_file" ]]; then
+                              printf '%s\n' "__dirty_signature_changed__" > "$recon_violation_file"
+                            fi
+                          fi
+                        fi
+
+                        local child_status_text="failed"
+                        if [[ "$child_rc" -eq 0 ]]; then
+                          child_status_text="ok"
+                        elif [[ "$child_rc" -eq 124 ]]; then
+                          child_status_text="timeout"
+                        elif [[ "$child_rc" -eq 125 ]]; then
+                          child_status_text="rate_limited"
+                        fi
+
+                        if [[ "$recon_violation_detected" -eq 1 ]]; then
+                          child_rc=97
+                          child_status_text="policy_violation"
+                          role_delegation_recon_violation_count=$((role_delegation_recon_violation_count + 1))
+                          role_delegation_recon_violation_wave_id="$wave_id"
+                          role_delegation_recon_violation_child_id="$child_id"
+
+                          local recon_violation_files_json
+                          recon_violation_files_json=$(jq -R . < "$recon_violation_file" | jq -s '.')
+                          local recon_violation_data
+                          recon_violation_data=$(jq -n \
+                            --arg role "$role" \
+                            --arg wave_id "$wave_id" \
+                            --arg child_id "$child_id" \
+                            --arg mode "$role_delegation_mode" \
+                            --arg failure_policy "$role_delegation_failure_policy" \
+                            --argjson changed_files "$recon_violation_files_json" \
+                            '{role: $role, wave_id: $wave_id, child_id: $child_id, mode: $mode, failure_policy: $failure_policy, changed_files: $changed_files}')
+                          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_recon_violation" "$recon_violation_data" "$role" "error"
+                          echo "warning: reconnaissance delegation child '$child_id' for role '$role' produced repo edits" >&2
+
+                          {
+                            echo "  recon_violation: true"
+                            echo "  recon_changed_files: |"
+                            sed 's/^/    /' "$recon_violation_file"
+                          } >> "$role_delegation_summary_file"
+                        fi
+
+                        jq -n \
+                          --arg generated_at "$(timestamp)" \
+                          --arg role "$role" \
+                          --arg wave_id "$wave_id" \
+                          --arg child_id "$child_id" \
+                          --arg status "$child_status_text" \
+                          --argjson exit_code "$child_rc" \
+                          --argjson attempts "$child_attempt" \
+                          --arg prompt_file "${child_prompt_file#$repo/}" \
+                          --arg log_file "${child_log_file#$repo/}" \
+                          --arg last_message_file "${child_last_message_file#$repo/}" \
+                          --arg usage_file "${child_usage_file#$repo/}" \
+                          '{
+                            generated_at: $generated_at,
+                            role: $role,
+                            wave_id: $wave_id,
+                            child_id: $child_id,
+                            status: $status,
+                            exit_code: $exit_code,
+                            attempts: $attempts,
+                            prompt_file: $prompt_file,
+                            log_file: $log_file,
+                            last_message_file: $last_message_file,
+                            usage_file: $usage_file
+                          }' > "$child_status_file"
+
+                        append_usage_records_file "$child_usage_file" "$usage_file"
+
+                        local child_end_data
+                        child_end_data=$(jq -n \
+                          --arg role "$role" \
+                          --arg wave_id "$wave_id" \
+                          --arg child_id "$child_id" \
+                          --arg status "$child_status_text" \
+                          --argjson exit_code "$child_rc" \
+                          --argjson attempts "$child_attempt" \
+                          --arg log_file "${child_log_file#$repo/}" \
+                          --arg last_message_file "${child_last_message_file#$repo/}" \
+                          '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
+                        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_child_end" "$child_end_data" "$role"
+
+                        {
+                          echo "- child: $child_id"
+                          echo "  status: $child_status_text"
+                          echo "  attempts: $child_attempt"
+                          echo "  exit_code: $child_rc"
+                          echo "  log_file: ${child_log_file#$repo/}"
+                          echo "  last_message_file: ${child_last_message_file#$repo/}"
+                        } >> "$role_delegation_summary_file"
+                        if [[ -f "$child_last_message_file" ]]; then
+                          {
+                            echo "  output_excerpt: |"
+                            sed -n '1,12p' "$child_last_message_file" | sed 's/^/    /'
+                          } >> "$role_delegation_summary_file"
+                        fi
+                        echo "" >> "$role_delegation_summary_file"
+
+                        wave_executed_children=$((wave_executed_children + 1))
+                        if [[ "$child_rc" -eq 0 ]]; then
+                          wave_succeeded_children=$((wave_succeeded_children + 1))
+                        else
+                          wave_failed_children=$((wave_failed_children + 1))
+                          if [[ "$role_delegation_failure_policy" == "fail_role" ]]; then
+                            role_delegation_fail_role_triggered=1
+                            role_delegation_fail_role_wave_id="$wave_id"
+                            role_delegation_fail_role_child_id="$child_id"
+                            role_delegation_stop_after_wave=1
+                            if [[ "$child_status_text" == "policy_violation" ]]; then
+                              role_delegation_stop_reason="recon_violation_fail_role"
+                              if [[ -z "$role_delegation_execution_reason" ]]; then
+                                role_delegation_execution_reason="recon_violation_fail_role"
+                              elif [[ "$role_delegation_execution_reason" != *"recon_violation_fail_role"* ]]; then
+                                role_delegation_execution_reason="${role_delegation_execution_reason},recon_violation_fail_role"
+                              fi
+                            else
+                              role_delegation_stop_reason="failure_policy_fail_role"
+                              if [[ -z "$role_delegation_execution_reason" ]]; then
+                                role_delegation_execution_reason="child_failure_fail_role"
+                              elif [[ "$role_delegation_execution_reason" != *"child_failure_fail_role"* ]]; then
+                                role_delegation_execution_reason="${role_delegation_execution_reason},child_failure_fail_role"
+                              fi
+                            fi
+                          fi
+                          if [[ "$child_status_text" == "policy_violation" && "$role_delegation_failure_policy" != "fail_role" ]]; then
+                            if [[ -z "$role_delegation_execution_reason" ]]; then
+                              role_delegation_execution_reason="recon_violation_warned"
+                            elif [[ "$role_delegation_execution_reason" != *"recon_violation_warned"* ]]; then
+                              role_delegation_execution_reason="${role_delegation_execution_reason},recon_violation_warned"
+                            fi
+                          fi
+                        fi
+
+                        if [[ "$role_delegation_fail_role_triggered" -eq 1 ]]; then
+                          break
+                        fi
+
+                        if [[ "$role_delegation_effective_dispatch_mode" == "serial" && "$role_delegation_effective_wake_policy" == "on_child_complete" && "$child_number" -lt "$wave_children_to_run" ]]; then
+                          local adaptation_skip_reason=""
+                          if [[ "$wave_adaptation_attempted" -ge "$role_delegation_adaptation_max_replans_per_wave" ]]; then
+                            adaptation_skip_reason="wave_limit_reached"
+                          elif [[ "$role_delegation_adaptation_attempted" -ge "$role_delegation_adaptation_max_replans_per_iteration" ]]; then
+                            adaptation_skip_reason="iteration_limit_reached"
+                          fi
+
+                          if [[ -n "$adaptation_skip_reason" ]]; then
+                            role_delegation_adaptation_skipped=$((role_delegation_adaptation_skipped + 1))
+                            local adaptation_skip_data
+                            adaptation_skip_data=$(jq -n \
+                              --arg role "$role" \
+                              --arg wave_id "$wave_id" \
+                              --arg child_id "$child_id" \
+                              --arg reason "$adaptation_skip_reason" \
+                              --argjson wave "$wave_number" \
+                              --argjson child "$child_number" \
+                              --argjson attempted_wave "$wave_adaptation_attempted" \
+                              --argjson attempted_iteration "$role_delegation_adaptation_attempted" \
+                              '{role: $role, wave_id: $wave_id, child_id: $child_id, wave: $wave, child: $child, reason: $reason, attempted_wave: $attempted_wave, attempted_iteration: $attempted_iteration}')
+                            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_adaptation_skipped" "$adaptation_skip_data" "$role"
+                          else
+                            role_delegation_adaptation_attempted=$((role_delegation_adaptation_attempted + 1))
+                            wave_adaptation_attempted=$((wave_adaptation_attempted + 1))
+
+                            local adaptation_wave_dir="$role_delegation_adaptation_dir/$wave_id"
+                            mkdir -p "$adaptation_wave_dir"
+                            local adaptation_pass_id="after-child-$child_number"
+                            local adaptation_prompt_file="$adaptation_wave_dir/${adaptation_pass_id}.prompt.md"
+                            local adaptation_log_file="$adaptation_wave_dir/${adaptation_pass_id}.log"
+                            local adaptation_last_message_file="$adaptation_wave_dir/${adaptation_pass_id}.last_message.txt"
+                            local adaptation_decision_file="$adaptation_wave_dir/${adaptation_pass_id}.decision.json"
+                            local adaptation_usage_file="$adaptation_wave_dir/${adaptation_pass_id}.usage.jsonl"
+                            : > "$adaptation_usage_file"
+
+                            {
+                              echo "You are adapting delegation after a child completion."
+                              echo ""
+                              echo "Parent role: $role"
+                              echo "Loop: $loop_id"
+                              echo "Run: $run_id"
+                              echo "Iteration: $iteration"
+                              echo "Wave: $wave_id"
+                              echo "Completed child: $child_id"
+                              echo "Completed child index: $child_number of $wave_children_to_run"
+                              echo "Completed child status: $child_status_text"
+                              echo "Completed child exit code: $child_rc"
+                              echo "Completed child attempts: $child_attempt"
+                              echo "Completed child output: ${child_last_message_file#$repo/}"
+                              echo ""
+                              echo "Write adaptation decision JSON to this exact file path:"
+                              echo "$adaptation_decision_file"
+                              echo ""
+                              echo "JSON shape:"
+                              echo "{"
+                              echo '  "continue_wave": true,'
+                              echo '  "continue_delegation": true,'
+                              echo '  "reason": "short rationale"'
+                              echo "}"
+                              echo ""
+                              echo "Rules:"
+                              echo "- Set continue_wave=false to stop remaining children in this wave."
+                              echo "- Set continue_delegation=false to stop all remaining waves."
+                              echo "- Keep both true if no replanning is needed."
+                              echo "- Do not modify code or canonical role reports in this pass."
+                            } > "$adaptation_prompt_file"
+
+                            local adaptation_start_data
+                            adaptation_start_data=$(jq -n \
+                              --arg role "$role" \
+                              --arg wave_id "$wave_id" \
+                              --arg child_id "$child_id" \
+                              --arg prompt_file "${adaptation_prompt_file#$repo/}" \
+                              --arg decision_file "${adaptation_decision_file#$repo/}" \
+                              --argjson wave "$wave_number" \
+                              --argjson child "$child_number" \
+                              --argjson attempted_wave "$wave_adaptation_attempted" \
+                              --argjson attempted_iteration "$role_delegation_adaptation_attempted" \
+                              --argjson max_replans_per_wave "$role_delegation_adaptation_max_replans_per_wave" \
+                              --argjson max_replans_per_iteration "$role_delegation_adaptation_max_replans_per_iteration" \
+                              '{role: $role, wave_id: $wave_id, child_id: $child_id, wave: $wave, child: $child, prompt_file: $prompt_file, decision_file: $decision_file, attempted_wave: $attempted_wave, attempted_iteration: $attempted_iteration, max_replans_per_wave: $max_replans_per_wave, max_replans_per_iteration: $max_replans_per_iteration}')
+                            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_adaptation_start" "$adaptation_start_data" "$role"
+
+                            local adaptation_rc=0
+                            set +e
+                            (
+                              run_role \
+                                "$repo" \
+                                "${role}-adapt-${wave_id}-${child_id}-${wave_adaptation_attempted}" \
+                                "$adaptation_prompt_file" \
+                                "$adaptation_last_message_file" \
+                                "$adaptation_log_file" \
+                                "$role_delegation_child_timeout_seconds" \
+                                "$delegation_runner_prompt_mode" \
+                                "$timeout_inactivity" \
+                                "$adaptation_usage_file" \
+                                "$iteration" \
+                                "$delegation_thinking_env" \
+                                "${delegation_runner_command[@]}" \
+                                -- \
+                                "${delegation_runner_active_args[@]}"
+                            )
+                            adaptation_rc=$?
+                            set -e
+
+                            append_usage_records_file "$adaptation_usage_file" "$usage_file"
+
+                            if [[ ! -f "$adaptation_decision_file" && -f "$adaptation_last_message_file" ]]; then
+                              local extracted_adaptation_json=""
+                              extracted_adaptation_json=$(sed -n '/```json/,/```/p' "$adaptation_last_message_file" | sed '1d;$d')
+                              if [[ -z "$extracted_adaptation_json" ]]; then
+                                extracted_adaptation_json=$(sed -n '/^{/,$p' "$adaptation_last_message_file")
+                              fi
+                              if [[ -n "$extracted_adaptation_json" ]] && jq -e '.' >/dev/null 2>&1 <<<"$extracted_adaptation_json"; then
+                                printf '%s\n' "$extracted_adaptation_json" > "$adaptation_decision_file"
+                              fi
+                            fi
+
+                            local adaptation_status="failed"
+                            local adaptation_decision_continue_wave="true"
+                            local adaptation_decision_continue_delegation="true"
+                            local adaptation_decision_reason=""
+                            if [[ -f "$adaptation_decision_file" ]] && jq -e '.' "$adaptation_decision_file" >/dev/null 2>&1; then
+                              adaptation_status="ok"
+                              adaptation_decision_continue_wave=$(jq -r '
+                                if (.continue_wave | type) == "boolean" then (.continue_wave | tostring)
+                                elif (.continue | type) == "boolean" then (.continue | tostring)
+                                elif (.stop_wave | type) == "boolean" then (if .stop_wave then "false" else "true" end)
+                                else "true"
+                                end' "$adaptation_decision_file" 2>/dev/null || echo "true")
+                              adaptation_decision_continue_delegation=$(jq -r '
+                                if (.continue_delegation | type) == "boolean" then (.continue_delegation | tostring)
+                                elif (.continue_iteration | type) == "boolean" then (.continue_iteration | tostring)
+                                elif (.stop_delegation | type) == "boolean" then (if .stop_delegation then "false" else "true" end)
+                                else "true"
+                                end' "$adaptation_decision_file" 2>/dev/null || echo "true")
+                              adaptation_decision_reason=$(jq -r '.reason // .rationale // .note // empty' "$adaptation_decision_file" 2>/dev/null || echo "")
+                            elif [[ "$adaptation_rc" -eq 0 ]]; then
+                              adaptation_status="no_decision"
+                            fi
+
+                            if [[ "$adaptation_decision_continue_wave" != "true" && "$adaptation_decision_continue_wave" != "false" ]]; then
+                              adaptation_decision_continue_wave="true"
+                            fi
+                            if [[ "$adaptation_decision_continue_delegation" != "true" && "$adaptation_decision_continue_delegation" != "false" ]]; then
+                              adaptation_decision_continue_delegation="true"
+                            fi
+
+                            local adaptation_applied="false"
+                            if [[ "$adaptation_status" == "ok" && ( "$adaptation_decision_continue_wave" == "false" || "$adaptation_decision_continue_delegation" == "false" ) ]]; then
+                              adaptation_applied="true"
+                              role_delegation_adaptation_applied=$((role_delegation_adaptation_applied + 1))
+                              wave_adaptation_stopped=1
+                            fi
+
+                            local adaptation_end_data
+                            adaptation_end_data=$(jq -n \
+                              --arg role "$role" \
+                              --arg wave_id "$wave_id" \
+                              --arg child_id "$child_id" \
+                              --arg status "$adaptation_status" \
+                              --arg continue_wave "$adaptation_decision_continue_wave" \
+                              --arg continue_delegation "$adaptation_decision_continue_delegation" \
+                              --arg reason "$adaptation_decision_reason" \
+                              --arg decision_file "${adaptation_decision_file#$repo/}" \
+                              --arg last_message_file "${adaptation_last_message_file#$repo/}" \
+                              --argjson exit_code "$adaptation_rc" \
+                              --argjson wave "$wave_number" \
+                              --argjson child "$child_number" \
+                              --argjson attempted_wave "$wave_adaptation_attempted" \
+                              --argjson attempted_iteration "$role_delegation_adaptation_attempted" \
+                              --argjson applied "$(if [[ "$adaptation_applied" == "true" ]]; then echo true; else echo false; fi)" \
+                              '{role: $role, wave_id: $wave_id, child_id: $child_id, wave: $wave, child: $child, status: $status, continue_wave: $continue_wave, continue_delegation: $continue_delegation, reason: (if ($reason | length) > 0 then $reason else null end), decision_file: $decision_file, last_message_file: $last_message_file, exit_code: $exit_code, attempted_wave: $attempted_wave, attempted_iteration: $attempted_iteration, applied: $applied} | with_entries(select(.value != null))')
+                            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_adaptation_end" "$adaptation_end_data" "$role"
+
+                            {
+                              echo "- adaptation after child: $child_id"
+                              echo "  status: $adaptation_status"
+                              echo "  continue_wave: $adaptation_decision_continue_wave"
+                              echo "  continue_delegation: $adaptation_decision_continue_delegation"
+                              echo "  decision_file: ${adaptation_decision_file#$repo/}"
+                              echo "  output_file: ${adaptation_last_message_file#$repo/}"
+                              if [[ -n "$adaptation_decision_reason" ]]; then
+                                echo "  reason: $adaptation_decision_reason"
+                              fi
+                            } >> "$role_delegation_summary_file"
+                            echo "" >> "$role_delegation_summary_file"
+
+                            if [[ "$adaptation_decision_continue_delegation" == "false" ]]; then
+                              role_delegation_stop_after_wave=1
+                              role_delegation_stop_reason="adaptation_decision"
+                            fi
+                            if [[ "$adaptation_decision_continue_wave" == "false" || "$adaptation_decision_continue_delegation" == "false" ]]; then
+                              if [[ -z "$role_delegation_execution_reason" ]]; then
+                                role_delegation_execution_reason="adapted_after_child"
+                              elif [[ "$role_delegation_execution_reason" != *"adapted_after_child"* ]]; then
+                                role_delegation_execution_reason="${role_delegation_execution_reason},adapted_after_child"
+                              fi
+                              break
+                            fi
+                          fi
+                        fi
+                      done
+
+                      if [[ "$role_delegation_effective_dispatch_mode" == "parallel" ]]; then
+                        local parallel_index
+                        for parallel_index in "${!wave_parallel_pids[@]}"; do
+                          set +e
+                          wait "${wave_parallel_pids[$parallel_index]}"
+                          set -e
+
+                          local final_child_id="${wave_parallel_child_ids[$parallel_index]}"
+                          local final_child_status_file="${wave_parallel_child_status_files[$parallel_index]}"
+                          local final_child_log_file="${wave_parallel_child_log_files[$parallel_index]}"
+                          local final_child_last_message_file="${wave_parallel_child_last_files[$parallel_index]}"
+                          local final_child_usage_file="${wave_parallel_child_usage_files[$parallel_index]}"
+
+                          if [[ ! -f "$final_child_status_file" ]]; then
+                            jq -n \
+                              --arg generated_at "$(timestamp)" \
+                              --arg role "$role" \
+                              --arg wave_id "$wave_id" \
+                              --arg child_id "$final_child_id" \
+                              --arg status "failed" \
+                              --argjson exit_code 1 \
+                              --argjson attempts 0 \
+                              --arg prompt_file "" \
+                              --arg log_file "${final_child_log_file#$repo/}" \
+                              --arg last_message_file "${final_child_last_message_file#$repo/}" \
+                              --arg usage_file "${final_child_usage_file#$repo/}" \
+                              '{
+                                generated_at: $generated_at,
+                                role: $role,
+                                wave_id: $wave_id,
+                                child_id: $child_id,
+                                status: $status,
+                                exit_code: $exit_code,
+                                attempts: $attempts,
+                                prompt_file: (if ($prompt_file | length) > 0 then $prompt_file else null end),
+                                log_file: $log_file,
+                                last_message_file: $last_message_file,
+                                usage_file: $usage_file
+                              } | with_entries(select(.value != null))' > "$final_child_status_file"
+                          fi
+
+                          local final_child_status_text final_child_rc final_child_attempts
+                          final_child_status_text=$(jq -r '.status // "failed"' "$final_child_status_file" 2>/dev/null || echo "failed")
+                          final_child_rc=$(jq -r '.exit_code // 1' "$final_child_status_file" 2>/dev/null || echo "1")
+                          final_child_attempts=$(jq -r '.attempts // 0' "$final_child_status_file" 2>/dev/null || echo "0")
+                          final_child_rc=$(rlms_safe_int "$final_child_rc" 1)
+                          final_child_attempts=$(rlms_safe_int "$final_child_attempts" 0)
+
+                          local final_child_end_data
+                          final_child_end_data=$(jq -n \
+                            --arg role "$role" \
+                            --arg wave_id "$wave_id" \
+                            --arg child_id "$final_child_id" \
+                            --arg status "$final_child_status_text" \
+                            --argjson exit_code "$final_child_rc" \
+                            --argjson attempts "$final_child_attempts" \
+                            --arg log_file "${final_child_log_file#$repo/}" \
+                            --arg last_message_file "${final_child_last_message_file#$repo/}" \
+                            '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
+                          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_child_end" "$final_child_end_data" "$role"
+
+                          {
+                            echo "- child: $final_child_id"
+                            echo "  status: $final_child_status_text"
+                            echo "  attempts: $final_child_attempts"
+                            echo "  exit_code: $final_child_rc"
+                            echo "  log_file: ${final_child_log_file#$repo/}"
+                            echo "  last_message_file: ${final_child_last_message_file#$repo/}"
+                          } >> "$role_delegation_summary_file"
+                          if [[ -f "$final_child_last_message_file" ]]; then
+                            {
+                              echo "  output_excerpt: |"
+                              sed -n '1,12p' "$final_child_last_message_file" | sed 's/^/    /'
+                            } >> "$role_delegation_summary_file"
+                          fi
+                          echo "" >> "$role_delegation_summary_file"
+
+                          append_usage_records_file "$final_child_usage_file" "$usage_file"
+
+                          wave_executed_children=$((wave_executed_children + 1))
+                          if [[ "$final_child_rc" -eq 0 ]]; then
+                            wave_succeeded_children=$((wave_succeeded_children + 1))
+                          else
+                            wave_failed_children=$((wave_failed_children + 1))
+                            if [[ "$role_delegation_failure_policy" == "fail_role" && "$role_delegation_fail_role_triggered" -eq 0 ]]; then
+                              role_delegation_fail_role_triggered=1
+                              role_delegation_fail_role_wave_id="$wave_id"
+                              role_delegation_fail_role_child_id="$final_child_id"
+                              role_delegation_stop_after_wave=1
+                              role_delegation_stop_reason="failure_policy_fail_role"
+                              if [[ -z "$role_delegation_execution_reason" ]]; then
+                                role_delegation_execution_reason="child_failure_fail_role"
+                              elif [[ "$role_delegation_execution_reason" != *"child_failure_fail_role"* ]]; then
+                                role_delegation_execution_reason="${role_delegation_execution_reason},child_failure_fail_role"
+                              fi
+                            fi
+                          fi
+                        done
+                      fi
+                    fi
+
+                    local wave_status_text="ok"
+                    if [[ "$wave_executed_children" -eq 0 ]]; then
+                      wave_status_text="skipped"
+                    elif [[ "$wave_failed_children" -gt 0 && "$wave_succeeded_children" -eq 0 ]]; then
+                      wave_status_text="failed"
+                    elif [[ "$wave_failed_children" -gt 0 || "$wave_adaptation_stopped" -eq 1 ]]; then
+                      wave_status_text="partial"
+                    fi
+
+                    role_delegation_executed_waves=$((role_delegation_executed_waves + 1))
+                    role_delegation_executed_children=$((role_delegation_executed_children + wave_executed_children))
+                    role_delegation_succeeded_children=$((role_delegation_succeeded_children + wave_succeeded_children))
+                    role_delegation_failed_children=$((role_delegation_failed_children + wave_failed_children))
+                    if [[ "$wave_children_to_run" -gt "$wave_executed_children" ]]; then
+                      role_delegation_skipped_children=$((role_delegation_skipped_children + (wave_children_to_run - wave_executed_children)))
+                    fi
+                    if [[ "$wave_requested_children" -gt "$wave_children_to_run" ]]; then
+                      role_delegation_skipped_children=$((role_delegation_skipped_children + (wave_requested_children - wave_children_to_run)))
+                    fi
+
+                    {
+                      echo "## $wave_id"
+                      echo "- requested children: $wave_requested_children"
+                      echo "- executed children: $wave_executed_children"
+                      echo "- succeeded children: $wave_succeeded_children"
+                      echo "- failed children: $wave_failed_children"
+                      echo "- adaptation replans (wave): $wave_adaptation_attempted"
+                      if [[ "$wave_adaptation_stopped" -eq 1 ]]; then
+                        echo "- adaptation stopped remaining children: true"
+                      fi
+                      echo "- status: $wave_status_text"
+                      echo ""
+                    } >> "$role_delegation_summary_file"
+
+                    local delegation_wave_end_data
+                    delegation_wave_end_data=$(jq -n \
+                      --arg role "$role" \
+                      --arg wave_id "$wave_id" \
+                      --arg status "$wave_status_text" \
+                      --argjson wave "$wave_number" \
+                      --argjson requested_children "$wave_requested_children" \
+                      --argjson children_completed "$wave_executed_children" \
+                      --argjson children_succeeded "$wave_succeeded_children" \
+                      --argjson children_failed "$wave_failed_children" \
+                      --argjson adaptation_replans "$wave_adaptation_attempted" \
+                      --argjson adaptation_stopped "$(if [[ "$wave_adaptation_stopped" -eq 1 ]]; then echo true; else echo false; fi)" \
+                      '{role: $role, wave_id: $wave_id, wave: $wave, status: $status, requested_children: $requested_children, children_completed: $children_completed, children_succeeded: $children_succeeded, children_failed: $children_failed, adaptation_replans: $adaptation_replans, adaptation_stopped: $adaptation_stopped}')
+                    log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_end" "$delegation_wave_end_data" "$role"
+
+                    if [[ "$role_delegation_stop_after_wave" -eq 1 ]]; then
+                      if [[ "$role_delegation_stop_reason" == "failure_policy_fail_role" ]]; then
+                        echo "- delegation stopped early by failure policy at wave: $wave_id" >> "$role_delegation_summary_file"
+                      else
+                        echo "- delegation stopped early by adaptation decision at wave: $wave_id" >> "$role_delegation_summary_file"
+                      fi
+                      echo "" >> "$role_delegation_summary_file"
+                      break
+                    fi
+                  done
+
+                  if [[ "$role_delegation_executed_children" -eq 0 ]]; then
+                    role_delegation_status_text="executed_no_children"
+                  elif [[ "$role_delegation_failed_children" -eq 0 ]]; then
+                    role_delegation_status_text="executed_ok"
+                  elif [[ "$role_delegation_succeeded_children" -eq 0 ]]; then
+                    role_delegation_status_text="executed_failed"
+                  else
+                    role_delegation_status_text="executed_partial"
+                  fi
+                fi
+              fi
+            fi
+          else
+            role_delegation_status_text="disabled"
+          fi
+
+          jq -n \
+            --arg generated_at "$(timestamp)" \
+            --arg loop_id "$loop_id" \
+            --arg run_id "$run_id" \
+            --arg role "$role" \
+            --arg mode "$role_delegation_mode" \
+            --arg dispatch_mode "$role_delegation_dispatch_mode" \
+            --arg dispatch_mode_effective "$role_delegation_effective_dispatch_mode" \
+            --arg wake_policy "$role_delegation_wake_policy" \
+            --arg wake_policy_effective "$role_delegation_effective_wake_policy" \
+            --arg failure_policy "$role_delegation_failure_policy" \
+            --arg reason "$role_delegation_execution_reason" \
+            --arg status "$role_delegation_status_text" \
+            --arg request_file "${role_delegation_request_file#$repo/}" \
+            --arg summary_file "${role_delegation_summary_file#$repo/}" \
+            --arg adaptation_status "$role_delegation_adaptation_status" \
+            --arg adaptation_reason "$role_delegation_adaptation_reason" \
+            --arg adaptation_dir "${role_delegation_adaptation_dir#$repo/}" \
+            --argjson enabled "$role_delegation_enabled_json" \
+            --argjson max_children "$role_delegation_max_children" \
+            --argjson max_waves "$role_delegation_max_waves" \
+            --argjson child_timeout_seconds "$role_delegation_child_timeout_seconds" \
+            --argjson retry_limit "$role_delegation_retry_limit" \
+            --argjson retry_backoff_seconds "$role_delegation_retry_backoff_seconds" \
+            --argjson retry_backoff_max_seconds "$role_delegation_retry_backoff_max_seconds" \
+            --argjson adaptation_max_replans_per_wave "$role_delegation_adaptation_max_replans_per_wave" \
+            --argjson adaptation_max_replans_per_iteration "$role_delegation_adaptation_max_replans_per_iteration" \
+            --argjson adaptation_attempted "$role_delegation_adaptation_attempted" \
+            --argjson adaptation_applied "$role_delegation_adaptation_applied" \
+            --argjson adaptation_skipped "$role_delegation_adaptation_skipped" \
+            --argjson adaptation_stopped_delegation "$(if [[ "$role_delegation_stop_after_wave" -eq 1 ]]; then echo true; else echo false; fi)" \
+            --argjson fail_role_triggered "$(if [[ "$role_delegation_fail_role_triggered" -eq 1 ]]; then echo true; else echo false; fi)" \
+            --arg fail_role_wave_id "$role_delegation_fail_role_wave_id" \
+            --arg fail_role_child_id "$role_delegation_fail_role_child_id" \
+            --argjson requested_waves "$role_delegation_requested_waves" \
+            --argjson executed_waves "$role_delegation_executed_waves" \
+            --argjson requested_children "$role_delegation_requested_children" \
+            --argjson executed_children "$role_delegation_executed_children" \
+            --argjson succeeded_children "$role_delegation_succeeded_children" \
+            --argjson failed_children "$role_delegation_failed_children" \
+            --argjson skipped_children "$role_delegation_skipped_children" \
+            --argjson recon_violations "$role_delegation_recon_violation_count" \
+            --arg recon_violation_wave_id "$role_delegation_recon_violation_wave_id" \
+            --arg recon_violation_child_id "$role_delegation_recon_violation_child_id" \
+            '{
+              generated_at: $generated_at,
+              loop_id: $loop_id,
+              run_id: $run_id,
+              role: $role,
+              enabled: $enabled,
+              mode: $mode,
+              dispatch_mode: $dispatch_mode,
+              dispatch_mode_effective: $dispatch_mode_effective,
+              wake_policy: $wake_policy,
+              wake_policy_effective: $wake_policy_effective,
+              policy: {
+                failure_policy: $failure_policy
+              },
+              limits: {
+                max_children: $max_children,
+                max_waves: $max_waves,
+                child_timeout_seconds: $child_timeout_seconds,
+                retry_limit: $retry_limit,
+                retry_backoff_seconds: $retry_backoff_seconds,
+                retry_backoff_max_seconds: $retry_backoff_max_seconds
+              },
+              status: $status,
+              implemented: true,
+              reason: $reason,
+              request_file: (if ($request_file | length) > 0 then $request_file else null end),
+              summary_file: $summary_file,
+              adaptation: {
+                status: $adaptation_status,
+                reason: $adaptation_reason,
+                dir: $adaptation_dir,
+                limits: {
+                  max_replans_per_wave: $adaptation_max_replans_per_wave,
+                  max_replans_per_iteration: $adaptation_max_replans_per_iteration
+                },
+                counters: {
+                  replans_attempted: $adaptation_attempted,
+                  replans_applied: $adaptation_applied,
+                  replans_skipped: $adaptation_skipped,
+                  stopped_delegation: $adaptation_stopped_delegation
+                }
+              },
+              fail_role: {
+                triggered: $fail_role_triggered,
+                wave_id: (if ($fail_role_wave_id | length) > 0 then $fail_role_wave_id else null end),
+                child_id: (if ($fail_role_child_id | length) > 0 then $fail_role_child_id else null end)
+              },
+              execution: {
+                requested_waves: $requested_waves,
+                executed_waves: $executed_waves,
+                requested_children: $requested_children,
+                executed_children: $executed_children,
+                succeeded_children: $succeeded_children,
+                failed_children: $failed_children,
+                skipped_children: $skipped_children
+              },
+              reconnaissance: {
+                enabled: ($mode == "reconnaissance"),
+                violations: $recon_violations,
+                last_violation: {
+                  wave_id: (if ($recon_violation_wave_id | length) > 0 then $recon_violation_wave_id else null end),
+                  child_id: (if ($recon_violation_child_id | length) > 0 then $recon_violation_child_id else null end)
+                }
+              }
+            } | with_entries(select(.value != null))' > "$role_delegation_status_file"
+
+          cp "$role_delegation_status_file" "$delegation_latest_dir/${role}.status.json"
+          role_delegation_status_for_prompt="$role_delegation_status_file"
+
+          local delegation_index_entry
+          delegation_index_entry=$(jq -n \
+            --arg timestamp "$(timestamp)" \
+            --arg role "$role" \
+            --arg run_id "$run_id" \
+            --argjson iteration "$iteration" \
+            --arg mode "$role_delegation_mode" \
+            --arg dispatch_mode "$role_delegation_dispatch_mode" \
+            --arg wake_policy "$role_delegation_wake_policy" \
+            --arg failure_policy "$role_delegation_failure_policy" \
+            --arg status "$role_delegation_status_text" \
+            --arg reason "$role_delegation_execution_reason" \
+            --arg request_file "${role_delegation_request_file#$repo/}" \
+            --arg summary_file "${role_delegation_summary_file#$repo/}" \
+            --argjson enabled "$role_delegation_enabled_json" \
+            --argjson executed_children "$role_delegation_executed_children" \
+            --argjson succeeded_children "$role_delegation_succeeded_children" \
+            --argjson failed_children "$role_delegation_failed_children" \
+            --argjson adaptation_attempted "$role_delegation_adaptation_attempted" \
+            --argjson adaptation_applied "$role_delegation_adaptation_applied" \
+            --argjson adaptation_skipped "$role_delegation_adaptation_skipped" \
+            --argjson fail_role_triggered "$(if [[ "$role_delegation_fail_role_triggered" -eq 1 ]]; then echo true; else echo false; fi)" \
+            --argjson recon_violations "$role_delegation_recon_violation_count" \
+            --arg status_file "${role_delegation_status_file#$repo/}" \
+            '{
+              timestamp: $timestamp,
+              role: $role,
+              run_id: $run_id,
+              iteration: $iteration,
+              enabled: $enabled,
+              mode: $mode,
+              dispatch_mode: $dispatch_mode,
+              wake_policy: $wake_policy,
+              failure_policy: $failure_policy,
+              status: $status,
+              reason: $reason,
+              request_file: (if ($request_file | length) > 0 then $request_file else null end),
+              summary_file: $summary_file,
+              executed_children: $executed_children,
+              succeeded_children: $succeeded_children,
+              failed_children: $failed_children,
+              adaptation_attempted: $adaptation_attempted,
+              adaptation_applied: $adaptation_applied,
+              adaptation_skipped: $adaptation_skipped,
+              fail_role_triggered: $fail_role_triggered,
+              recon_violations: $recon_violations,
+              status_file: $status_file
+            } | with_entries(select(.value != null))')
+          append_delegation_index_entry "$delegation_index_file" "$loop_id" "$delegation_index_entry"
+
+          if [[ "$role_delegation_fail_role_triggered" -eq 1 && "$role_delegation_failure_policy" == "fail_role" ]]; then
+            local delegation_fail_role_data
+            delegation_fail_role_data=$(jq -n \
+              --arg role "$role" \
+              --arg wave_id "$role_delegation_fail_role_wave_id" \
+              --arg child_id "$role_delegation_fail_role_child_id" \
+              --arg status_file "${role_delegation_status_file#$repo/}" \
+              --arg failure_policy "$role_delegation_failure_policy" \
+              --arg stop_reason "$role_delegation_stop_reason" \
+              --argjson failed_children "$role_delegation_failed_children" \
+              '{role: $role, wave_id: (if ($wave_id | length) > 0 then $wave_id else null end), child_id: (if ($child_id | length) > 0 then $child_id else null end), failed_children: $failed_children, failure_policy: $failure_policy, stop_reason: (if ($stop_reason | length) > 0 then $stop_reason else null end), status_file: $status_file} | with_entries(select(.value != null))')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_fail_role" "$delegation_fail_role_data" "$role" "error"
+            echo "error: delegation child failed for role '$role' and failure_policy is 'fail_role'" >&2
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+            return 1
+          fi
+        fi
 
         if [[ "$rlms_enabled" == "true" ]]; then
           local role_rlms_enabled
@@ -8688,7 +10524,8 @@ run_cmd() {
           "$tasks_dir" \
           "$rlms_result_for_prompt" \
           "$rlms_summary_for_prompt" \
-          "$rlms_status_for_prompt" 2>> "$error_log"; then
+          "$rlms_status_for_prompt" \
+          "$role_delegation_status_for_prompt" 2>> "$error_log"; then
           echo "[$(timestamp)] ERROR: build_role_prompt failed for role: $role" >> "$error_log"
           echo "Error: Failed to build prompt for role '$role' in iteration $iteration" >&2
           echo "See $error_log for details" >&2
@@ -9492,6 +11329,11 @@ status_cmd() {
           "checklist=" + ($e.gates.checklist // "unknown"),
           "evidence=" + ($e.gates.evidence // "unknown"),
           "approval=" + ($e.gates.approval // "unknown"),
+          "delegation_roles=" + (($e.delegation.role_entries // 0) | tostring),
+          "delegation_enabled_roles=" + (($e.delegation.enabled_roles // 0) | tostring),
+          "delegation_children=" + (($e.delegation.executed_children // 0) | tostring),
+          "delegation_failed=" + (($e.delegation.failed_children // 0) | tostring),
+          "delegation_recon_violations=" + (($e.delegation.recon_violations // 0) | tostring),
           "evidence_file=" + ($e.artifacts.evidence.path // "unknown"),
           "evidence_exists=" + (($e.artifacts.evidence.exists // false) | tostring),
           "evidence_sha256=" + ($e.artifacts.evidence.sha256 // "unknown"),
@@ -10364,4 +12206,3 @@ main() {
 }
 
 main "$@"
-

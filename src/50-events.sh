@@ -95,6 +95,64 @@ log_event() {
     >> "$events_file" || true
 }
 
+summarize_delegation_iteration_metrics() {
+  local delegation_index_file="$1"
+  local run_id="$2"
+  local iteration="$3"
+
+  if [[ ! -f "$delegation_index_file" ]]; then
+    echo '{}'
+    return 0
+  fi
+
+  jq -c \
+    --arg run_id "$run_id" \
+    --argjson iteration "$iteration" \
+    '
+    (.entries // []) as $all
+    | [ $all[] | select((.run_id // "") == $run_id and ((.iteration // -1) == $iteration)) ] as $entries
+    | {
+        role_entries: ($entries | length),
+        enabled_roles: ($entries | map(select(.enabled == true)) | length),
+        requested_children: ($entries | map(.requested_children // 0) | add // 0),
+        executed_children: ($entries | map(.executed_children // 0) | add // 0),
+        succeeded_children: ($entries | map(.succeeded_children // 0) | add // 0),
+        failed_children: ($entries | map(.failed_children // 0) | add // 0),
+        adaptation_attempted: ($entries | map(.adaptation_attempted // 0) | add // 0),
+        adaptation_applied: ($entries | map(.adaptation_applied // 0) | add // 0),
+        adaptation_skipped: ($entries | map(.adaptation_skipped // 0) | add // 0),
+        fail_role_triggered: ($entries | map(select(.fail_role_triggered == true)) | length),
+        recon_violations: ($entries | map(.recon_violations // 0) | add // 0),
+        statuses: (
+          [ $entries[] | (.status // "unknown") ] as $statuses
+          | reduce $statuses[] as $s ({}; .[$s] = ((.[$s] // 0) + 1))
+        ),
+        by_role: (
+          reduce $entries[] as $e ({};
+            .[$e.role] = {
+              enabled: ($e.enabled // false),
+              mode: ($e.mode // "standard"),
+              dispatch_mode: ($e.dispatch_mode // "serial"),
+              wake_policy: ($e.wake_policy // "on_wave_complete"),
+              status: ($e.status // "unknown"),
+              reason: ($e.reason // null),
+              requested_children: ($e.requested_children // 0),
+              executed_children: ($e.executed_children // 0),
+              succeeded_children: ($e.succeeded_children // 0),
+              failed_children: ($e.failed_children // 0),
+              adaptation_attempted: ($e.adaptation_attempted // 0),
+              adaptation_applied: ($e.adaptation_applied // 0),
+              adaptation_skipped: ($e.adaptation_skipped // 0),
+              fail_role_triggered: ($e.fail_role_triggered // false),
+              recon_violations: ($e.recon_violations // 0),
+              status_file: ($e.status_file // null)
+            }
+          )
+        )
+      }
+    ' "$delegation_index_file" 2>/dev/null || echo '{}'
+}
+
 append_run_summary() {
   local summary_file="$1"
   local repo="$2"
@@ -134,14 +192,16 @@ append_run_summary() {
   local decisions_jsonl="$loop_dir/decisions.jsonl"
   local decisions_md="$loop_dir/decisions.md"
   local rlms_index_file="$loop_dir/rlms/index.json"
+  local delegation_index_file="$loop_dir/delegation/index.json"
   local validation_status_file="$loop_dir/validation-status.json"
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
-  local rlms_index_meta
+  local rlms_index_meta delegation_index_meta
   local validation_status_meta validation_results_meta
+  local delegation_metrics_json
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
   plan_meta=$(json_or_default "$plan_meta" "{}")
@@ -181,6 +241,10 @@ append_run_summary() {
   decisions_md_meta=$(json_or_default "$decisions_md_meta" "{}")
   rlms_index_meta=$(file_meta_json "${rlms_index_file#$repo/}" "$rlms_index_file")
   rlms_index_meta=$(json_or_default "$rlms_index_meta" "{}")
+  delegation_index_meta=$(file_meta_json "${delegation_index_file#$repo/}" "$delegation_index_file")
+  delegation_index_meta=$(json_or_default "$delegation_index_meta" "{}")
+  delegation_metrics_json=$(summarize_delegation_iteration_metrics "$delegation_index_file" "$run_id" "$iteration")
+  delegation_metrics_json=$(json_or_default "$delegation_metrics_json" "{}")
 
   local artifacts_json
   artifacts_json=$(jq -n \
@@ -203,6 +267,7 @@ append_run_summary() {
     --argjson decisions "$decisions_meta" \
     --argjson decisions_md "$decisions_md_meta" \
     --argjson rlms_index "$rlms_index_meta" \
+    --argjson delegation_index "$delegation_index_meta" \
     '{
       plan: $plan,
       implementer: $implementer,
@@ -222,7 +287,8 @@ append_run_summary() {
       approval: $approval,
       decisions: $decisions,
       decisions_md: $decisions_md,
-      rlms_index: $rlms_index
+      rlms_index: $rlms_index,
+      delegation_index: $delegation_index
     }')
   artifacts_json=$(json_or_default "$artifacts_json" "{}")
 
@@ -254,6 +320,7 @@ append_run_summary() {
     --arg stuck_threshold "$stuck_threshold" \
     --arg completion_ok "$completion_json" \
     --arg artifacts "$artifacts_json" \
+    --arg delegation "$delegation_metrics_json" \
     '{
       run_id: $run_id,
       iteration: ($iteration | tonumber? // $iteration),
@@ -276,6 +343,7 @@ append_run_summary() {
         streak: ($stuck_streak | tonumber? // 0),
         threshold: ($stuck_threshold | tonumber? // 0)
       },
+      delegation: ($delegation | fromjson? // {}),
       completion_ok: ($completion_ok | fromjson? // false),
       artifacts: ($artifacts | fromjson? // {})
     } | with_entries(select(.value != null))')
@@ -319,7 +387,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
