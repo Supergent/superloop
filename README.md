@@ -176,6 +176,24 @@ When `loops[].rlms.enabled=true`, Superloop can run a bounded REPL-style recursi
 
 Artifacts are written under `.superloop/loops/<loop-id>/rlms/` and linked into prompts, evidence, events, and run summaries.
 
+### RLMS Canary Gate
+
+CI runs a deterministic canary loop (`rlms-canary`) and enforces both status and quality checks using:
+
+- `scripts/assert-rlms-canary.sh`
+
+The script validates:
+
+- `reviewer.status.json`: `status == "ok"` and (optionally) `should_run == true`
+- `reviewer.json`: `ok == true`, citation thresholds, non-fallback citation thresholds, and optional highlight regex
+
+Threshold knobs (CLI flags or env vars):
+
+- `RLMS_CANARY_MIN_CITATIONS` (default: `1`)
+- `RLMS_CANARY_MIN_NON_FALLBACK_CITATIONS` (default: `1`)
+- `RLMS_CANARY_FALLBACK_SIGNALS` (default: `file_reference`)
+- `RLMS_CANARY_REQUIRE_HIGHLIGHT_PATTERN` (default in CI: `mock_root_complete`)
+
 ## Dashboard
 
 Superloop includes a **liquid dashboard** - a contextual UI that adapts to loop state:
