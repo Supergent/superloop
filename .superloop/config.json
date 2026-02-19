@@ -16,5 +16,81 @@
       "prompt_mode": "stdin"
     }
   },
-  "loops": []
+  "loops": [
+    {
+      "id": "rlms-canary",
+      "spec_file": ".superloop/specs/rlms-canary.md",
+      "max_iterations": 1,
+      "completion_promise": "SUPERLOOP_COMPLETE",
+      "checklists": [],
+      "tests": {
+        "mode": "disabled",
+        "commands": []
+      },
+      "evidence": {
+        "enabled": true,
+        "require_on_completion": false,
+        "artifacts": []
+      },
+      "approval": {
+        "enabled": false,
+        "require_on_completion": false
+      },
+      "reviewer_packet": {
+        "enabled": false
+      },
+      "timeouts": {
+        "enabled": true,
+        "default": 120,
+        "planner": 120,
+        "implementer": 120,
+        "tester": 120,
+        "reviewer": 120
+      },
+      "stuck": {
+        "enabled": false,
+        "threshold": 3,
+        "action": "report_and_stop",
+        "ignore": []
+      },
+      "rlms": {
+        "enabled": true,
+        "mode": "requested",
+        "request_keyword": "RLMS_REQUEST",
+        "auto": {
+          "max_lines": 999999,
+          "max_estimated_tokens": 999999,
+          "max_files": 999999
+        },
+        "roles": {
+          "planner": false,
+          "implementer": false,
+          "tester": false,
+          "reviewer": true
+        },
+        "limits": {
+          "max_steps": 6,
+          "max_depth": 1,
+          "timeout_seconds": 120,
+          "max_subcalls": 20
+        },
+        "output": {
+          "format": "json",
+          "require_citations": true
+        },
+        "policy": {
+          "force_on": false,
+          "force_off": false,
+          "fail_mode": "warn_and_continue"
+        }
+      },
+      "roles": {
+        "reviewer": {
+          "runner": "codex",
+          "model": "gpt-5.2-codex",
+          "thinking": "standard"
+        }
+      }
+    }
+  ]
 }
