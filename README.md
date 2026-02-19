@@ -194,6 +194,132 @@ Threshold knobs (CLI flags or env vars):
 - `RLMS_CANARY_FALLBACK_SIGNALS` (default: `file_reference`)
 - `RLMS_CANARY_REQUIRE_HIGHLIGHT_PATTERN` (default in CI: `mock_root_complete`)
 
+### RLMS for New Engineers (No Prior Context Required)
+
+This section explains RLMS from zero context and recaps what is now live in Superloop.
+
+#### 1) What RLMS Means
+
+RLMS stands for Recursive Language Model Scaffold.
+
+In a normal LLM flow, you send one prompt and get one answer.
+In RLMS, the model can:
+
+- write small code programs,
+- inspect large inputs in pieces,
+- call a sub-model recursively on selected chunks,
+- and assemble a final answer from those intermediate results.
+
+The practical effect is better handling of long, dense context without requiring all content in one model window.
+
+#### 2) Why Superloop Needed It
+
+Superloop roles often need to analyze large code/spec/test context.
+Single-shot prompting is brittle for this.
+We needed a system that is:
+
+- bounded (time, depth, steps, subcalls),
+- safe (sandbox constraints),
+- auditable (artifacts/events),
+- and operationally enforced in CI.
+
+#### 3) How RLMS Works in Superloop
+
+At run time, for each role where RLMS is enabled:
+
+1. Superloop gathers role context files.
+2. Trigger policy decides whether RLMS should run (`auto`, `requested`, `hybrid`).
+3. `scripts/rlms` launches the Python worker.
+4. `scripts/rlms_worker.py` runs a sandboxed REPL loop:
+   - root command returns Python code,
+   - code executes against helper APIs (`list_files`, `read_file`, `grep`, `sub_rlm`, `set_final`),
+   - `sub_rlm` can call the configured sub-model command with limits.
+5. Worker writes structured output artifacts.
+6. Superloop continues with normal role execution, using RLMS artifacts in prompt/evidence/event flow.
+
+#### 4) Safety and Control Limits
+
+RLMS behavior is constrained by loop config:
+
+- `limits.max_steps`
+- `limits.max_depth`
+- `limits.timeout_seconds`
+- `limits.max_subcalls`
+- `policy.fail_mode` (`warn_and_continue` or `fail_role`)
+
+Sandbox protections in worker include:
+
+- blocked dangerous AST patterns (imports, dunder access, unsafe constructs),
+- restricted builtins and allowed method-call surface,
+- bounded subprocess execution for subcalls.
+
+#### 5) Artifacts You Can Inspect
+
+Per loop, RLMS data is written under:
+
+- `.superloop/loops/<loop-id>/rlms/index.json`
+- `.superloop/loops/<loop-id>/rlms/latest/<role>.json`
+- `.superloop/loops/<loop-id>/rlms/latest/<role>.status.json`
+- `.superloop/loops/<loop-id>/rlms/latest/<role>.md`
+
+These are linked into prompt context, evidence outputs, and timeline/event streams.
+
+#### 6) What Is Now CI-Enforced
+
+Superloop includes a deterministic canary loop: `rlms-canary`.
+
+CI job `rlms-canary` in `.github/workflows/ci.yml` does:
+
+1. validate config,
+2. run `./superloop.sh run --repo . --loop rlms-canary`,
+3. assert status + quality via `scripts/assert-rlms-canary.sh`.
+
+This gate fails PRs if RLMS stops running correctly or quality drops below thresholds.
+
+#### 7) Deterministic CI Setup
+
+To avoid flaky model-dependent CI:
+
+- canary runner is patched to local shell behavior in CI job scope,
+- RLMS root/subcall are overridden with deterministic scripts:
+  - `scripts/rlms-mock-root.sh`
+  - `scripts/rlms-mock-subcall.sh`
+
+This ensures stable pass/fail signals while still testing the Superloop RLMS integration path end-to-end.
+
+#### 8) Test Coverage
+
+Key tests:
+
+- `tests/rlms.bats` for trigger policy, fallback behavior, artifacts, REPL success/failure limits.
+- `tests/rlms-canary-gate.bats` for canary assertion script pass/fail cases.
+- `tests/superloop.bats` for loop/config baseline validation including RLMS static checks.
+
+#### 9) Delivery History (High-Level)
+
+RLMS capability evolved in phases:
+
+- initial hybrid integration + artifacts/events/prompts,
+- promotion to sandboxed REPL worker,
+- sandbox usability fix for safe method calls,
+- max-subcalls budget control,
+- reusable `rlms-canary` loop,
+- CI status + quality canary gate.
+
+#### 10) Current Status and Remaining Work
+
+Completed:
+
+- Workstream 1: CI canary execution gate.
+- Workstream 2: quality threshold gate.
+
+Still open (tracked in issue `#9`):
+
+- Workstream 3: fallback strategy for retryable model failures.
+- Workstream 4: RLMS budget telemetry in reports.
+- Workstream 5: broader sandbox policy regression suite.
+- Workstream 6: progressive rollout playbook for real loops.
+
 ## Dashboard
 
 Superloop includes a **liquid dashboard** - a contextual UI that adapts to loop state:
