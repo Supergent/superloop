@@ -41,7 +41,7 @@ class LimitError(RLMSWorkerError):
     """Raised when configured limits are exceeded."""
 
 
-class SandboxViolation(RLMSWorkerError):
+class SandboxViolation(BaseException):
     """Raised when generated code violates sandbox policy."""
 
 
@@ -136,6 +136,11 @@ SAFE_BUILTINS: Dict[str, Any] = {
     "any": any,
     "all": all,
     "print": print,
+    "Exception": Exception,
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "KeyError": KeyError,
+    "IndexError": IndexError,
 }
 
 
@@ -176,6 +181,8 @@ ALLOWED_AST_NODES: Tuple[type, ...] = (
     ast.arguments,
     ast.arg,
     ast.Return,
+    ast.Try,
+    ast.ExceptHandler,
     ast.IfExp,
     ast.JoinedStr,
     ast.FormattedValue,
@@ -254,6 +261,14 @@ SAFE_METHOD_CALLS: set[str] = {
     "startswith",
     "endswith",
     "format",
+}
+
+SAFE_EXCEPTION_HANDLER_TYPES: set[str] = {
+    "Exception",
+    "ValueError",
+    "TypeError",
+    "KeyError",
+    "IndexError",
 }
 
 
@@ -827,11 +842,32 @@ class SandboxEnvironment:
                 return False
             return False
 
+        def is_allowed_exception_handler_type(handler_type: ast.AST) -> bool:
+            if isinstance(handler_type, ast.Name):
+                return handler_type.id in SAFE_EXCEPTION_HANDLER_TYPES
+            if isinstance(handler_type, ast.Tuple):
+                if not handler_type.elts:
+                    return False
+                for item in handler_type.elts:
+                    if not isinstance(item, ast.Name):
+                        return False
+                    if item.id not in SAFE_EXCEPTION_HANDLER_TYPES:
+                        return False
+                return True
+            return False
+
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom, ast.With, ast.AsyncWith, ast.ClassDef, ast.Lambda, ast.Global, ast.Nonlocal, ast.Delete, ast.Try, ast.Raise, ast.Assert, ast.AsyncFunctionDef, ast.Await, ast.Yield, ast.YieldFrom, ast.Match)):
+            if isinstance(node, (ast.Import, ast.ImportFrom, ast.With, ast.AsyncWith, ast.ClassDef, ast.Lambda, ast.Global, ast.Nonlocal, ast.Delete, ast.Raise, ast.Assert, ast.AsyncFunctionDef, ast.Await, ast.Yield, ast.YieldFrom, ast.Match)):
                 raise SandboxViolation(f"node type not allowed: {type(node).__name__}")
             if not isinstance(node, ALLOWED_AST_NODES):
                 raise SandboxViolation(f"node type not allowed: {type(node).__name__}")
+            if isinstance(node, ast.ExceptHandler):
+                if node.type is None:
+                    raise SandboxViolation("bare except handlers are not allowed")
+                if not is_allowed_exception_handler_type(node.type):
+                    raise SandboxViolation("except handler type not allowed")
+                if node.name and node.name.startswith("__"):
+                    raise SandboxViolation("dunder exception handler names are not allowed")
             if isinstance(node, ast.Attribute):
                 parent = parent_map.get(node)
                 if not (isinstance(parent, ast.Call) and parent.func is node and is_allowed_method_call_target(node)):

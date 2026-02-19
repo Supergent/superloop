@@ -144,6 +144,40 @@ PY
 EOF
   chmod +x "$ROOT_TWO_SUBCALLS_LLM"
 
+  ROOT_TRY_EXCEPT_LLM="$TEMP_DIR/mock-root-try-except.sh"
+  cat > "$ROOT_TRY_EXCEPT_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+files = list_files()
+summary = "fallback"
+try:
+    snippet = read_file(files[0], 1, 20)
+    summary = sub_rlm("summarize:\n" + snippet, depth=1)
+except Exception:
+    summary = "fallback"
+append_highlight("summary:" + summary)
+set_final({"highlights": ["try_supported"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_TRY_EXCEPT_LLM"
+
+  ROOT_TRY_CATCH_SANDBOX_LLM="$TEMP_DIR/mock-root-try-catch-sandbox.sh"
+  cat > "$ROOT_TRY_CATCH_SANDBOX_LLM" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat <<'PY'
+try:
+    read_file("not-in-context.py")
+except Exception:
+    append_highlight("caught")
+set_final({"highlights": ["should_not_complete"], "citations": []})
+PY
+EOF
+  chmod +x "$ROOT_TRY_CATCH_SANDBOX_LLM"
+
   SUBCALL_SUCCESS_LLM="$TEMP_DIR/mock-subcall-success.sh"
   cat > "$SUBCALL_SUCCESS_LLM" <<'EOF'
 #!/usr/bin/env bash
@@ -321,6 +355,79 @@ EOF
   local output_dir="$TEMP_DIR/rlms-sandbox-fail"
   local root_command_json
   root_command_json=$(jq -cn --arg cmd "$ROOT_IMPORT_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run "$PROJECT_ROOT/scripts/rlms" \
+    --repo "$TEMP_DIR" \
+    --loop-id rlms-loop \
+    --role reviewer \
+    --iteration 1 \
+    --context-file-list "$context_file_list" \
+    --output-dir "$output_dir" \
+    --max-steps 5 \
+    --max-depth 2 \
+    --timeout-seconds 60 \
+    --root-command-json "$root_command_json" \
+    --root-args-json '[]' \
+    --root-prompt-mode stdin \
+    --subcall-command-json "$subcall_command_json" \
+    --subcall-args-json '[]' \
+    --subcall-prompt-mode stdin \
+    --require-citations true \
+    --format json
+  [ "$status" -ne 0 ]
+
+  run jq -r '.error_code' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sandbox_violation" ]
+}
+
+@test "rlms REPL worker allows typed try/except handlers in root code" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-try-except-success"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_TRY_EXCEPT_LLM" '[$cmd]')
+  local subcall_command_json
+  subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
+
+  run env MOCK_SUBCALL_LOG_FILE="$TEMP_DIR/subcall-try.log" \
+    "$PROJECT_ROOT/scripts/rlms" \
+      --repo "$TEMP_DIR" \
+      --loop-id rlms-loop \
+      --role reviewer \
+      --iteration 1 \
+      --context-file-list "$context_file_list" \
+      --output-dir "$output_dir" \
+      --max-steps 5 \
+      --max-depth 2 \
+      --timeout-seconds 60 \
+      --root-command-json "$root_command_json" \
+      --root-args-json '[]' \
+      --root-prompt-mode stdin \
+      --subcall-command-json "$subcall_command_json" \
+      --subcall-args-json '[]' \
+      --subcall-prompt-mode stdin \
+      --require-citations true \
+      --format json
+  [ "$status" -eq 0 ]
+
+  run jq -r '.ok' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.highlights[]' "$output_dir/result.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "try_supported" ]]
+}
+
+@test "rlms REPL worker does not allow Exception handlers to swallow sandbox violations" {
+  local context_file_list="$TEMP_DIR/context-files.txt"
+  printf '%s\n' "$SAMPLE_CONTEXT_FILE" > "$context_file_list"
+  local output_dir="$TEMP_DIR/rlms-try-catch-sandbox-fail"
+  local root_command_json
+  root_command_json=$(jq -cn --arg cmd "$ROOT_TRY_CATCH_SANDBOX_LLM" '[$cmd]')
   local subcall_command_json
   subcall_command_json=$(jq -cn --arg cmd "$SUBCALL_SUCCESS_LLM" '[$cmd]')
 
