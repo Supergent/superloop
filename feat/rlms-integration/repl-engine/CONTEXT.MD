@@ -101,8 +101,9 @@ RLMS is bounded by loop config limits:
 - `max_steps`: max root iterations
 - `max_depth`: max declared subcall depth
 - `timeout_seconds`: hard wall-clock timeout
+- `max_subcalls`: max sub-LLM invocations per role execution
 
-Worker also enforces derived max subcall count (`max_steps * 2`) and emits structured limit errors.
+If `max_subcalls` is omitted, worker uses a derived fallback (`max_steps * 2`).
 
 ## 6. Output contract and observability
 

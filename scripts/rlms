@@ -13,6 +13,7 @@ Usage: scripts/rlms \
   --max-steps <n> \
   --max-depth <n> \
   --timeout-seconds <n> \
+  [--max-subcalls <n>] \
   [--root-command-json <json-array>] \
   [--root-args-json <json-array>] \
   [--root-prompt-mode <stdin|file>] \
@@ -47,6 +48,7 @@ output_dir=""
 max_steps=""
 max_depth=""
 timeout_seconds=""
+max_subcalls=""
 root_command_json=""
 root_args_json=""
 root_prompt_mode=""
@@ -93,6 +95,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout-seconds)
       timeout_seconds="${2:-}"
+      shift 2
+      ;;
+    --max-subcalls)
+      max_subcalls="${2:-}"
       shift 2
       ;;
     --root-command-json)
@@ -152,6 +158,10 @@ need_arg "--output-dir" "$output_dir"
 need_arg "--max-steps" "$max_steps"
 need_arg "--max-depth" "$max_depth"
 need_arg "--timeout-seconds" "$timeout_seconds"
+
+if [[ -z "$max_subcalls" ]]; then
+  max_subcalls="${SUPERLOOP_RLMS_MAX_SUBCALLS:-0}"
+fi
 
 if [[ -z "$root_command_json" ]]; then
   root_command_json="${SUPERLOOP_RLMS_ROOT_COMMAND_JSON:-}"
@@ -231,6 +241,7 @@ set +e
   --max-steps "$max_steps" \
   --max-depth "$max_depth" \
   --timeout-seconds "$timeout_seconds" \
+  --max-subcalls "$max_subcalls" \
   --root-command-json "$root_command_json" \
   --root-args-json "$root_args_json" \
   --root-prompt-mode "$root_prompt_mode" \

@@ -5967,9 +5967,10 @@ check_rlms_config() {
     check_timeout "rlms.timeout_seconds" "$timeout_seconds" "$location_prefix.rlms.limits.timeout_seconds"
   fi
 
-  local max_steps max_depth
+  local max_steps max_depth max_subcalls
   max_steps=$(echo "$loop_json" | jq -r '.rlms.limits.max_steps // 0' 2>/dev/null || echo "0")
   max_depth=$(echo "$loop_json" | jq -r '.rlms.limits.max_depth // 0' 2>/dev/null || echo "0")
+  max_subcalls=$(echo "$loop_json" | jq -r '.rlms.limits.max_subcalls // 0' 2>/dev/null || echo "0")
 
   if [[ "$max_steps" =~ ^[0-9]+$ && "$max_steps" -gt 0 && "$max_steps" -gt 500 ]]; then
     static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
@@ -5981,6 +5982,12 @@ check_rlms_config() {
     static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
       "rlms.limits.max_depth is $max_depth which may cause deep recursion and high cost" \
       "$location_prefix.rlms.limits.max_depth"
+  fi
+
+  if [[ "$max_subcalls" =~ ^[0-9]+$ && "$max_subcalls" -gt 0 && "$max_subcalls" -gt 2000 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_subcalls is $max_subcalls which may be expensive; consider lower defaults" \
+      "$location_prefix.rlms.limits.max_subcalls"
   fi
 }
 
@@ -7776,6 +7783,8 @@ run_cmd() {
     rlms_limit_max_depth=$(jq -r '.rlms.limits.max_depth // 2' <<<"$loop_json")
     local rlms_limit_timeout_seconds
     rlms_limit_timeout_seconds=$(jq -r '.rlms.limits.timeout_seconds // 240' <<<"$loop_json")
+    local rlms_limit_max_subcalls
+    rlms_limit_max_subcalls=$(jq -r '.rlms.limits.max_subcalls // 0' <<<"$loop_json")
     local rlms_output_format
     rlms_output_format=$(jq -r '.rlms.output.format // "json"' <<<"$loop_json")
     local rlms_output_require_citations
@@ -7793,6 +7802,13 @@ run_cmd() {
     rlms_limit_max_steps=$(rlms_safe_int "$rlms_limit_max_steps" 40)
     rlms_limit_max_depth=$(rlms_safe_int "$rlms_limit_max_depth" 2)
     rlms_limit_timeout_seconds=$(rlms_safe_int "$rlms_limit_timeout_seconds" 240)
+    rlms_limit_max_subcalls=$(rlms_safe_int "$rlms_limit_max_subcalls" 0)
+    if [[ "$rlms_limit_max_subcalls" -le 0 ]]; then
+      rlms_limit_max_subcalls=$((rlms_limit_max_steps * 2))
+    fi
+    if [[ "$rlms_limit_max_subcalls" -le 0 ]]; then
+      rlms_limit_max_subcalls=1
+    fi
 
     local stuck_enabled
     stuck_enabled=$(jq -r '.stuck.enabled // false' <<<"$loop_json")
@@ -8133,7 +8149,8 @@ run_cmd() {
               --argjson max_steps "$rlms_limit_max_steps" \
               --argjson max_depth "$rlms_limit_max_depth" \
               --argjson timeout_seconds "$rlms_limit_timeout_seconds" \
-              '{max_steps: $max_steps, max_depth: $max_depth, timeout_seconds: $timeout_seconds}')" \
+              --argjson max_subcalls "$rlms_limit_max_subcalls" \
+              '{max_steps: $max_steps, max_depth: $max_depth, timeout_seconds: $timeout_seconds, max_subcalls: $max_subcalls}')" \
             '{generated_at: $generated_at, loop_id: $loop_id, run_id: $run_id, role: $role, mode: $mode, trigger_reason: $trigger_reason, should_run: $should_run, metrics: $metrics, limits: $limits}' \
             > "$role_rlms_metadata_file"
 
@@ -8263,6 +8280,7 @@ run_cmd() {
               --max-steps "$rlms_limit_max_steps" \
               --max-depth "$rlms_limit_max_depth" \
               --timeout-seconds "$rlms_limit_timeout_seconds" \
+              --max-subcalls "$rlms_limit_max_subcalls" \
               --root-command-json "$rlms_root_command_json" \
               --root-args-json "$rlms_root_args_json" \
               --root-prompt-mode "$rlms_root_prompt_mode" \
