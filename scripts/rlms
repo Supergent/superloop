@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/rlms \
+  --repo <path> \
+  --loop-id <id> \
+  --role <role> \
+  --iteration <n> \
+  --context-file-list <path> \
+  --output-dir <path> \
+  --max-steps <n> \
+  --max-depth <n> \
+  --timeout-seconds <n> \
+  [--require-citations <true|false>] \
+  [--format json] \
+  [--metadata-file <path>]
+USAGE
+}
+
+need_arg() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "$value" ]]; then
+    echo "error: missing required arg: $name" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+WORKER_SCRIPT="$SCRIPT_DIR/rlms_worker.py"
+
+repo=""
+loop_id=""
+role=""
+iteration=""
+context_file_list=""
+output_dir=""
+max_steps=""
+max_depth=""
+timeout_seconds=""
+require_citations="true"
+format="json"
+metadata_file=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      repo="${2:-}"
+      shift 2
+      ;;
+    --loop-id)
+      loop_id="${2:-}"
+      shift 2
+      ;;
+    --role)
+      role="${2:-}"
+      shift 2
+      ;;
+    --iteration)
+      iteration="${2:-}"
+      shift 2
+      ;;
+    --context-file-list)
+      context_file_list="${2:-}"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --max-steps)
+      max_steps="${2:-}"
+      shift 2
+      ;;
+    --max-depth)
+      max_depth="${2:-}"
+      shift 2
+      ;;
+    --timeout-seconds)
+      timeout_seconds="${2:-}"
+      shift 2
+      ;;
+    --require-citations)
+      require_citations="${2:-true}"
+      shift 2
+      ;;
+    --format)
+      format="${2:-json}"
+      shift 2
+      ;;
+    --metadata-file)
+      metadata_file="${2:-}"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown arg: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+need_arg "--repo" "$repo"
+need_arg "--loop-id" "$loop_id"
+need_arg "--role" "$role"
+need_arg "--iteration" "$iteration"
+need_arg "--context-file-list" "$context_file_list"
+need_arg "--output-dir" "$output_dir"
+need_arg "--max-steps" "$max_steps"
+need_arg "--max-depth" "$max_depth"
+need_arg "--timeout-seconds" "$timeout_seconds"
+
+mkdir -p "$output_dir"
+result_json="$output_dir/result.json"
+summary_md="$output_dir/summary.md"
+stderr_log="$output_dir/worker-stderr.log"
+
+python_bin=""
+if command -v python3 >/dev/null 2>&1; then
+  python_bin="python3"
+elif command -v python >/dev/null 2>&1; then
+  python_bin="python"
+else
+  jq -n \
+    --arg error "python not found in PATH" \
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{ok: false, error: $error, error_code: "missing_python", generated_at: $generated_at}' \
+    > "$result_json"
+  {
+    echo "# RLMS Analysis"
+    echo ""
+    echo "Worker failed: python not found in PATH."
+  } > "$summary_md"
+  exit 1
+fi
+
+tmp_stdout=$(mktemp -t superloop-rlms-stdout.XXXXXX)
+tmp_stderr=$(mktemp -t superloop-rlms-stderr.XXXXXX)
+worker_status=0
+
+set +e
+"$python_bin" "$WORKER_SCRIPT" \
+  --repo "$repo" \
+  --loop-id "$loop_id" \
+  --role "$role" \
+  --iteration "$iteration" \
+  --context-file-list "$context_file_list" \
+  --output-dir "$output_dir" \
+  --max-steps "$max_steps" \
+  --max-depth "$max_depth" \
+  --timeout-seconds "$timeout_seconds" \
+  --require-citations "$require_citations" \
+  --format "$format" \
+  --metadata-file "$metadata_file" \
+  > "$tmp_stdout" \
+  2> "$tmp_stderr"
+worker_status=$?
+set -e
+
+if [[ -s "$tmp_stderr" ]]; then
+  cp "$tmp_stderr" "$stderr_log"
+fi
+
+if jq -e '.' "$tmp_stdout" >/dev/null 2>&1; then
+  cp "$tmp_stdout" "$result_json"
+else
+  jq -n \
+    --arg error "rlms worker emitted invalid JSON" \
+    --arg stderr "$(cat "$tmp_stderr" 2>/dev/null || true)" \
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{ok: false, error: $error, error_code: "invalid_worker_output", stderr: (if ($stderr|length)>0 then $stderr else null end), generated_at: $generated_at}' \
+    > "$result_json"
+  worker_status=1
+fi
+
+jq -r '
+  "# RLMS Analysis",
+  "",
+  "- Generated: \(.generated_at // "unknown")",
+  "- Loop: \(.loop_id // "unknown")",
+  "- Role: \(.role // "unknown")",
+  "- Iteration: \(.iteration // "unknown")",
+  "- OK: \(.ok // false)",
+  "",
+  "## Highlights",
+  (if ((.highlights // []) | length) > 0 then
+      (.highlights[] | "- " + .)
+   else
+      "- (none)"
+   end),
+  "",
+  "## Citations",
+  (if ((.citations // []) | length) > 0 then
+      (.citations[0:20][] | "- `\(.path):\(.start_line)` [\(.signal)]: \(.snippet // "")")
+   else
+      "- (none)"
+   end),
+  (if (.ok == false) then
+      "", "## Error", "- \(.error // "unknown error")"
+   else
+      empty
+   end)
+' "$result_json" > "$summary_md"
+
+rm -f "$tmp_stdout" "$tmp_stderr"
+
+if [[ $worker_status -ne 0 ]]; then
+  exit "$worker_status"
+fi
+exit 0

@@ -21,6 +21,9 @@ build_role_prompt() {
   local changed_files_all="${20:-}"
   local tester_exploration_json="${21:-}"
   local tasks_dir="${22:-}"
+  local rlms_result_file="${23:-}"
+  local rlms_summary_file="${24:-}"
+  local rlms_status_file="${25:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -63,6 +66,17 @@ EOF
   fi
   if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
+  fi
+
+  # Add RLMS context if available
+  if [[ -n "$rlms_result_file" && -f "$rlms_result_file" ]]; then
+    echo "- RLMS result: $rlms_result_file" >> "$prompt_file"
+  fi
+  if [[ -n "$rlms_summary_file" && -f "$rlms_summary_file" ]]; then
+    echo "- RLMS summary: $rlms_summary_file" >> "$prompt_file"
+  fi
+  if [[ -n "$rlms_status_file" && -f "$rlms_status_file" ]]; then
+    echo "- RLMS status: $rlms_status_file" >> "$prompt_file"
   fi
 
   # Add phase files context for planner and implementer
@@ -185,6 +199,20 @@ MINIMAL_FALLBACK
           echo "- $area" >> "$prompt_file"
         done
       fi
+    fi
+  fi
+
+  if [[ -n "$rlms_result_file" && -f "$rlms_result_file" ]]; then
+    echo "" >> "$prompt_file"
+    echo "## RLMS Context" >> "$prompt_file"
+    echo "" >> "$prompt_file"
+    echo "RLMS analysis is available as a long-context index. Use it to locate relevant sections quickly, then verify against source files." >> "$prompt_file"
+    if [[ -n "$rlms_summary_file" && -f "$rlms_summary_file" ]]; then
+      echo "" >> "$prompt_file"
+      echo "RLMS summary excerpt:" >> "$prompt_file"
+      echo '```' >> "$prompt_file"
+      sed -n '1,80p' "$rlms_summary_file" >> "$prompt_file"
+      echo '```' >> "$prompt_file"
     fi
   fi
 

@@ -204,6 +204,21 @@ Iteration 3: Planner → Implementer → Tester → Reviewer (done!)
 - Incremental progress is observable
 - Can resume after interruption (rate limits, crashes)
 
+## RLMS: Role-Local Long-Context Accelerator
+
+Superloop can optionally run an RLMS-style preprocessor before a role executes:
+
+1. Collect context files for the current loop/iteration.
+2. Evaluate trigger policy (`auto`, `requested`, `hybrid`).
+3. Run a bounded recursive analyzer (`scripts/rlms` / `scripts/rlms_worker.py`).
+4. Attach RLMS artifacts to the role prompt and persist to evidence/run summary.
+
+Design intent:
+- Keep Superloop as the control plane; RLMS is a role-local tool, not a new role.
+- Make long-context handling auditable via persisted artifacts.
+- Bound cost/time with explicit `max_steps`, `max_depth`, and timeout limits.
+- Preserve deterministic governance: RLMS can fail soft (`warn_and_continue`) or hard (`fail_role`) by policy.
+
 ## Why Liquid Interfaces?
 
 The dashboard adapts to loop state automatically:

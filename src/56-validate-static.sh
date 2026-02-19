@@ -8,6 +8,7 @@ STATIC_ERR_SPEC_NOT_FOUND="SPEC_NOT_FOUND"
 STATIC_ERR_POSSIBLE_TYPO="POSSIBLE_TYPO"
 STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
+STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -269,6 +270,61 @@ check_duplicate_loop_ids() {
   return 0
 }
 
+# Check RLMS configuration semantics
+# Usage: check_rlms_config <loop_json> <location_prefix>
+check_rlms_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local rlms_enabled
+  rlms_enabled=$(echo "$loop_json" | jq -r '.rlms.enabled // false' 2>/dev/null || echo "false")
+  if [[ "$rlms_enabled" != "true" ]]; then
+    return 0
+  fi
+
+  local force_on force_off
+  force_on=$(echo "$loop_json" | jq -r '.rlms.policy.force_on // false' 2>/dev/null || echo "false")
+  force_off=$(echo "$loop_json" | jq -r '.rlms.policy.force_off // false' 2>/dev/null || echo "false")
+  if [[ "$force_on" == "true" && "$force_off" == "true" ]]; then
+    static_add_error "$STATIC_ERR_RLMS_INVALID" \
+      "rlms.policy.force_on and rlms.policy.force_off cannot both be true" \
+      "$location_prefix.rlms.policy"
+  fi
+
+  local mode request_keyword
+  mode=$(echo "$loop_json" | jq -r '.rlms.mode // "hybrid"' 2>/dev/null || echo "hybrid")
+  request_keyword=$(echo "$loop_json" | jq -r '.rlms.request_keyword // "RLMS_REQUEST"' 2>/dev/null || echo "RLMS_REQUEST")
+  if [[ "$mode" == "requested" || "$mode" == "hybrid" ]]; then
+    if [[ -z "$request_keyword" || "$request_keyword" == "null" ]]; then
+      static_add_error "$STATIC_ERR_RLMS_INVALID" \
+        "rlms.request_keyword must be set when mode is '$mode'" \
+        "$location_prefix.rlms.request_keyword"
+    fi
+  fi
+
+  local timeout_seconds
+  timeout_seconds=$(echo "$loop_json" | jq -r '.rlms.limits.timeout_seconds // 0' 2>/dev/null || echo "0")
+  if [[ "$timeout_seconds" != "0" && "$timeout_seconds" != "null" ]]; then
+    check_timeout "rlms.timeout_seconds" "$timeout_seconds" "$location_prefix.rlms.limits.timeout_seconds"
+  fi
+
+  local max_steps max_depth
+  max_steps=$(echo "$loop_json" | jq -r '.rlms.limits.max_steps // 0' 2>/dev/null || echo "0")
+  max_depth=$(echo "$loop_json" | jq -r '.rlms.limits.max_depth // 0' 2>/dev/null || echo "0")
+
+  if [[ "$max_steps" =~ ^[0-9]+$ && "$max_steps" -gt 0 && "$max_steps" -gt 500 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_steps is $max_steps which may be expensive; consider lower defaults" \
+      "$location_prefix.rlms.limits.max_steps"
+  fi
+
+  if [[ "$max_depth" =~ ^[0-9]+$ && "$max_depth" -gt 8 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_depth is $max_depth which may cause deep recursion and high cost" \
+      "$location_prefix.rlms.limits.max_depth"
+  fi
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -320,6 +376,9 @@ validate_static() {
     if [[ -n "$spec_file" && "$spec_file" != "null" ]]; then
       check_spec_file "$repo" "$spec_file" "loops[$i].spec_file"
     fi
+
+    # Check RLMS semantic config
+    check_rlms_config "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands

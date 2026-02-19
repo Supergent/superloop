@@ -554,6 +554,58 @@ write_evidence_manifest() {
   fi
   validation_results_json=$(json_or_default "$validation_results_json" "null")
 
+  # RLMS evidence: index + latest per-role artifacts
+  local rlms_index_file="$loop_dir/rlms/index.json"
+  local rlms_index_rel="${rlms_index_file#$repo/}"
+  local rlms_index_json="null"
+  if [[ -f "$rlms_index_file" ]]; then
+    rlms_index_json=$(cat "$rlms_index_file")
+  fi
+  rlms_index_json=$(json_or_default "$rlms_index_json" "null")
+
+  local rlms_index_sha_json="null"
+  local rlms_index_mtime_json="null"
+  if [[ -f "$rlms_index_file" ]]; then
+    local rlms_index_hash
+    rlms_index_hash=$(hash_file "$rlms_index_file" 2>/dev/null || true)
+    if [[ -n "$rlms_index_hash" ]]; then
+      rlms_index_sha_json="\"$rlms_index_hash\""
+    fi
+    local rlms_index_mtime
+    rlms_index_mtime=$(file_mtime "$rlms_index_file" 2>/dev/null || true)
+    if [[ -n "$rlms_index_mtime" ]]; then
+      rlms_index_mtime_json="$rlms_index_mtime"
+    fi
+  fi
+
+  local rlms_latest_jsonl="$loop_dir/evidence-rlms-latest.jsonl"
+  : > "$rlms_latest_jsonl"
+  local rlms_latest_dir="$loop_dir/rlms/latest"
+  if [[ -d "$rlms_latest_dir" ]]; then
+    while IFS= read -r latest_file; do
+      if [[ -z "$latest_file" ]]; then
+        continue
+      fi
+      local latest_rel="${latest_file#$repo/}"
+      local latest_hash
+      latest_hash=$(hash_file "$latest_file" 2>/dev/null || true)
+      local latest_mtime_json="null"
+      local latest_mtime
+      latest_mtime=$(file_mtime "$latest_file" 2>/dev/null || true)
+      if [[ -n "$latest_mtime" ]]; then
+        latest_mtime_json="$latest_mtime"
+      fi
+      jq -n \
+        --arg path "$latest_rel" \
+        --arg sha "$latest_hash" \
+        --argjson mtime "$latest_mtime_json" \
+        '{path: $path, exists: true, sha256: (if ($sha | length) > 0 then $sha else null end), mtime: $mtime}' >> "$rlms_latest_jsonl"
+    done < <(find "$rlms_latest_dir" -maxdepth 1 -type f 2>/dev/null | sort)
+  fi
+  local rlms_latest_json
+  rlms_latest_json=$(jq -s '.' "$rlms_latest_jsonl")
+  rlms_latest_json=$(json_or_default "$rlms_latest_json" "[]")
+
   local artifacts_jsonl="$loop_dir/evidence-artifacts.jsonl"
   : > "$artifacts_jsonl"
   local artifacts_gate="evidence"
@@ -634,6 +686,11 @@ write_evidence_manifest() {
     --argjson validation_status "$validation_status_json" \
     --arg validation_results_file "$validation_results_rel" \
     --argjson validation_results "$validation_results_json" \
+    --arg rlms_index_file "$rlms_index_rel" \
+    --argjson rlms_index "$rlms_index_json" \
+    --argjson rlms_index_sha "$rlms_index_sha_json" \
+    --argjson rlms_index_mtime "$rlms_index_mtime_json" \
+    --argjson rlms_latest "$rlms_latest_json" \
     --argjson artifacts "$artifacts_json" \
     '{
       generated_at: $generated_at,
@@ -666,6 +723,13 @@ write_evidence_manifest() {
         status_file: $validation_status_file,
         results: $validation_results,
         results_file: $validation_results_file
+      },
+      rlms: {
+        index_file: $rlms_index_file,
+        index: $rlms_index,
+        index_sha256: $rlms_index_sha,
+        index_mtime: $rlms_index_mtime,
+        latest: $rlms_latest
       },
       artifacts: $artifacts
     }' \
@@ -1264,6 +1328,9 @@ build_role_prompt() {
   local changed_files_all="${20:-}"
   local tester_exploration_json="${21:-}"
   local tasks_dir="${22:-}"
+  local rlms_result_file="${23:-}"
+  local rlms_summary_file="${24:-}"
+  local rlms_status_file="${25:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -1306,6 +1373,17 @@ EOF
   fi
   if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
     echo "- All files changed this iteration: $changed_files_all" >> "$prompt_file"
+  fi
+
+  # Add RLMS context if available
+  if [[ -n "$rlms_result_file" && -f "$rlms_result_file" ]]; then
+    echo "- RLMS result: $rlms_result_file" >> "$prompt_file"
+  fi
+  if [[ -n "$rlms_summary_file" && -f "$rlms_summary_file" ]]; then
+    echo "- RLMS summary: $rlms_summary_file" >> "$prompt_file"
+  fi
+  if [[ -n "$rlms_status_file" && -f "$rlms_status_file" ]]; then
+    echo "- RLMS status: $rlms_status_file" >> "$prompt_file"
   fi
 
   # Add phase files context for planner and implementer
@@ -1428,6 +1506,20 @@ MINIMAL_FALLBACK
           echo "- $area" >> "$prompt_file"
         done
       fi
+    fi
+  fi
+
+  if [[ -n "$rlms_result_file" && -f "$rlms_result_file" ]]; then
+    echo "" >> "$prompt_file"
+    echo "## RLMS Context" >> "$prompt_file"
+    echo "" >> "$prompt_file"
+    echo "RLMS analysis is available as a long-context index. Use it to locate relevant sections quickly, then verify against source files." >> "$prompt_file"
+    if [[ -n "$rlms_summary_file" && -f "$rlms_summary_file" ]]; then
+      echo "" >> "$prompt_file"
+      echo "RLMS summary excerpt:" >> "$prompt_file"
+      echo '```' >> "$prompt_file"
+      sed -n '1,80p' "$rlms_summary_file" >> "$prompt_file"
+      echo '```' >> "$prompt_file"
     fi
   fi
 
@@ -4927,12 +5019,14 @@ append_run_summary() {
   local approval_file="$loop_dir/approval.json"
   local decisions_jsonl="$loop_dir/decisions.jsonl"
   local decisions_md="$loop_dir/decisions.md"
+  local rlms_index_file="$loop_dir/rlms/index.json"
   local validation_status_file="$loop_dir/validation-status.json"
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
+  local rlms_index_meta
   local validation_status_meta validation_results_meta
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
@@ -4971,6 +5065,8 @@ append_run_summary() {
   decisions_meta=$(json_or_default "$decisions_meta" "{}")
   decisions_md_meta=$(file_meta_json "${decisions_md#$repo/}" "$decisions_md")
   decisions_md_meta=$(json_or_default "$decisions_md_meta" "{}")
+  rlms_index_meta=$(file_meta_json "${rlms_index_file#$repo/}" "$rlms_index_file")
+  rlms_index_meta=$(json_or_default "$rlms_index_meta" "{}")
 
   local artifacts_json
   artifacts_json=$(jq -n \
@@ -4992,6 +5088,7 @@ append_run_summary() {
     --argjson approval "$approval_meta" \
     --argjson decisions "$decisions_meta" \
     --argjson decisions_md "$decisions_md_meta" \
+    --argjson rlms_index "$rlms_index_meta" \
     '{
       plan: $plan,
       implementer: $implementer,
@@ -5010,7 +5107,8 @@ append_run_summary() {
       reviewer_packet: $reviewer_packet,
       approval: $approval,
       decisions: $decisions,
-      decisions_md: $decisions_md
+      decisions_md: $decisions_md,
+      rlms_index: $rlms_index
     }')
   artifacts_json=$(json_or_default "$artifacts_json" "{}")
 
@@ -5569,6 +5667,7 @@ STATIC_ERR_SPEC_NOT_FOUND="SPEC_NOT_FOUND"
 STATIC_ERR_POSSIBLE_TYPO="POSSIBLE_TYPO"
 STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
+STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -5830,6 +5929,61 @@ check_duplicate_loop_ids() {
   return 0
 }
 
+# Check RLMS configuration semantics
+# Usage: check_rlms_config <loop_json> <location_prefix>
+check_rlms_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local rlms_enabled
+  rlms_enabled=$(echo "$loop_json" | jq -r '.rlms.enabled // false' 2>/dev/null || echo "false")
+  if [[ "$rlms_enabled" != "true" ]]; then
+    return 0
+  fi
+
+  local force_on force_off
+  force_on=$(echo "$loop_json" | jq -r '.rlms.policy.force_on // false' 2>/dev/null || echo "false")
+  force_off=$(echo "$loop_json" | jq -r '.rlms.policy.force_off // false' 2>/dev/null || echo "false")
+  if [[ "$force_on" == "true" && "$force_off" == "true" ]]; then
+    static_add_error "$STATIC_ERR_RLMS_INVALID" \
+      "rlms.policy.force_on and rlms.policy.force_off cannot both be true" \
+      "$location_prefix.rlms.policy"
+  fi
+
+  local mode request_keyword
+  mode=$(echo "$loop_json" | jq -r '.rlms.mode // "hybrid"' 2>/dev/null || echo "hybrid")
+  request_keyword=$(echo "$loop_json" | jq -r '.rlms.request_keyword // "RLMS_REQUEST"' 2>/dev/null || echo "RLMS_REQUEST")
+  if [[ "$mode" == "requested" || "$mode" == "hybrid" ]]; then
+    if [[ -z "$request_keyword" || "$request_keyword" == "null" ]]; then
+      static_add_error "$STATIC_ERR_RLMS_INVALID" \
+        "rlms.request_keyword must be set when mode is '$mode'" \
+        "$location_prefix.rlms.request_keyword"
+    fi
+  fi
+
+  local timeout_seconds
+  timeout_seconds=$(echo "$loop_json" | jq -r '.rlms.limits.timeout_seconds // 0' 2>/dev/null || echo "0")
+  if [[ "$timeout_seconds" != "0" && "$timeout_seconds" != "null" ]]; then
+    check_timeout "rlms.timeout_seconds" "$timeout_seconds" "$location_prefix.rlms.limits.timeout_seconds"
+  fi
+
+  local max_steps max_depth
+  max_steps=$(echo "$loop_json" | jq -r '.rlms.limits.max_steps // 0' 2>/dev/null || echo "0")
+  max_depth=$(echo "$loop_json" | jq -r '.rlms.limits.max_depth // 0' 2>/dev/null || echo "0")
+
+  if [[ "$max_steps" =~ ^[0-9]+$ && "$max_steps" -gt 0 && "$max_steps" -gt 500 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_steps is $max_steps which may be expensive; consider lower defaults" \
+      "$location_prefix.rlms.limits.max_steps"
+  fi
+
+  if [[ "$max_depth" =~ ^[0-9]+$ && "$max_depth" -gt 8 ]]; then
+    static_add_warning "$STATIC_ERR_TIMEOUT_SUSPICIOUS" \
+      "rlms.limits.max_depth is $max_depth which may cause deep recursion and high cost" \
+      "$location_prefix.rlms.limits.max_depth"
+  fi
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -5881,6 +6035,9 @@ validate_static() {
     if [[ -n "$spec_file" && "$spec_file" != "null" ]]; then
       check_spec_file "$repo" "$spec_file" "loops[$i].spec_file"
     fi
+
+    # Check RLMS semantic config
+    check_rlms_config "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands
@@ -6943,6 +7100,200 @@ list_cmd() {
   echo "Total: $loop_count loop(s)"
 }
 
+rlms_safe_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "$value"
+  else
+    echo "$fallback"
+  fi
+}
+
+# Decide whether RLMS should run for a role in this iteration.
+# Usage: rlms_evaluate_trigger <enabled> <role_enabled> <mode> <force_on> <force_off> <auto_trigger> <requested_trigger>
+# Output: "<true|false>\t<reason>"
+rlms_evaluate_trigger() {
+  local enabled="$1"
+  local role_enabled="$2"
+  local mode="$3"
+  local force_on="$4"
+  local force_off="$5"
+  local auto_trigger="$6"
+  local requested_trigger="$7"
+
+  if [[ "$enabled" != "true" ]]; then
+    printf 'false\tdisabled\n'
+    return 0
+  fi
+  if [[ "$role_enabled" != "true" ]]; then
+    printf 'false\trole_disabled\n'
+    return 0
+  fi
+  if [[ "$force_off" == "true" ]]; then
+    printf 'false\tforce_off\n'
+    return 0
+  fi
+  if [[ "$force_on" == "true" ]]; then
+    printf 'true\tforce_on\n'
+    return 0
+  fi
+
+  case "$mode" in
+    auto)
+      if [[ "$auto_trigger" == "true" ]]; then
+        printf 'true\tauto_threshold\n'
+      else
+        printf 'false\tauto_not_met\n'
+      fi
+      ;;
+    requested)
+      if [[ "$requested_trigger" == "true" ]]; then
+        printf 'true\trequested_keyword\n'
+      else
+        printf 'false\trequest_not_found\n'
+      fi
+      ;;
+    hybrid|*)
+      if [[ "$requested_trigger" == "true" ]]; then
+        printf 'true\thybrid_requested\n'
+      elif [[ "$auto_trigger" == "true" ]]; then
+        printf 'true\thybrid_auto\n'
+      else
+        printf 'false\thybrid_not_met\n'
+      fi
+      ;;
+  esac
+}
+
+# Compute aggregate RLMS context metrics from a newline-delimited file list.
+# Usage: rlms_compute_context_metrics <context_file_list> <request_keyword>
+# Output JSON: {file_count, line_count, char_count, estimated_tokens, request_detected}
+rlms_compute_context_metrics() {
+  local context_file_list="$1"
+  local request_keyword="$2"
+
+  local file_count=0
+  local line_count=0
+  local char_count=0
+  local request_detected="false"
+
+  if [[ -f "$context_file_list" ]]; then
+    while IFS= read -r file; do
+      if [[ -z "$file" || ! -f "$file" ]]; then
+        continue
+      fi
+      file_count=$((file_count + 1))
+      local file_lines=0
+      local file_chars=0
+      file_lines=$(wc -l < "$file" 2>/dev/null | tr -d '[:space:]' || echo 0)
+      file_chars=$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]' || echo 0)
+      file_lines=$(rlms_safe_int "$file_lines" 0)
+      file_chars=$(rlms_safe_int "$file_chars" 0)
+      line_count=$((line_count + file_lines))
+      char_count=$((char_count + file_chars))
+
+      if [[ "$request_detected" != "true" && -n "$request_keyword" ]]; then
+        if grep -Fq -- "$request_keyword" "$file" 2>/dev/null; then
+          request_detected="true"
+        fi
+      fi
+    done < "$context_file_list"
+  fi
+
+  local estimated_tokens=0
+  if [[ "$char_count" -gt 0 ]]; then
+    estimated_tokens=$(((char_count + 3) / 4))
+  fi
+
+  jq -n \
+    --argjson file_count "$file_count" \
+    --argjson line_count "$line_count" \
+    --argjson char_count "$char_count" \
+    --argjson estimated_tokens "$estimated_tokens" \
+    --argjson request_detected "$(if [[ "$request_detected" == "true" ]]; then echo true; else echo false; fi)" \
+    '{
+      file_count: $file_count,
+      line_count: $line_count,
+      char_count: $char_count,
+      estimated_tokens: $estimated_tokens,
+      request_detected: $request_detected
+    }'
+}
+
+# Build a newline-delimited context file list for RLMS.
+# Usage: rlms_collect_context_files <repo> <output_file> <max_files> <changed_files_all> <tasks_dir> <paths...>
+rlms_collect_context_files() {
+  local repo="$1"
+  local output_file="$2"
+  local max_files="$3"
+  local changed_files_all="$4"
+  local tasks_dir="$5"
+  shift 5
+  local -a fixed_paths=("$@")
+
+  local tmp_file
+  tmp_file=$(mktemp -t "superloop-rlms-context.XXXXXX")
+  : > "$tmp_file"
+
+  local path
+  for path in "${fixed_paths[@]}"; do
+    if [[ -n "$path" && -f "$path" ]]; then
+      printf '%s\n' "$path" >> "$tmp_file"
+    fi
+  done
+
+  if [[ -n "$tasks_dir" && -d "$tasks_dir" ]]; then
+    find "$tasks_dir" -maxdepth 1 -type f -name 'PHASE_*.MD' 2>/dev/null | sort >> "$tmp_file" || true
+  fi
+
+  if [[ -n "$changed_files_all" && -f "$changed_files_all" ]]; then
+    while IFS= read -r rel_path; do
+      if [[ -z "$rel_path" ]]; then
+        continue
+      fi
+      local abs_path="$repo/$rel_path"
+      if [[ -f "$abs_path" ]]; then
+        printf '%s\n' "$abs_path" >> "$tmp_file"
+      fi
+    done < "$changed_files_all"
+  fi
+
+  awk 'NF && !seen[$0]++' "$tmp_file" | head -n "$max_files" > "$output_file"
+  rm -f "$tmp_file"
+}
+
+append_rlms_index_entry() {
+  local index_file="$1"
+  local loop_id="$2"
+  local entry_json="$3"
+
+  local tmp_file="${index_file}.tmp"
+  mkdir -p "$(dirname "$index_file")"
+
+  if [[ -f "$index_file" ]]; then
+    jq -n \
+      --argjson entry "$entry_json" \
+      --arg updated_at "$(timestamp)" \
+      --slurpfile existing "$index_file" \
+      '($existing[0] // {}) as $root
+      | {
+          version: ($root.version // 1),
+          loop_id: ($root.loop_id // null),
+          updated_at: $updated_at,
+          entries: (($root.entries // []) + [$entry])
+        }' > "$tmp_file"
+  else
+    jq -n \
+      --arg loop_id "$loop_id" \
+      --arg updated_at "$(timestamp)" \
+      --argjson entry "$entry_json" \
+      '{version: 1, loop_id: $loop_id, updated_at: $updated_at, entries: [$entry]}' > "$tmp_file"
+  fi
+
+  mv "$tmp_file" "$index_file"
+}
+
 run_cmd() {
   local repo="$1"
   local config_path="$2"
@@ -7163,10 +7514,13 @@ run_cmd() {
     local changed_files_implementer="$loop_dir/changed-files-implementer.txt"
     local changed_files_all="$loop_dir/changed-files-all.txt"
     local usage_file="$loop_dir/usage.jsonl"
+    local rlms_root_dir="$loop_dir/rlms"
+    local rlms_latest_dir="$rlms_root_dir/latest"
+    local rlms_index_file="$rlms_root_dir/index.json"
 
     local tasks_dir="$loop_dir/tasks"
     local stuck_file="$loop_dir/stuck.json"
-    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir"
+    mkdir -p "$loop_dir" "$prompt_dir" "$log_dir" "$tasks_dir" "$rlms_latest_dir"
     touch "$plan_file" "$notes_file" "$implementer_report" "$reviewer_report" "$test_report"
 
     # Check if stuck threshold has been reached
@@ -7403,6 +7757,43 @@ run_cmd() {
     local tester_exploration_json
     tester_exploration_json=$(jq -c '.tester_exploration // {}' <<<"$loop_json")
 
+    # RLMS (recursive language model scaffold) configuration
+    local rlms_enabled
+    rlms_enabled=$(jq -r '.rlms.enabled // false' <<<"$loop_json")
+    local rlms_mode
+    rlms_mode=$(jq -r '.rlms.mode // "hybrid"' <<<"$loop_json")
+    local rlms_request_keyword
+    rlms_request_keyword=$(jq -r '.rlms.request_keyword // "RLMS_REQUEST"' <<<"$loop_json")
+    local rlms_auto_max_lines
+    rlms_auto_max_lines=$(jq -r '.rlms.auto.max_lines // 2500' <<<"$loop_json")
+    local rlms_auto_max_estimated_tokens
+    rlms_auto_max_estimated_tokens=$(jq -r '.rlms.auto.max_estimated_tokens // 120000' <<<"$loop_json")
+    local rlms_auto_max_files
+    rlms_auto_max_files=$(jq -r '.rlms.auto.max_files // 40' <<<"$loop_json")
+    local rlms_limit_max_steps
+    rlms_limit_max_steps=$(jq -r '.rlms.limits.max_steps // 40' <<<"$loop_json")
+    local rlms_limit_max_depth
+    rlms_limit_max_depth=$(jq -r '.rlms.limits.max_depth // 2' <<<"$loop_json")
+    local rlms_limit_timeout_seconds
+    rlms_limit_timeout_seconds=$(jq -r '.rlms.limits.timeout_seconds // 240' <<<"$loop_json")
+    local rlms_output_format
+    rlms_output_format=$(jq -r '.rlms.output.format // "json"' <<<"$loop_json")
+    local rlms_output_require_citations
+    rlms_output_require_citations=$(jq -r '.rlms.output.require_citations // true' <<<"$loop_json")
+    local rlms_policy_force_on
+    rlms_policy_force_on=$(jq -r '.rlms.policy.force_on // false' <<<"$loop_json")
+    local rlms_policy_force_off
+    rlms_policy_force_off=$(jq -r '.rlms.policy.force_off // false' <<<"$loop_json")
+    local rlms_policy_fail_mode
+    rlms_policy_fail_mode=$(jq -r '.rlms.policy.fail_mode // "warn_and_continue"' <<<"$loop_json")
+
+    rlms_auto_max_lines=$(rlms_safe_int "$rlms_auto_max_lines" 2500)
+    rlms_auto_max_estimated_tokens=$(rlms_safe_int "$rlms_auto_max_estimated_tokens" 120000)
+    rlms_auto_max_files=$(rlms_safe_int "$rlms_auto_max_files" 40)
+    rlms_limit_max_steps=$(rlms_safe_int "$rlms_limit_max_steps" 40)
+    rlms_limit_max_depth=$(rlms_safe_int "$rlms_limit_max_depth" 2)
+    rlms_limit_timeout_seconds=$(rlms_safe_int "$rlms_limit_timeout_seconds" 240)
+
     local stuck_enabled
     stuck_enabled=$(jq -r '.stuck.enabled // false' <<<"$loop_json")
     local stuck_threshold
@@ -7510,7 +7901,9 @@ run_cmd() {
       --arg tests_mode "$tests_mode" \
       --argjson test_commands "$test_commands_json" \
       --argjson checklists "$checklist_patterns_json" \
-      '{spec_file: $spec_file, max_iterations: $max_iterations, tests_mode: $tests_mode, test_commands: $test_commands, checklists: $checklists}')
+      --argjson rlms_enabled "$(if [[ "$rlms_enabled" == "true" ]]; then echo true; else echo false; fi)" \
+      --arg rlms_mode "$rlms_mode" \
+      '{spec_file: $spec_file, max_iterations: $max_iterations, tests_mode: $tests_mode, test_commands: $test_commands, checklists: $checklists, rlms: {enabled: $rlms_enabled, mode: $rlms_mode}}')
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_start" "$loop_start_data"
 
     local approval_required=0
@@ -7654,6 +8047,213 @@ run_cmd() {
           die "missing role template: $role_template"
         fi
 
+        local rlms_result_for_prompt=""
+        local rlms_summary_for_prompt=""
+        local rlms_status_for_prompt=""
+
+        if [[ "$rlms_enabled" == "true" ]]; then
+          local role_rlms_enabled
+          role_rlms_enabled=$(jq -r --arg role "$role" '.rlms.roles[$role] // true' <<<"$loop_json")
+          role_rlms_enabled="${role_rlms_enabled:-true}"
+
+          local role_rlms_dir="$rlms_root_dir/iter-$iteration/$role"
+          local role_rlms_context_file="$role_rlms_dir/context-files.txt"
+          local role_rlms_metadata_file="$role_rlms_dir/metadata.json"
+          local role_rlms_result_file="$role_rlms_dir/result.json"
+          local role_rlms_summary_file="$role_rlms_dir/summary.md"
+          local role_rlms_status_file="$role_rlms_dir/status.json"
+          local rlms_script="${SUPERLOOP_RLMS_SCRIPT:-$SCRIPT_DIR/scripts/rlms}"
+          mkdir -p "$role_rlms_dir"
+
+          rlms_collect_context_files \
+            "$repo" \
+            "$role_rlms_context_file" \
+            "$rlms_auto_max_files" \
+            "$changed_files_all" \
+            "$tasks_dir" \
+            "$repo/$spec_file" \
+            "$plan_file" \
+            "$notes_file" \
+            "$implementer_report" \
+            "$reviewer_report" \
+            "$test_report" \
+            "$test_output" \
+            "$test_status" \
+            "$validation_status_file" \
+            "$validation_results_file" \
+            "$checklist_status" \
+            "$checklist_remaining" \
+            "$evidence_file"
+
+          local rlms_metrics_json
+          rlms_metrics_json=$(rlms_compute_context_metrics "$role_rlms_context_file" "$rlms_request_keyword")
+          rlms_metrics_json=$(json_or_default "$rlms_metrics_json" '{}')
+
+          local rlms_context_files_count rlms_context_lines rlms_context_tokens rlms_requested_trigger
+          rlms_context_files_count=$(jq -r '.file_count // 0' <<<"$rlms_metrics_json")
+          rlms_context_lines=$(jq -r '.line_count // 0' <<<"$rlms_metrics_json")
+          rlms_context_tokens=$(jq -r '.estimated_tokens // 0' <<<"$rlms_metrics_json")
+          rlms_requested_trigger=$(jq -r '.request_detected // false' <<<"$rlms_metrics_json")
+          rlms_context_files_count=$(rlms_safe_int "$rlms_context_files_count" 0)
+          rlms_context_lines=$(rlms_safe_int "$rlms_context_lines" 0)
+          rlms_context_tokens=$(rlms_safe_int "$rlms_context_tokens" 0)
+
+          local rlms_auto_trigger="false"
+          if [[ "$rlms_context_lines" -ge "$rlms_auto_max_lines" || "$rlms_context_tokens" -ge "$rlms_auto_max_estimated_tokens" || "$rlms_context_files_count" -ge "$rlms_auto_max_files" ]]; then
+            rlms_auto_trigger="true"
+          fi
+
+          local rlms_decision
+          rlms_decision=$(rlms_evaluate_trigger "$rlms_enabled" "$role_rlms_enabled" "$rlms_mode" "$rlms_policy_force_on" "$rlms_policy_force_off" "$rlms_auto_trigger" "$rlms_requested_trigger")
+          local rlms_should_run
+          rlms_should_run=$(printf '%s' "$rlms_decision" | awk -F $'\t' '{print $1}')
+          local rlms_trigger_reason
+          rlms_trigger_reason=$(printf '%s' "$rlms_decision" | awk -F $'\t' '{print $2}')
+
+          local rlms_decision_data
+          rlms_decision_data=$(jq -n \
+            --arg role "$role" \
+            --arg mode "$rlms_mode" \
+            --arg reason "$rlms_trigger_reason" \
+            --argjson should_run "$(if [[ "$rlms_should_run" == "true" ]]; then echo true; else echo false; fi)" \
+            --argjson metrics "$rlms_metrics_json" \
+            '{role: $role, mode: $mode, reason: $reason, should_run: $should_run, metrics: $metrics}')
+          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "rlms_decision" "$rlms_decision_data" "$role"
+
+          jq -n \
+            --arg generated_at "$(timestamp)" \
+            --arg loop_id "$loop_id" \
+            --arg run_id "$run_id" \
+            --arg role "$role" \
+            --arg mode "$rlms_mode" \
+            --arg trigger_reason "$rlms_trigger_reason" \
+            --argjson should_run "$(if [[ "$rlms_should_run" == "true" ]]; then echo true; else echo false; fi)" \
+            --argjson metrics "$rlms_metrics_json" \
+            --argjson limits "$(jq -n \
+              --argjson max_steps "$rlms_limit_max_steps" \
+              --argjson max_depth "$rlms_limit_max_depth" \
+              --argjson timeout_seconds "$rlms_limit_timeout_seconds" \
+              '{max_steps: $max_steps, max_depth: $max_depth, timeout_seconds: $timeout_seconds}')" \
+            '{generated_at: $generated_at, loop_id: $loop_id, run_id: $run_id, role: $role, mode: $mode, trigger_reason: $trigger_reason, should_run: $should_run, metrics: $metrics, limits: $limits}' \
+            > "$role_rlms_metadata_file"
+
+          local rlms_status_text="skipped"
+          local rlms_error_message=""
+          local rlms_started_at=""
+          local rlms_ended_at=""
+          local rlms_rc=0
+
+          if [[ "$rlms_should_run" == "true" ]]; then
+            rlms_started_at=$(timestamp)
+            local rlms_start_data
+            rlms_start_data=$(jq -n \
+              --arg role "$role" \
+              --arg output_dir "${role_rlms_dir#$repo/}" \
+              --argjson metrics "$rlms_metrics_json" \
+              '{role: $role, output_dir: $output_dir, metrics: $metrics}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "rlms_start" "$rlms_start_data" "$role"
+
+            set +e
+            "$rlms_script" \
+              --repo "$repo" \
+              --loop-id "$loop_id" \
+              --role "$role" \
+              --iteration "$iteration" \
+              --context-file-list "$role_rlms_context_file" \
+              --output-dir "$role_rlms_dir" \
+              --max-steps "$rlms_limit_max_steps" \
+              --max-depth "$rlms_limit_max_depth" \
+              --timeout-seconds "$rlms_limit_timeout_seconds" \
+              --require-citations "$rlms_output_require_citations" \
+              --format "$rlms_output_format" \
+              --metadata-file "$role_rlms_metadata_file"
+            rlms_rc=$?
+            set -e
+
+            rlms_ended_at=$(timestamp)
+            if [[ $rlms_rc -eq 0 ]]; then
+              rlms_status_text="ok"
+            else
+              rlms_status_text="failed"
+              if [[ -f "$role_rlms_result_file" ]]; then
+                rlms_error_message=$(jq -r '.error // ""' "$role_rlms_result_file" 2>/dev/null || echo "")
+              fi
+              if [[ -z "$rlms_error_message" ]]; then
+                rlms_error_message="rlms script exited with status $rlms_rc"
+              fi
+            fi
+
+            local rlms_end_data
+            rlms_end_data=$(jq -n \
+              --arg role "$role" \
+              --arg status "$rlms_status_text" \
+              --arg error "$rlms_error_message" \
+              --arg result_file "${role_rlms_result_file#$repo/}" \
+              --arg summary_file "${role_rlms_summary_file#$repo/}" \
+              --arg started_at "$rlms_started_at" \
+              --arg ended_at "$rlms_ended_at" \
+              '{role: $role, status: $status, error: (if ($error | length) > 0 then $error else null end), result_file: $result_file, summary_file: $summary_file, started_at: $started_at, ended_at: $ended_at}')
+            log_event "$events_file" "$loop_id" "$iteration" "$run_id" "rlms_end" "$rlms_end_data" "$role"
+          fi
+
+          jq -n \
+            --arg generated_at "$(timestamp)" \
+            --arg status "$rlms_status_text" \
+            --arg reason "$rlms_trigger_reason" \
+            --arg mode "$rlms_mode" \
+            --arg error "$rlms_error_message" \
+            --arg result_file "${role_rlms_result_file#$repo/}" \
+            --arg summary_file "${role_rlms_summary_file#$repo/}" \
+            --arg metadata_file "${role_rlms_metadata_file#$repo/}" \
+            --argjson metrics "$rlms_metrics_json" \
+            --argjson should_run "$(if [[ "$rlms_should_run" == "true" ]]; then echo true; else echo false; fi)" \
+            '{generated_at: $generated_at, status: $status, reason: $reason, mode: $mode, should_run: $should_run, error: (if ($error | length) > 0 then $error else null end), result_file: $result_file, summary_file: $summary_file, metadata_file: $metadata_file, metrics: $metrics}' \
+            > "$role_rlms_status_file"
+
+          if [[ -f "$role_rlms_result_file" ]]; then
+            cp "$role_rlms_result_file" "$rlms_latest_dir/${role}.json"
+          fi
+          if [[ -f "$role_rlms_summary_file" ]]; then
+            cp "$role_rlms_summary_file" "$rlms_latest_dir/${role}.md"
+          fi
+          cp "$role_rlms_status_file" "$rlms_latest_dir/${role}.status.json"
+
+          local rlms_index_entry
+          rlms_index_entry=$(jq -n \
+            --arg timestamp "$(timestamp)" \
+            --arg role "$role" \
+            --arg run_id "$run_id" \
+            --argjson iteration "$iteration" \
+            --arg status "$rlms_status_text" \
+            --arg reason "$rlms_trigger_reason" \
+            --arg error "$rlms_error_message" \
+            --arg result_file "${role_rlms_result_file#$repo/}" \
+            --arg summary_file "${role_rlms_summary_file#$repo/}" \
+            --arg status_file "${role_rlms_status_file#$repo/}" \
+            --argjson metrics "$rlms_metrics_json" \
+            '{timestamp: $timestamp, role: $role, run_id: $run_id, iteration: $iteration, status: $status, reason: $reason, error: (if ($error | length) > 0 then $error else null end), result_file: $result_file, summary_file: $summary_file, status_file: $status_file, metrics: $metrics}')
+          append_rlms_index_entry "$rlms_index_file" "$loop_id" "$rlms_index_entry"
+
+          if [[ "$rlms_status_text" == "failed" && "$rlms_policy_fail_mode" == "fail_role" ]]; then
+            echo "error: RLMS failed for role '$role' and fail_mode is 'fail_role': $rlms_error_message" >&2
+            write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+            return 1
+          fi
+          if [[ "$rlms_status_text" == "failed" && "$rlms_policy_fail_mode" != "fail_role" ]]; then
+            echo "warning: RLMS failed for role '$role' (continuing): $rlms_error_message" >&2
+          fi
+
+          if [[ -f "$rlms_latest_dir/${role}.json" ]]; then
+            rlms_result_for_prompt="$rlms_latest_dir/${role}.json"
+          fi
+          if [[ -f "$rlms_latest_dir/${role}.md" ]]; then
+            rlms_summary_for_prompt="$rlms_latest_dir/${role}.md"
+          fi
+          if [[ -f "$rlms_latest_dir/${role}.status.json" ]]; then
+            rlms_status_for_prompt="$rlms_latest_dir/${role}.status.json"
+          fi
+        fi
+
         local prompt_file="$prompt_dir/${role}.md"
         echo "[$(timestamp)] Building prompt for role: $role" >> "$error_log"
 
@@ -7679,7 +8279,10 @@ run_cmd() {
           "$changed_files_implementer" \
           "$changed_files_all" \
           "$tester_exploration_json" \
-          "$tasks_dir" 2>> "$error_log"; then
+          "$tasks_dir" \
+          "$rlms_result_for_prompt" \
+          "$rlms_summary_for_prompt" \
+          "$rlms_status_for_prompt" 2>> "$error_log"; then
           echo "[$(timestamp)] ERROR: build_role_prompt failed for role: $role" >> "$error_log"
           echo "Error: Failed to build prompt for role '$role' in iteration $iteration" >&2
           echo "See $error_log for details" >&2
