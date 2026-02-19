@@ -374,22 +374,68 @@ EOF
 # Cancel Command Tests
 # ============================================================================
 
-@test "e2e: cancel clears state" {
+@test "e2e: cancel command clears active state file" {
   cd "$TEST_REPO"
 
-  # Create a loop with state
+  mkdir -p ".superloop"
+  cat > ".superloop/state.json" << 'EOF'
+{"active":true,"loop_index":0,"iteration":2,"current_loop_id":"test-loop"}
+EOF
+
+  [ -f ".superloop/state.json" ]
+
+  run "$BATS_TEST_DIRNAME/../../superloop.sh" cancel --repo "$TEST_REPO"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Cancelled loop state."* ]]
+
+  [ ! -f ".superloop/state.json" ]
+}
+
+# ============================================================================
+# Usage Command Tests
+# ============================================================================
+
+@test "e2e: usage command returns JSON summary" {
+  cd "$TEST_REPO"
+
   mkdir -p ".superloop/loops/test-loop"
-  cp "$BATS_TEST_DIRNAME/../fixtures/state/in-progress/state.json" \
-     ".superloop/loops/test-loop/state.json"
+  cat > ".superloop/loops/test-loop/usage.jsonl" << 'EOF'
+{"timestamp":"2026-01-15T00:00:00Z","iteration":1,"role":"planner","duration_ms":5000,"runner":"claude","usage":{"input_tokens":1000,"output_tokens":500,"thinking_tokens":100}}
+{"timestamp":"2026-01-15T00:10:00Z","iteration":1,"role":"implementer","duration_ms":8000,"runner":"codex","usage":{"input_tokens":2000,"output_tokens":800,"reasoning_output_tokens":300}}
+EOF
 
-  # Verify state exists before cancel
-  [ -f ".superloop/loops/test-loop/state.json" ]
+  run "$BATS_TEST_DIRNAME/../../superloop.sh" usage --repo "$TEST_REPO" --loop test-loop --json
+  [ "$status" -eq 0 ]
 
-  # Simulate cancel by removing state file
-  rm ".superloop/loops/test-loop/state.json"
+  echo "$output" | jq -e '.loop_id == "test-loop"'
+  echo "$output" | jq -e '.total_iterations == 2'
+  echo "$output" | jq -e '.by_runner | length == 2'
+}
 
-  # Verify state is cleared
-  [ ! -f ".superloop/loops/test-loop/state.json" ]
+# ============================================================================
+# Approval Command Tests
+# ============================================================================
+
+@test "e2e: approve command records decision artifacts" {
+  cd "$TEST_REPO"
+
+  mkdir -p ".superloop/loops/test-loop"
+  cat > ".superloop/loops/test-loop/approval.json" << 'EOF'
+{"status":"pending","run_id":"run-123","iteration":2}
+EOF
+
+  run "$BATS_TEST_DIRNAME/../../superloop.sh" approve --repo "$TEST_REPO" --loop test-loop --by "qa-user" --note "Looks good"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Recorded approval decision (approved) for loop 'test-loop'."* ]]
+
+  jq -e '.status == "approved"' ".superloop/loops/test-loop/approval.json"
+  jq -e '.decision.by == "qa-user"' ".superloop/loops/test-loop/approval.json"
+  jq -e '.decision.note == "Looks good"' ".superloop/loops/test-loop/approval.json"
+  [ -f ".superloop/loops/test-loop/decisions.jsonl" ]
+  [ -f ".superloop/loops/test-loop/decisions.md" ]
+  [ -f ".superloop/loops/test-loop/events.jsonl" ]
+
+  grep -q '"decision":"approved"' ".superloop/loops/test-loop/decisions.jsonl"
 }
 
 # ============================================================================
@@ -399,68 +445,52 @@ EOF
 @test "e2e: report command generates HTML" {
   cd "$TEST_REPO"
 
-  # Create completed loop with all required files
   mkdir -p ".superloop/loops/test-loop"
-  cp "$BATS_TEST_DIRNAME/../fixtures/state/complete/state.json" \
-     ".superloop/loops/test-loop/state.json"
-
-  # Create a mock report HTML file (simulating report command output)
-  cat > ".superloop/loops/test-loop/report.html" << 'EOF'
-<!DOCTYPE html>
-<html>
-<head><title>Superloop Report: test-loop</title></head>
-<body>
-<h1>Loop Report: test-loop</h1>
-<section id="summary">
-  <h2>Summary</h2>
-  <p>Status: Complete</p>
-  <p>Iterations: 8</p>
-</section>
-<section id="cost">
-  <h2>Cost Breakdown</h2>
-  <p>Total Cost: $0.45</p>
-</section>
-</body>
-</html>
+  cat > ".superloop/config.json" << 'EOF'
+{"loops":[{"id":"test-loop"}]}
+EOF
+  cat > ".superloop/loops/test-loop/run-summary.json" << 'EOF'
+{"version":1,"loop_id":"test-loop","entries":[{"run_id":"run-1","iteration":1,"promise":{"matched":true},"gates":{"tests":"ok","validation":"ok","checklist":"ok","evidence":"ok","approval":"approved"}}]}
+EOF
+  cat > ".superloop/loops/test-loop/timeline.md" << 'EOF'
+# Timeline
+EOF
+  cat > ".superloop/loops/test-loop/gate-summary.txt" << 'EOF'
+Promise: matched
+Tests: ok
+EOF
+  cat > ".superloop/loops/test-loop/usage.jsonl" << 'EOF'
+{"timestamp":"2026-01-15T00:00:00Z","iteration":1,"role":"planner","duration_ms":5000,"runner":"claude","cost_usd":0.0105,"usage":{"input_tokens":1000,"output_tokens":500,"thinking_tokens":100}}
+{"timestamp":"2026-01-15T00:10:00Z","iteration":1,"role":"implementer","duration_ms":8000,"runner":"codex","cost_usd":0.0430,"usage":{"input_tokens":2000,"output_tokens":800,"reasoning_output_tokens":300}}
 EOF
 
-  # Verify report exists
+  run "$BATS_TEST_DIRNAME/../../superloop.sh" report --repo "$TEST_REPO" --loop test-loop
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Wrote report to"* ]]
+
   [ -f ".superloop/loops/test-loop/report.html" ]
-
-  # Verify it's valid HTML (contains DOCTYPE and html tags)
-  grep -q "<!DOCTYPE html>" ".superloop/loops/test-loop/report.html"
-  grep -q "<html>" ".superloop/loops/test-loop/report.html"
-
-  # Verify it contains loop information
+  grep -q "Supergent Report" ".superloop/loops/test-loop/report.html"
   grep -q "test-loop" ".superloop/loops/test-loop/report.html"
+  grep -q "Usage &amp; Cost" ".superloop/loops/test-loop/report.html"
 }
 
 @test "e2e: report includes cost breakdown" {
   cd "$TEST_REPO"
 
-  # Create loop with usage data
   mkdir -p ".superloop/loops/test-loop"
-
-  # Create usage.jsonl with cost data
+  cat > ".superloop/config.json" << 'EOF'
+{"loops":[{"id":"test-loop"}]}
+EOF
+  cat > ".superloop/loops/test-loop/run-summary.json" << 'EOF'
+{"version":1,"loop_id":"test-loop","entries":[]}
+EOF
   cat > ".superloop/loops/test-loop/usage.jsonl" << 'EOF'
-{"timestamp":"2026-01-15T00:00:00Z","iteration":1,"role":"planner","runner":"claude","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":500,"thinking_tokens":100},"cost":0.0105}
-{"timestamp":"2026-01-15T00:10:00Z","iteration":1,"role":"implementer","runner":"claude","model":"claude-sonnet-4-5","usage":{"input_tokens":2000,"output_tokens":1000,"thinking_tokens":200},"cost":0.025}
-{"timestamp":"2026-01-15T00:30:00Z","iteration":2,"role":"implementer","runner":"codex","model":"gpt-5.2-codex","usage":{"input_tokens":1500,"output_tokens":800,"reasoning_output_tokens":300},"cost":0.018}
+{"timestamp":"2026-01-15T00:00:00Z","iteration":1,"role":"planner","duration_ms":5000,"runner":"claude","cost_usd":0.0105,"usage":{"input_tokens":1000,"output_tokens":500,"thinking_tokens":100}}
+{"timestamp":"2026-01-15T00:10:00Z","iteration":1,"role":"implementer","duration_ms":8000,"runner":"codex","cost_usd":0.0430,"usage":{"input_tokens":2000,"output_tokens":800,"reasoning_output_tokens":300}}
 EOF
 
-  # Verify usage file exists
-  [ -f ".superloop/loops/test-loop/usage.jsonl" ]
+  run "$BATS_TEST_DIRNAME/../../superloop.sh" report --repo "$TEST_REPO" --loop test-loop
+  [ "$status" -eq 0 ]
 
-  # Verify it contains cost data
-  grep -q '"cost"' ".superloop/loops/test-loop/usage.jsonl"
-
-  # Calculate total cost from usage file
-  local total_cost=$(jq -s 'map(.cost) | add' ".superloop/loops/test-loop/usage.jsonl")
-
-  # Verify total is reasonable (0.0105 + 0.025 + 0.018 = 0.0535)
-  [[ "$total_cost" != "null" ]]
-
-  # Verify cost is non-zero
-  local cost_cents=$(awk -v cost="$total_cost" 'BEGIN {printf "%.0f", cost * 100}')
-  [ "$cost_cents" -gt 0 ]
+  grep -q '\$0.0535' ".superloop/loops/test-loop/report.html"
 }
