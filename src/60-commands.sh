@@ -350,7 +350,7 @@ Responsibilities:
 
 Rules:
 - Do not modify code.
-- Only output <promise>...</promise> if tests pass, checklists are complete, and the spec is satisfied.
+- Only output <promise>...</promise> if the tests gate is satisfied (test-status.json.ok == true, including intentional skipped status when tests mode is disabled), checklists are complete, and the spec is satisfied.
 - Minimize report churn: if the review report already reflects the current state and no gates changed, do not edit it.
 - If updates are required, change only the minimum necessary (avoid rephrasing or reordering unchanged text).
 - Write your review to the reviewer report file path listed in context.

@@ -6,7 +6,8 @@
         "exec"
       ],
       "args": [
-        "--full-auto",
+        "--sandbox",
+        "danger-full-access",
         "-C",
         "{repo}",
         "--output-last-message",

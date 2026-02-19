@@ -45,7 +45,7 @@ This allows the planner to create fix tasks.
 
 - Do not modify code.
 - Only output `<promise>SUPERLOOP_COMPLETE</promise>` if ALL of:
-  - Tests pass
+  - Tests gate is satisfied (`test-status.json.ok == true`, including intentional `skipped: true` when tests mode is disabled)
   - Checklists are complete
   - Spec is satisfied
   - **No HIGH or MEDIUM findings remain unfixed**
