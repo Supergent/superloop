@@ -134,6 +134,9 @@ main() {
     validate)
       validate_cmd "$repo" "$config_path" "$schema_path" "$static" "$probe"
       ;;
+    runner-smoke)
+      runner_smoke_cmd "$repo" "$config_path" "$schema_path" "$loop_id"
+      ;;
     report)
       report_cmd "$repo" "$config_path" "$loop_id" "$out_path"
       ;;

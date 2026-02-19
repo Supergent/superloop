@@ -18,6 +18,7 @@ Usage:
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   superloop.sh cancel [--repo DIR]
   superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
+  superloop.sh runner-smoke [--repo DIR] [--config FILE] [--schema FILE] [--loop ID]
   superloop.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
   superloop.sh --version
 

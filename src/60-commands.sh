@@ -19,12 +19,12 @@ init_cmd() {
     },
     "claude-vanilla": {
       "command": ["claude-vanilla"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "args": ["--dangerously-skip-permissions", "--print", "-"],
       "prompt_mode": "stdin"
     },
     "claude-glm-mantic": {
       "command": ["claude-glm-mantic"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "args": ["--dangerously-skip-permissions", "--print", "-"],
       "prompt_mode": "stdin"
     }
   },

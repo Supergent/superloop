@@ -176,6 +176,132 @@ EOF
   [[ "$output" =~ "RLMS_INVALID" ]]
 }
 
+@test "validate accepts delegation configuration with legacy and explicit wake labels" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "delegation-valid",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "delegation": {
+      "enabled": true,
+      "dispatch_mode": "parallel",
+      "wake_policy": "after_all",
+      "max_children": 3,
+      "max_waves": 2,
+      "child_timeout_seconds": 180,
+      "retry_limit": 1,
+      "roles": {
+        "planner": {
+          "enabled": true,
+          "mode": "reconnaissance"
+        },
+        "implementer": {
+          "enabled": true,
+          "wake_policy": "on_wave_complete"
+        },
+        "tester": {
+          "enabled": true,
+          "wake_policy": "immediate"
+        }
+      }
+    },
+    "roles": {"implementer": {"runner": "shell"}, "reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "ok" ]]
+}
+
+@test "runner-smoke fails for native claude config using -C" {
+  mkdir -p "$TEMP_DIR/bin"
+  cat > "$TEMP_DIR/bin/claude" << 'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  echo '{"loggedIn": true}'
+  exit 0
+fi
+if [[ "${1:-}" == "--version" ]]; then
+  echo "claude 1.0.0"
+  exit 0
+fi
+echo "ok"
+exit 0
+EOF
+  chmod +x "$TEMP_DIR/bin/claude"
+
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "claude": {
+      "command": ["claude"],
+      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": []
+}
+EOF
+
+  run env PATH="$TEMP_DIR/bin:$PATH" "$PROJECT_ROOT/superloop.sh" runner-smoke --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "PROBE_RUNNER_ARGS_INVALID" ]]
+}
+
+@test "runner-smoke passes for native claude config with --print and auth" {
+  mkdir -p "$TEMP_DIR/bin"
+  cat > "$TEMP_DIR/bin/claude" << 'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  echo '{"loggedIn": true}'
+  exit 0
+fi
+if [[ "${1:-}" == "--version" ]]; then
+  echo "claude 1.0.0"
+  exit 0
+fi
+echo "ok"
+exit 0
+EOF
+  chmod +x "$TEMP_DIR/bin/claude"
+
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "claude": {
+      "command": ["claude"],
+      "args": ["--dangerously-skip-permissions", "--print", "-"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": []
+}
+EOF
+
+  run env PATH="$TEMP_DIR/bin:$PATH" "$PROJECT_ROOT/superloop.sh" runner-smoke --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "ok: runner smoke checks passed" ]]
+}
+
 # =============================================================================
 # List Command
 # =============================================================================

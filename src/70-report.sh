@@ -10,18 +10,9 @@ select_python() {
   return 1
 }
 
-validate_cmd() {
-  local repo="$1"
+validate_schema_config() {
+  local schema_path="$1"
   local config_path="$2"
-  local schema_path="$3"
-  local static_only="${4:-0}"
-
-  if [[ ! -f "$config_path" ]]; then
-    die "config not found: $config_path"
-  fi
-  if [[ ! -f "$schema_path" ]]; then
-    die "schema not found: $schema_path"
-  fi
 
   local python_bin=""
   python_bin=$(select_python || true)
@@ -29,7 +20,6 @@ validate_cmd() {
     die "missing python3/python for schema validation"
   fi
 
-  # Run schema validation first
   "$python_bin" - "$schema_path" "$config_path" <<'PY'
 import json
 import sys
@@ -141,8 +131,22 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 PY
-  local schema_rc=$?
-  if [[ $schema_rc -ne 0 ]]; then
+}
+
+validate_cmd() {
+  local repo="$1"
+  local config_path="$2"
+  local schema_path="$3"
+  local static_only="${4:-0}"
+
+  if [[ ! -f "$config_path" ]]; then
+    die "config not found: $config_path"
+  fi
+  if [[ ! -f "$schema_path" ]]; then
+    die "schema not found: $schema_path"
+  fi
+
+  if ! validate_schema_config "$schema_path" "$config_path"; then
     return 1
   fi
 
@@ -167,6 +171,41 @@ PY
     fi
     echo "ok: probe validation passed"
   fi
+}
+
+runner_smoke_cmd() {
+  local repo="$1"
+  local config_path="$2"
+  local schema_path="$3"
+  local loop_id="${4:-}"
+
+  need_cmd jq
+
+  if [[ ! -f "$config_path" ]]; then
+    die "config not found: $config_path"
+  fi
+  if [[ ! -f "$schema_path" ]]; then
+    die "schema not found: $schema_path"
+  fi
+
+  if [[ -n "$loop_id" ]]; then
+    local loop_match
+    loop_match=$(jq -r --arg id "$loop_id" '.loops[]? | select(.id == $id) | .id' "$config_path" | head -n1)
+    if [[ -z "$loop_match" ]]; then
+      die "loop id not found: $loop_id"
+    fi
+  fi
+
+  if ! validate_schema_config "$schema_path" "$config_path"; then
+    return 1
+  fi
+
+  echo ""
+  echo "Running runner smoke checks..."
+  if ! validate_runner_smoke "$repo" "$config_path" "$loop_id"; then
+    return 1
+  fi
+  echo "ok: runner smoke checks passed"
 }
 
 report_cmd() {

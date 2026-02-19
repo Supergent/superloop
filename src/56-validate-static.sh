@@ -536,6 +536,10 @@ PROBE_ERR_COMMAND_NOT_FOUND="PROBE_COMMAND_NOT_FOUND"
 PROBE_ERR_ENV_ERROR="PROBE_ENV_ERROR"
 PROBE_ERR_RUNNER_FAILED="PROBE_RUNNER_FAILED"
 PROBE_ERR_TIMEOUT="PROBE_TIMEOUT"
+PROBE_ERR_RUNNER_ARGS_INVALID="PROBE_RUNNER_ARGS_INVALID"
+PROBE_ERR_RUNNER_SHAPE_INVALID="PROBE_RUNNER_SHAPE_INVALID"
+PROBE_ERR_AUTH_REQUIRED="PROBE_AUTH_REQUIRED"
+PROBE_WARN_AUTH_CHECK_SKIPPED="PROBE_AUTH_CHECK_SKIPPED"
 
 # Probe results storage
 PROBE_RESULTS=""
@@ -578,6 +582,191 @@ probe_add_warning() {
     PROBE_RESULTS="$json"
   fi
   ((PROBE_WARNING_COUNT++))
+}
+
+probe_reset_results() {
+  PROBE_RESULTS=""
+  PROBE_ERROR_COUNT=0
+  PROBE_WARNING_COUNT=0
+}
+
+is_native_command_name() {
+  local cmd="$1"
+  local expected="$2"
+  local base="${cmd##*/}"
+  [[ "$base" == "$expected" ]]
+}
+
+probe_check_claude_args() {
+  local runner_name="$1"
+  local args_json="$2"
+  local location="$3"
+  local failed=0
+
+  if echo "$args_json" | jq -e '.[]? | select(. == "-C" or . == "--cd")' >/dev/null 2>&1; then
+    probe_add_error "$PROBE_ERR_RUNNER_ARGS_INVALID" \
+      "Runner '$runner_name' uses -C/--cd, but native Claude CLI does not support directory flags" \
+      "$location"
+    failed=1
+  fi
+
+  if ! echo "$args_json" | jq -e '.[]? | select(. == "-p" or . == "--print")' >/dev/null 2>&1; then
+    probe_add_error "$PROBE_ERR_RUNNER_ARGS_INVALID" \
+      "Runner '$runner_name' must include --print (or -p) for non-interactive execution" \
+      "$location"
+    failed=1
+  fi
+
+  return "$failed"
+}
+
+probe_check_native_codex_shape() {
+  local runner_name="$1"
+  local command_json="$2"
+  local args_json="$3"
+  local prompt_mode="$4"
+  local location="$5"
+  local failed=0
+
+  if ! echo "$command_json" | jq -e '.[]? | select(. == "exec")' >/dev/null 2>&1; then
+    probe_add_error "$PROBE_ERR_RUNNER_SHAPE_INVALID" \
+      "Runner '$runner_name' must include 'exec' in command for non-interactive Codex runs" \
+      "$location"
+    failed=1
+  fi
+
+  if [[ "$prompt_mode" == "stdin" ]]; then
+    if ! echo "$args_json" | jq -e '.[]? | select(. == "-")' >/dev/null 2>&1; then
+      probe_add_error "$PROBE_ERR_RUNNER_SHAPE_INVALID" \
+        "Runner '$runner_name' uses prompt_mode=stdin and must include '-' in args to consume stdin prompt" \
+        "$location"
+      failed=1
+    fi
+  fi
+
+  return "$failed"
+}
+
+probe_check_claude_auth() {
+  local runner_name="$1"
+  local runner_cmd="$2"
+  local location="$3"
+
+  local auth_output=""
+  local auth_rc=0
+  set +e
+  auth_output=$("$runner_cmd" auth status 2>&1)
+  auth_rc=$?
+  set -e
+
+  if [[ $auth_rc -ne 0 ]]; then
+    probe_add_error "$PROBE_ERR_AUTH_REQUIRED" \
+      "Runner '$runner_name' is not authenticated with Claude Code. Run 'claude auth login'. (${auth_output:0:200})" \
+      "$location"
+    return 1
+  fi
+
+  if echo "$auth_output" | jq -e '.loggedIn == false' >/dev/null 2>&1; then
+    probe_add_error "$PROBE_ERR_AUTH_REQUIRED" \
+      "Runner '$runner_name' is not authenticated with Claude Code. Run 'claude auth login'" \
+      "$location"
+    return 1
+  fi
+
+  return 0
+}
+
+probe_check_codex_auth() {
+  local runner_name="$1"
+  local runner_cmd="$2"
+  local location="$3"
+
+  local codex_cmd="codex"
+  if is_native_command_name "$runner_cmd" "codex"; then
+    codex_cmd="$runner_cmd"
+  fi
+
+  if ! command -v "$codex_cmd" >/dev/null 2>&1; then
+    probe_add_warning "$PROBE_WARN_AUTH_CHECK_SKIPPED" \
+      "Runner '$runner_name' appears to use Codex, but 'codex' is not in PATH so login status could not be checked" \
+      "$location"
+    return 0
+  fi
+
+  local auth_output=""
+  local auth_rc=0
+  set +e
+  auth_output=$("$codex_cmd" login status 2>&1)
+  auth_rc=$?
+  set -e
+
+  if [[ $auth_rc -ne 0 ]]; then
+    probe_add_error "$PROBE_ERR_AUTH_REQUIRED" \
+      "Runner '$runner_name' is not authenticated with Codex. Run 'codex login'. (${auth_output:0:200})" \
+      "$location"
+    return 1
+  fi
+
+  return 0
+}
+
+probe_runner_profile() {
+  local runner_name="$1"
+  local runner_json="$2"
+  local location="$3"
+
+  local command_json
+  command_json=$(echo "$runner_json" | jq -c '.command // []')
+  local args_json
+  args_json=$(echo "$runner_json" | jq -c '.args // []')
+  local prompt_mode
+  prompt_mode=$(echo "$runner_json" | jq -r '.prompt_mode // "stdin"')
+
+  local runner_cmd
+  runner_cmd=$(echo "$command_json" | jq -r '.[0] // ""')
+
+  if [[ -z "$runner_cmd" || "$runner_cmd" == "null" ]]; then
+    probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
+      "Runner '$runner_name' has no command specified" \
+      "$location.command"
+    return 1
+  fi
+
+  if ! command -v "$runner_cmd" >/dev/null 2>&1; then
+    probe_add_error "$PROBE_ERR_COMMAND_NOT_FOUND" \
+      "Runner '$runner_name' command '$runner_cmd' is not in PATH" \
+      "$location.command"
+    return 1
+  fi
+
+  local -a detect_tokens=()
+  mapfile -t detect_tokens < <(echo "$runner_json" | jq -r '.command[]?, .args[]?')
+  local runner_type="unknown"
+  if type detect_runner_type &>/dev/null && [[ ${#detect_tokens[@]} -gt 0 ]]; then
+    runner_type=$(detect_runner_type "${detect_tokens[@]}")
+  elif is_native_command_name "$runner_cmd" "claude"; then
+    runner_type="claude"
+  elif is_native_command_name "$runner_cmd" "codex"; then
+    runner_type="codex"
+  fi
+
+  local failed=0
+
+  if is_native_command_name "$runner_cmd" "claude"; then
+    probe_check_claude_args "$runner_name" "$args_json" "$location.args" || failed=1
+  fi
+
+  if is_native_command_name "$runner_cmd" "codex"; then
+    probe_check_native_codex_shape "$runner_name" "$command_json" "$args_json" "$prompt_mode" "$location.command" || failed=1
+  fi
+
+  if [[ "$runner_type" == "claude" ]]; then
+    probe_check_claude_auth "$runner_name" "$runner_cmd" "$location.auth" || failed=1
+  elif [[ "$runner_type" == "codex" ]]; then
+    probe_check_codex_auth "$runner_name" "$runner_cmd" "$location.auth" || failed=1
+  fi
+
+  return "$failed"
 }
 
 # Probe a test command to verify it works
@@ -673,46 +862,127 @@ probe_test_command() {
 }
 
 # Probe a runner to verify it works
-# Usage: probe_runner <runner_name> <command_json> <location>
+# Usage: probe_runner <runner_name> <runner_json> <location>
 probe_runner() {
   local runner_name="$1"
-  local command_json="$2"
+  local runner_json="$2"
   local location="$3"
 
   local runner_cmd
-  runner_cmd=$(echo "$command_json" | jq -r '.[0] // ""')
+  runner_cmd=$(echo "$runner_json" | jq -r '.command[0] // ""')
 
   if [[ -z "$runner_cmd" || "$runner_cmd" == "null" ]]; then
     probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
       "Runner '$runner_name' has no command specified" \
-      "$location"
+      "$location.command"
     return 1
   fi
 
-  # Try --version first
+  # Profile checks (command existence, CLI compatibility, auth preflight)
+  if ! probe_runner_profile "$runner_name" "$runner_json" "$location"; then
+    return 1
+  fi
+
+  # Lightweight sanity check that command responds to version/help (warning only).
   set +e
   if "$runner_cmd" --version &>/dev/null; then
     set -e
     return 0
   fi
-
-  # Try --help
   if "$runner_cmd" --help &>/dev/null; then
-    set -e
-    return 0
-  fi
-
-  # Try just running it (some commands don't have --version/--help)
-  if "$runner_cmd" 2>&1 | head -1 &>/dev/null; then
     set -e
     return 0
   fi
   set -e
 
-  probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
-    "Runner '$runner_name' command '$runner_cmd' doesn't respond to --version or --help" \
-    "$location"
-  return 1
+  probe_add_warning "$PROBE_ERR_RUNNER_FAILED" \
+    "Runner '$runner_name' command '$runner_cmd' does not respond to --version/--help; continuing" \
+    "$location.command"
+  return 0
+}
+
+collect_smoke_runner_names() {
+  local config_path="$1"
+  local loop_id="${2:-}"
+
+  if [[ -z "$loop_id" ]]; then
+    jq -r '.runners | keys[]?' "$config_path" 2>/dev/null
+    return 0
+  fi
+
+  local scoped_names
+  scoped_names=$(jq -r --arg loop_id "$loop_id" '
+    . as $cfg
+    | (.loops[]? | select(.id == $loop_id)) as $loop
+    | if ($loop.roles | type) == "object" then
+        [ "planner", "implementer", "tester", "reviewer" ]
+        | map(select($loop.roles[.] != null))
+        | map($loop.roles[.].runner // $cfg.role_defaults[.].runner // empty)
+        | .[]
+      elif ($loop.roles | type) == "array" then
+        ($loop.roles[]? | select(type == "string") | ($cfg.role_defaults[.].runner // empty))
+      else
+        [ "planner", "implementer", "tester", "reviewer" ]
+        | map($cfg.role_defaults[.].runner // empty)
+        | .[]
+      end
+    | select(length > 0)
+  ' "$config_path" 2>/dev/null || true)
+
+  if [[ -n "$scoped_names" ]]; then
+    printf '%s\n' "$scoped_names" | sort -u
+    return 0
+  fi
+
+  jq -r '.runners | keys[]?' "$config_path" 2>/dev/null
+}
+
+validate_runner_smoke() {
+  local repo="$1"
+  local config_path="$2"
+  local loop_id="${3:-}"
+
+  # Reserved for future repo-local checks.
+  : "$repo"
+
+  probe_reset_results
+
+  if [[ ! -f "$config_path" ]]; then
+    echo "error: config not found: $config_path" >&2
+    return 1
+  fi
+
+  echo "Probing runner profiles..." >&2
+
+  local runner_names
+  runner_names=$(collect_smoke_runner_names "$config_path" "$loop_id")
+
+  if [[ -z "$runner_names" ]]; then
+    probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
+      "No runners found for smoke validation" \
+      "runners"
+    output_probe_validation_results
+    return 1
+  fi
+
+  while IFS= read -r runner_name; do
+    if [[ -z "$runner_name" ]]; then
+      continue
+    fi
+    local runner_json
+    runner_json=$(jq -c --arg name "$runner_name" '.runners[$name] // empty' "$config_path")
+    if [[ -z "$runner_json" || "$runner_json" == "null" ]]; then
+      probe_add_error "$PROBE_ERR_RUNNER_FAILED" \
+        "Runner '$runner_name' is referenced but not defined in runners" \
+        "runners.$runner_name"
+      continue
+    fi
+
+    echo "  Probing runner: $runner_name" >&2
+    probe_runner_profile "$runner_name" "$runner_json" "runners.$runner_name"
+  done <<< "$(printf '%s\n' "$runner_names" | sort -u)"
+
+  output_probe_validation_results
 }
 
 # Main probe validation function
@@ -723,9 +993,7 @@ validate_probe() {
   local config_path="$2"
 
   # Reset globals
-  PROBE_RESULTS=""
-  PROBE_ERROR_COUNT=0
-  PROBE_WARNING_COUNT=0
+  probe_reset_results
 
   if [[ ! -f "$config_path" ]]; then
     echo "error: config not found: $config_path" >&2
@@ -742,10 +1010,10 @@ validate_probe() {
   runner_names=$(echo "$config_json" | jq -r '.runners | keys[]' 2>/dev/null)
   while IFS= read -r runner_name; do
     if [[ -n "$runner_name" ]]; then
-      local command_json
-      command_json=$(echo "$config_json" | jq -c ".runners[\"$runner_name\"].command // []")
+      local runner_json
+      runner_json=$(echo "$config_json" | jq -c ".runners[\"$runner_name\"] // {}")
       echo "  Probing runner: $runner_name" >&2
-      probe_runner "$runner_name" "$command_json" "runners.$runner_name.command"
+      probe_runner "$runner_name" "$runner_json" "runners.$runner_name"
     fi
   done <<< "$runner_names"
 

@@ -522,8 +522,9 @@ wait_for_rate_limit_reset() {
 # Session Management for Resume
 # -----------------------------------------------------------------------------
 
-# Generate a session ID for tracking
-generate_session_id() {
+# Generate a usage-limit-local session ID for rate-limit resume bookkeeping.
+# Note: do not shadow usage tracking's generate_session_id() from src/35-usage.sh.
+generate_usage_limit_session_id() {
   if command -v uuidgen &>/dev/null; then
     uuidgen | tr '[:upper:]' '[:lower:]'
   else
@@ -550,9 +551,9 @@ build_codex_resume_command() {
   echo "codex" "exec" "resume" "$thread_id" "$message"
 }
 
-# Extract thread/session ID from Codex JSON output
+# Extract thread/session ID from Codex JSON output text.
 # Arguments: output_text
-extract_codex_thread_id() {
+extract_codex_thread_id_from_output() {
   local output="$1"
   echo "$output" | grep -oE '"thread_id":\s*"[^"]*"' | sed 's/"thread_id":\s*"//' | sed 's/"$//' | head -1 || true
 }

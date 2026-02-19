@@ -68,7 +68,7 @@
       },
       "examples": [{
         "codex": {"command": ["codex", "exec"], "args": ["--full-auto", "-C", "{repo}", "-"]},
-        "claude": {"command": ["claude"], "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"]}
+        "claude": {"command": ["claude"], "args": ["--dangerously-skip-permissions", "--print", "-"]}
       }]
     },
     "role_defaults": {

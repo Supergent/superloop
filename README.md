@@ -77,7 +77,7 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
     },
     "claude": {
       "command": ["claude"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "args": ["--dangerously-skip-permissions", "--print", "-"],
       "prompt_mode": "stdin"
     }
   },
@@ -368,6 +368,7 @@ Superloop includes these workspace packages:
 | `approve --loop ID` | Record approval for pending gate |
 | `cancel` | Stop and clear state |
 | `validate` | Check config against schema |
+| `runner-smoke` | Preflight runner auth + compatibility checks |
 | `report --loop ID` | Generate HTML report |
 | `--version` | Print version |
 
