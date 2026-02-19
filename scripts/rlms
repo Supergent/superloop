@@ -13,6 +13,12 @@ Usage: scripts/rlms \
   --max-steps <n> \
   --max-depth <n> \
   --timeout-seconds <n> \
+  [--root-command-json <json-array>] \
+  [--root-args-json <json-array>] \
+  [--root-prompt-mode <stdin|file>] \
+  [--subcall-command-json <json-array>] \
+  [--subcall-args-json <json-array>] \
+  [--subcall-prompt-mode <stdin|file>] \
   [--require-citations <true|false>] \
   [--format json] \
   [--metadata-file <path>]
@@ -41,6 +47,12 @@ output_dir=""
 max_steps=""
 max_depth=""
 timeout_seconds=""
+root_command_json=""
+root_args_json=""
+root_prompt_mode=""
+subcall_command_json=""
+subcall_args_json=""
+subcall_prompt_mode=""
 require_citations="true"
 format="json"
 metadata_file=""
@@ -83,6 +95,30 @@ while [[ $# -gt 0 ]]; do
       timeout_seconds="${2:-}"
       shift 2
       ;;
+    --root-command-json)
+      root_command_json="${2:-}"
+      shift 2
+      ;;
+    --root-args-json)
+      root_args_json="${2:-}"
+      shift 2
+      ;;
+    --root-prompt-mode)
+      root_prompt_mode="${2:-}"
+      shift 2
+      ;;
+    --subcall-command-json)
+      subcall_command_json="${2:-}"
+      shift 2
+      ;;
+    --subcall-args-json)
+      subcall_args_json="${2:-}"
+      shift 2
+      ;;
+    --subcall-prompt-mode)
+      subcall_prompt_mode="${2:-}"
+      shift 2
+      ;;
     --require-citations)
       require_citations="${2:-true}"
       shift 2
@@ -116,6 +152,45 @@ need_arg "--output-dir" "$output_dir"
 need_arg "--max-steps" "$max_steps"
 need_arg "--max-depth" "$max_depth"
 need_arg "--timeout-seconds" "$timeout_seconds"
+
+if [[ -z "$root_command_json" ]]; then
+  root_command_json="${SUPERLOOP_RLMS_ROOT_COMMAND_JSON:-}"
+fi
+if [[ -z "$root_args_json" ]]; then
+  root_args_json="${SUPERLOOP_RLMS_ROOT_ARGS_JSON:-}"
+fi
+if [[ -z "$root_prompt_mode" ]]; then
+  root_prompt_mode="${SUPERLOOP_RLMS_ROOT_PROMPT_MODE:-}"
+fi
+
+if [[ -z "$subcall_command_json" ]]; then
+  subcall_command_json="${SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON:-}"
+fi
+if [[ -z "$subcall_args_json" ]]; then
+  subcall_args_json="${SUPERLOOP_RLMS_SUBCALL_ARGS_JSON:-}"
+fi
+if [[ -z "$subcall_prompt_mode" ]]; then
+  subcall_prompt_mode="${SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE:-}"
+fi
+
+if [[ -z "$root_command_json" ]]; then
+  root_command_json='[]'
+fi
+if [[ -z "$root_args_json" ]]; then
+  root_args_json='[]'
+fi
+if [[ -z "$root_prompt_mode" ]]; then
+  root_prompt_mode='stdin'
+fi
+if [[ -z "$subcall_command_json" ]]; then
+  subcall_command_json="$root_command_json"
+fi
+if [[ -z "$subcall_args_json" ]]; then
+  subcall_args_json="$root_args_json"
+fi
+if [[ -z "$subcall_prompt_mode" ]]; then
+  subcall_prompt_mode="$root_prompt_mode"
+fi
 
 mkdir -p "$output_dir"
 result_json="$output_dir/result.json"
@@ -156,6 +231,12 @@ set +e
   --max-steps "$max_steps" \
   --max-depth "$max_depth" \
   --timeout-seconds "$timeout_seconds" \
+  --root-command-json "$root_command_json" \
+  --root-args-json "$root_args_json" \
+  --root-prompt-mode "$root_prompt_mode" \
+  --subcall-command-json "$subcall_command_json" \
+  --subcall-args-json "$subcall_args_json" \
+  --subcall-prompt-mode "$subcall_prompt_mode" \
   --require-citations "$require_citations" \
   --format "$format" \
   --metadata-file "$metadata_file" \

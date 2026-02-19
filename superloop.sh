@@ -8137,6 +8137,105 @@ run_cmd() {
             '{generated_at: $generated_at, loop_id: $loop_id, run_id: $run_id, role: $role, mode: $mode, trigger_reason: $trigger_reason, should_run: $should_run, metrics: $metrics, limits: $limits}' \
             > "$role_rlms_metadata_file"
 
+          local rlms_root_command_json='[]'
+          local rlms_root_args_json='[]'
+          local rlms_root_prompt_mode='stdin'
+          local rlms_subcall_command_json='[]'
+          local rlms_subcall_args_json='[]'
+          local rlms_subcall_prompt_mode='stdin'
+
+          local rlms_runner_name
+          rlms_runner_name=$(get_role_runner_name "$role")
+          local rlms_runner_config
+          rlms_runner_config=$(get_runner_for_role "$role" "$rlms_runner_name")
+
+          local -a rlms_runner_command=()
+          local -a rlms_runner_args=()
+          local -a rlms_runner_fast_args=()
+          local rlms_runner_prompt_mode='stdin'
+
+          if [[ -n "$rlms_runner_config" ]]; then
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && rlms_runner_command+=("$line")
+            done < <(jq -r '.command[]?' <<<"$rlms_runner_config")
+
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && rlms_runner_args+=("$line")
+            done < <(jq -r '.args[]?' <<<"$rlms_runner_config")
+
+            while IFS= read -r line; do
+              [[ -n "$line" ]] && rlms_runner_fast_args+=("$line")
+            done < <(jq -r '.fast_args[]?' <<<"$rlms_runner_config")
+
+            rlms_runner_prompt_mode=$(jq -r '.prompt_mode // "stdin"' <<<"$rlms_runner_config")
+          fi
+
+          if [[ ${#rlms_runner_command[@]} -eq 0 ]]; then
+            rlms_runner_command=("${runner_command[@]}")
+            rlms_runner_args=("${runner_args[@]}")
+            rlms_runner_fast_args=("${runner_fast_args[@]}")
+            rlms_runner_prompt_mode="$runner_prompt_mode"
+          fi
+
+          local -a rlms_runner_active_args=("${rlms_runner_args[@]}")
+          if [[ "${fast_mode:-0}" -eq 1 && ${#rlms_runner_fast_args[@]} -gt 0 ]]; then
+            rlms_runner_active_args=("${rlms_runner_fast_args[@]}")
+          fi
+
+          local rlms_role_model rlms_role_thinking rlms_runner_type
+          rlms_role_model=$(get_role_model "$role")
+          rlms_role_thinking=$(get_role_thinking "$role")
+          rlms_runner_type=$(detect_runner_type_from_cmd "${rlms_runner_command[0]:-}")
+
+          if [[ -n "$rlms_role_model" && "$rlms_role_model" != "null" ]]; then
+            rlms_runner_active_args=("--model" "$rlms_role_model" "${rlms_runner_active_args[@]}")
+          fi
+
+          if [[ -n "$rlms_role_thinking" && "$rlms_role_thinking" != "null" ]]; then
+            local -a rlms_thinking_flags=()
+            while IFS= read -r flag; do
+              [[ -n "$flag" ]] && rlms_thinking_flags+=("$flag")
+            done < <(get_thinking_flags "$rlms_runner_type" "$rlms_role_thinking")
+            if [[ ${#rlms_thinking_flags[@]} -gt 0 ]]; then
+              rlms_runner_active_args=("${rlms_thinking_flags[@]}" "${rlms_runner_active_args[@]}")
+            fi
+          fi
+
+          rlms_root_command_json=$(printf '%s\n' "${rlms_runner_command[@]}" | jq -R . | jq -s .)
+          rlms_root_args_json=$(printf '%s\n' "${rlms_runner_active_args[@]}" | jq -R . | jq -s .)
+          rlms_root_prompt_mode="$rlms_runner_prompt_mode"
+
+          if [[ -n "${SUPERLOOP_RLMS_ROOT_COMMAND_JSON:-}" ]]; then
+            rlms_root_command_json="$SUPERLOOP_RLMS_ROOT_COMMAND_JSON"
+          fi
+          if [[ -n "${SUPERLOOP_RLMS_ROOT_ARGS_JSON:-}" ]]; then
+            rlms_root_args_json="$SUPERLOOP_RLMS_ROOT_ARGS_JSON"
+          fi
+          if [[ -n "${SUPERLOOP_RLMS_ROOT_PROMPT_MODE:-}" ]]; then
+            rlms_root_prompt_mode="$SUPERLOOP_RLMS_ROOT_PROMPT_MODE"
+          fi
+
+          rlms_subcall_command_json="$rlms_root_command_json"
+          rlms_subcall_args_json="$rlms_root_args_json"
+          rlms_subcall_prompt_mode="$rlms_root_prompt_mode"
+
+          if [[ -n "${SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON:-}" ]]; then
+            rlms_subcall_command_json="$SUPERLOOP_RLMS_SUBCALL_COMMAND_JSON"
+          fi
+          if [[ -n "${SUPERLOOP_RLMS_SUBCALL_ARGS_JSON:-}" ]]; then
+            rlms_subcall_args_json="$SUPERLOOP_RLMS_SUBCALL_ARGS_JSON"
+          fi
+          if [[ -n "${SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE:-}" ]]; then
+            rlms_subcall_prompt_mode="$SUPERLOOP_RLMS_SUBCALL_PROMPT_MODE"
+          fi
+
+          if [[ "$rlms_root_prompt_mode" != "stdin" && "$rlms_root_prompt_mode" != "file" ]]; then
+            rlms_root_prompt_mode="stdin"
+          fi
+          if [[ "$rlms_subcall_prompt_mode" != "stdin" && "$rlms_subcall_prompt_mode" != "file" ]]; then
+            rlms_subcall_prompt_mode="stdin"
+          fi
+
           local rlms_status_text="skipped"
           local rlms_error_message=""
           local rlms_started_at=""
@@ -8164,6 +8263,12 @@ run_cmd() {
               --max-steps "$rlms_limit_max_steps" \
               --max-depth "$rlms_limit_max_depth" \
               --timeout-seconds "$rlms_limit_timeout_seconds" \
+              --root-command-json "$rlms_root_command_json" \
+              --root-args-json "$rlms_root_args_json" \
+              --root-prompt-mode "$rlms_root_prompt_mode" \
+              --subcall-command-json "$rlms_subcall_command_json" \
+              --subcall-args-json "$rlms_subcall_args_json" \
+              --subcall-prompt-mode "$rlms_subcall_prompt_mode" \
               --require-citations "$rlms_output_require_citations" \
               --format "$rlms_output_format" \
               --metadata-file "$role_rlms_metadata_file"
