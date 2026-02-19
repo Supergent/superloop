@@ -72,7 +72,7 @@ Allowed:
 Blocked:
 
 - `import` / `from ... import ...`
-- Attribute access (`obj.attr`)
+- Arbitrary attribute access (`obj.attr`) except a narrow allowlist of safe container/string method calls
 - Class definitions, `try/except`, with-statements, async constructs
 - Dunder names
 - Calls to non-allowlisted functions

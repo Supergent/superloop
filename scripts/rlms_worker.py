@@ -145,6 +145,7 @@ ALLOWED_AST_NODES: Tuple[type, ...] = (
     ast.Assign,
     ast.AugAssign,
     ast.Name,
+    ast.Attribute,
     ast.Load,
     ast.Store,
     ast.Constant,
@@ -220,6 +221,40 @@ PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     ("todo", re.compile(r"\b(?:TODO|FIXME)\b")),
     ("error", re.compile(r"\b(?:error|fail|exception)\b", re.IGNORECASE)),
 ]
+
+SAFE_METHOD_CALLS: set[str] = {
+    # list-like
+    "append",
+    "extend",
+    "insert",
+    "pop",
+    "clear",
+    "copy",
+    "count",
+    "index",
+    "sort",
+    "reverse",
+    # dict-like
+    "get",
+    "keys",
+    "values",
+    "items",
+    "update",
+    "setdefault",
+    # string-like
+    "strip",
+    "lstrip",
+    "rstrip",
+    "split",
+    "splitlines",
+    "join",
+    "replace",
+    "lower",
+    "upper",
+    "startswith",
+    "endswith",
+    "format",
+}
 
 
 def utc_now() -> str:
@@ -761,25 +796,57 @@ class SandboxEnvironment:
         except SyntaxError as exc:
             raise SandboxViolation(f"syntax error: {exc}") from exc
 
+        parent_map: Dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parent_map[child] = parent
+
         defined_functions = {
             node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
         }
         allowed_callables = set(SAFE_BUILTINS.keys()) | set(self._bindings.keys()) | defined_functions
 
+        def is_allowed_method_call_target(attr_node: ast.Attribute) -> bool:
+            # Allow a narrow subset of non-dunder method calls used for
+            # container/string transformations in generated analysis code.
+            attr_name = attr_node.attr
+            if not attr_name or attr_name.startswith("__"):
+                return False
+            if attr_name not in SAFE_METHOD_CALLS:
+                return False
+            base = attr_node.value
+            if isinstance(base, ast.Name):
+                return not base.id.startswith("__")
+            if isinstance(base, ast.Constant):
+                return isinstance(base.value, str)
+            if isinstance(base, ast.Call):
+                # Allow chaining on outputs of approved helpers/safe builtins.
+                call_target = base.func
+                if isinstance(call_target, ast.Name):
+                    return call_target.id in allowed_callables
+                return False
+            return False
+
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute):
-                raise SandboxViolation("attribute access is not allowed")
             if isinstance(node, (ast.Import, ast.ImportFrom, ast.With, ast.AsyncWith, ast.ClassDef, ast.Lambda, ast.Global, ast.Nonlocal, ast.Delete, ast.Try, ast.Raise, ast.Assert, ast.AsyncFunctionDef, ast.Await, ast.Yield, ast.YieldFrom, ast.Match)):
                 raise SandboxViolation(f"node type not allowed: {type(node).__name__}")
             if not isinstance(node, ALLOWED_AST_NODES):
                 raise SandboxViolation(f"node type not allowed: {type(node).__name__}")
+            if isinstance(node, ast.Attribute):
+                parent = parent_map.get(node)
+                if not (isinstance(parent, ast.Call) and parent.func is node and is_allowed_method_call_target(node)):
+                    raise SandboxViolation("attribute access is not allowed")
             if isinstance(node, ast.Name) and node.id.startswith("__"):
                 raise SandboxViolation("dunder names are not allowed")
             if isinstance(node, ast.Call):
-                if not isinstance(node.func, ast.Name):
-                    raise SandboxViolation("only direct function calls are allowed")
-                if node.func.id not in allowed_callables:
-                    raise SandboxViolation(f"call target not allowed: {node.func.id}")
+                if isinstance(node.func, ast.Name):
+                    if node.func.id not in allowed_callables:
+                        raise SandboxViolation(f"call target not allowed: {node.func.id}")
+                elif isinstance(node.func, ast.Attribute):
+                    if not is_allowed_method_call_target(node.func):
+                        raise SandboxViolation("method call target not allowed")
+                else:
+                    raise SandboxViolation("only direct or safe method calls are allowed")
             if isinstance(node, ast.keyword) and node.arg and node.arg.startswith("__"):
                 raise SandboxViolation("dunder keyword args are not allowed")
 

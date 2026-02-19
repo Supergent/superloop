@@ -95,6 +95,8 @@ cat <<'PY'
 files = list_files()
 if files:
     snippet = read_file(files[0], 1, 80)
+    lines = snippet.split("\\n")
+    append_highlight("line_count:" + str(len(lines)))
     summary = sub_rlm("summarize:\\n" + snippet, depth=1)
     append_highlight("subcall:" + summary)
     matches = grep("class\\s+", files[0], 3, "")
