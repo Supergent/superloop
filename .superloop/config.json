@@ -1,18 +1,18 @@
 {
   "runners": {
     "codex": {
-      "command": ["codex", "exec"],
-      "args": ["--full-auto", "-C", "{repo}", "--output-last-message", "{last_message_file}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "claude-vanilla": {
-      "command": ["claude-vanilla"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
-      "prompt_mode": "stdin"
-    },
-    "claude-glm-mantic": {
-      "command": ["claude-glm-mantic"],
-      "args": ["--dangerously-skip-permissions", "--print", "-C", "{repo}", "-"],
+      "command": [
+        "codex",
+        "exec"
+      ],
+      "args": [
+        "--full-auto",
+        "-C",
+        "{repo}",
+        "--output-last-message",
+        "{last_message_file}",
+        "-"
+      ],
       "prompt_mode": "stdin"
     }
   },
