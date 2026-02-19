@@ -94,6 +94,88 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "validate --static accepts valid rlms configuration" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "rlms-valid",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "rlms": {
+      "enabled": true,
+      "mode": "hybrid",
+      "request_keyword": "RLMS_REQUEST",
+      "auto": {"max_lines": 1000, "max_estimated_tokens": 50000, "max_files": 10},
+      "roles": {"reviewer": true},
+      "limits": {"max_steps": 20, "max_depth": 2, "timeout_seconds": 120},
+      "output": {"format": "json", "require_citations": true},
+      "policy": {"force_on": false, "force_off": false, "fail_mode": "warn_and_continue"}
+    },
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "ok: static analysis passed" ]]
+}
+
+@test "validate --static fails when rlms policy force_on and force_off are both true" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "rlms-invalid",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "rlms": {
+      "enabled": true,
+      "mode": "hybrid",
+      "request_keyword": "RLMS_REQUEST",
+      "policy": {"force_on": true, "force_off": true, "fail_mode": "warn_and_continue"}
+    },
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "RLMS_INVALID" ]]
+}
+
 # =============================================================================
 # List Command
 # =============================================================================

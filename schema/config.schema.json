@@ -320,6 +320,117 @@
             },
             "required": ["enabled", "threshold", "action", "ignore"]
           },
+          "rlms": {
+            "type": "object",
+            "description": "Recursive language model scaffold settings for role-local long-context analysis",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Enable RLMS integration for this loop"
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["auto", "requested", "hybrid"],
+                "default": "hybrid",
+                "description": "Trigger mode: auto thresholds, explicit request, or both"
+              },
+              "request_keyword": {
+                "type": "string",
+                "default": "RLMS_REQUEST",
+                "description": "Keyword that explicitly requests RLMS execution when mode allows it"
+              },
+              "auto": {
+                "type": "object",
+                "properties": {
+                  "max_lines": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 2500,
+                    "description": "Auto-trigger when aggregated context lines meet/exceed this value"
+                  },
+                  "max_estimated_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 120000,
+                    "description": "Auto-trigger when aggregated estimated tokens meet/exceed this value"
+                  },
+                  "max_files": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 40,
+                    "description": "Auto-trigger when file count meets/exceeds this value"
+                  }
+                }
+              },
+              "roles": {
+                "type": "object",
+                "description": "Role-level RLMS enablement (defaults to true per role when omitted)",
+                "properties": {
+                  "planner": {"type": "boolean"},
+                  "implementer": {"type": "boolean"},
+                  "tester": {"type": "boolean"},
+                  "reviewer": {"type": "boolean"}
+                }
+              },
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "max_steps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 40
+                  },
+                  "max_depth": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 2
+                  },
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 240
+                  }
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": ["json"],
+                    "default": "json"
+                  },
+                  "require_citations": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "policy": {
+                "type": "object",
+                "properties": {
+                  "force_on": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Always run RLMS for enabled roles"
+                  },
+                  "force_off": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Disable RLMS regardless of other trigger settings"
+                  },
+                  "fail_mode": {
+                    "type": "string",
+                    "enum": ["warn_and_continue", "fail_role"],
+                    "default": "warn_and_continue",
+                    "description": "How loop handles RLMS execution failures"
+                  }
+                }
+              }
+            },
+            "required": ["enabled"]
+          },
           "usage_check": {
             "type": "object",
             "description": "Pre-flight API usage limit checking before each role execution",

@@ -123,6 +123,26 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "action": "report_and_stop",
       "ignore": []
     },
+    "rlms": {
+      "enabled": false,
+      "mode": "hybrid",
+      "request_keyword": "RLMS_REQUEST",
+      "auto": {
+        "max_lines": 2500,
+        "max_estimated_tokens": 120000,
+        "max_files": 40
+      },
+      "limits": {
+        "max_steps": 40,
+        "max_depth": 2,
+        "timeout_seconds": 240
+      },
+      "policy": {
+        "force_on": false,
+        "force_off": false,
+        "fail_mode": "warn_and_continue"
+      }
+    },
     "roles": {
       "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
       "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
@@ -138,6 +158,17 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 - Claude: maps to `MAX_THINKING_TOKENS` env var (0→32000 per request)
 
 See `schema/config.schema.json` for all options.
+
+### RLMS Hybrid Long-Context Mode
+
+When `loops[].rlms.enabled=true`, Superloop can run a bounded recursive context analyzer before each role:
+
+- `mode=auto`: trigger from context size thresholds.
+- `mode=requested`: trigger only when `request_keyword` appears in loop context files.
+- `mode=hybrid`: run when either auto or requested trigger is true.
+- `policy.fail_mode=warn_and_continue|fail_role`: choose whether RLMS failures are non-fatal or role-fatal.
+
+Artifacts are written under `.superloop/loops/<loop-id>/rlms/` and linked into prompts, evidence, events, and run summaries.
 
 ## Dashboard
 
@@ -214,6 +245,7 @@ evidence.json        # Artifact hashes
 gate-summary.txt     # Gate statuses
 events.jsonl         # Event stream
 usage.jsonl          # Token usage and cost per role
+rlms/               # RLMS index + per-iteration role analysis artifacts
 timeline.md          # Human-readable timeline
 report.html          # Visual report (includes usage/cost section)
 logs/iter-N/         # Per-iteration logs
@@ -228,6 +260,8 @@ superloop/
 ├── schema/                # Config JSON schema
 ├── scripts/
 │   ├── build.sh           # Assembles src/ into superloop.sh
+│   ├── rlms               # RLMS wrapper entrypoint
+│   ├── rlms_worker.py     # RLMS recursive analysis worker
 │   └── validation/        # Smoke test utilities
 ├── packages/
 │   ├── json-render-core/  # Generative UI framework (catalog, validation, actions)

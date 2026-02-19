@@ -133,12 +133,14 @@ append_run_summary() {
   local approval_file="$loop_dir/approval.json"
   local decisions_jsonl="$loop_dir/decisions.jsonl"
   local decisions_md="$loop_dir/decisions.md"
+  local rlms_index_file="$loop_dir/rlms/index.json"
   local validation_status_file="$loop_dir/validation-status.json"
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
   local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
+  local rlms_index_meta
   local validation_status_meta validation_results_meta
 
   plan_meta=$(file_meta_json "${plan_file#$repo/}" "$plan_file")
@@ -177,6 +179,8 @@ append_run_summary() {
   decisions_meta=$(json_or_default "$decisions_meta" "{}")
   decisions_md_meta=$(file_meta_json "${decisions_md#$repo/}" "$decisions_md")
   decisions_md_meta=$(json_or_default "$decisions_md_meta" "{}")
+  rlms_index_meta=$(file_meta_json "${rlms_index_file#$repo/}" "$rlms_index_file")
+  rlms_index_meta=$(json_or_default "$rlms_index_meta" "{}")
 
   local artifacts_json
   artifacts_json=$(jq -n \
@@ -198,6 +202,7 @@ append_run_summary() {
     --argjson approval "$approval_meta" \
     --argjson decisions "$decisions_meta" \
     --argjson decisions_md "$decisions_md_meta" \
+    --argjson rlms_index "$rlms_index_meta" \
     '{
       plan: $plan,
       implementer: $implementer,
@@ -216,7 +221,8 @@ append_run_summary() {
       reviewer_packet: $reviewer_packet,
       approval: $approval,
       decisions: $decisions,
-      decisions_md: $decisions_md
+      decisions_md: $decisions_md,
+      rlms_index: $rlms_index
     }')
   artifacts_json=$(json_or_default "$artifacts_json" "{}")
 

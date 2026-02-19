@@ -186,6 +186,58 @@ write_evidence_manifest() {
   fi
   validation_results_json=$(json_or_default "$validation_results_json" "null")
 
+  # RLMS evidence: index + latest per-role artifacts
+  local rlms_index_file="$loop_dir/rlms/index.json"
+  local rlms_index_rel="${rlms_index_file#$repo/}"
+  local rlms_index_json="null"
+  if [[ -f "$rlms_index_file" ]]; then
+    rlms_index_json=$(cat "$rlms_index_file")
+  fi
+  rlms_index_json=$(json_or_default "$rlms_index_json" "null")
+
+  local rlms_index_sha_json="null"
+  local rlms_index_mtime_json="null"
+  if [[ -f "$rlms_index_file" ]]; then
+    local rlms_index_hash
+    rlms_index_hash=$(hash_file "$rlms_index_file" 2>/dev/null || true)
+    if [[ -n "$rlms_index_hash" ]]; then
+      rlms_index_sha_json="\"$rlms_index_hash\""
+    fi
+    local rlms_index_mtime
+    rlms_index_mtime=$(file_mtime "$rlms_index_file" 2>/dev/null || true)
+    if [[ -n "$rlms_index_mtime" ]]; then
+      rlms_index_mtime_json="$rlms_index_mtime"
+    fi
+  fi
+
+  local rlms_latest_jsonl="$loop_dir/evidence-rlms-latest.jsonl"
+  : > "$rlms_latest_jsonl"
+  local rlms_latest_dir="$loop_dir/rlms/latest"
+  if [[ -d "$rlms_latest_dir" ]]; then
+    while IFS= read -r latest_file; do
+      if [[ -z "$latest_file" ]]; then
+        continue
+      fi
+      local latest_rel="${latest_file#$repo/}"
+      local latest_hash
+      latest_hash=$(hash_file "$latest_file" 2>/dev/null || true)
+      local latest_mtime_json="null"
+      local latest_mtime
+      latest_mtime=$(file_mtime "$latest_file" 2>/dev/null || true)
+      if [[ -n "$latest_mtime" ]]; then
+        latest_mtime_json="$latest_mtime"
+      fi
+      jq -n \
+        --arg path "$latest_rel" \
+        --arg sha "$latest_hash" \
+        --argjson mtime "$latest_mtime_json" \
+        '{path: $path, exists: true, sha256: (if ($sha | length) > 0 then $sha else null end), mtime: $mtime}' >> "$rlms_latest_jsonl"
+    done < <(find "$rlms_latest_dir" -maxdepth 1 -type f 2>/dev/null | sort)
+  fi
+  local rlms_latest_json
+  rlms_latest_json=$(jq -s '.' "$rlms_latest_jsonl")
+  rlms_latest_json=$(json_or_default "$rlms_latest_json" "[]")
+
   local artifacts_jsonl="$loop_dir/evidence-artifacts.jsonl"
   : > "$artifacts_jsonl"
   local artifacts_gate="evidence"
@@ -266,6 +318,11 @@ write_evidence_manifest() {
     --argjson validation_status "$validation_status_json" \
     --arg validation_results_file "$validation_results_rel" \
     --argjson validation_results "$validation_results_json" \
+    --arg rlms_index_file "$rlms_index_rel" \
+    --argjson rlms_index "$rlms_index_json" \
+    --argjson rlms_index_sha "$rlms_index_sha_json" \
+    --argjson rlms_index_mtime "$rlms_index_mtime_json" \
+    --argjson rlms_latest "$rlms_latest_json" \
     --argjson artifacts "$artifacts_json" \
     '{
       generated_at: $generated_at,
@@ -298,6 +355,13 @@ write_evidence_manifest() {
         status_file: $validation_status_file,
         results: $validation_results,
         results_file: $validation_results_file
+      },
+      rlms: {
+        index_file: $rlms_index_file,
+        index: $rlms_index,
+        index_sha256: $rlms_index_sha,
+        index_mtime: $rlms_index_mtime,
+        latest: $rlms_latest
       },
       artifacts: $artifacts
     }' \
