@@ -1023,6 +1023,7 @@ EOF
   local child_status_2="$TEMP_DIR/.superloop/loops/delegation-parallel-wave/delegation/iter-1/implementer/children/wave-1/task-2/status.json"
   local child_usage_1="$TEMP_DIR/.superloop/loops/delegation-parallel-wave/delegation/iter-1/implementer/children/wave-1/task-1/usage.jsonl"
   local child_usage_2="$TEMP_DIR/.superloop/loops/delegation-parallel-wave/delegation/iter-1/implementer/children/wave-1/task-2/usage.jsonl"
+  local events_file="$TEMP_DIR/.superloop/loops/delegation-parallel-wave/events.jsonl"
   [ -f "$status_file" ]
   [ -f "$child_status_1" ]
   [ -f "$child_status_2" ]
@@ -1037,6 +1038,15 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "2" ]
 
+  run jq -r '.limits.max_parallel' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run bash -lc "grep -q '\"event\":\"delegation_wave_dispatch\"' '$events_file'"
+  [ "$status" -eq 0 ]
+  run bash -lc "grep -q '\"event\":\"delegation_wave_queue_drain\"' '$events_file'"
+  [ "$status" -eq 0 ]
+
   # Use child completion timestamps to assert concurrent execution without relying on host load.
   run jq -n \
     --slurpfile c1 "$child_status_1" \
@@ -1048,6 +1058,240 @@ EOF
   [ "$status" -eq 0 ]
   local ts_diff="${output%%.*}"
   [ "$ts_diff" -le 2 ]
+}
+
+@test "run enforces max_parallel=1 as sequential cap in parallel mode" {
+  cat > "$TEMP_DIR/parallel-cap-runner.sh" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+OUTPUT_FILE="${1:-/dev/stdout}"
+PROMPT="$(cat)"
+if printf '%s' "$PROMPT" | grep -q "You are a delegated child agent in Superloop."; then
+  sleep 2
+fi
+cat > "$OUTPUT_FILE" << 'OUT'
+Parallel cap runner done.
+<promise>SUPERLOOP_COMPLETE</promise>
+OUT
+EOF
+  chmod +x "$TEMP_DIR/parallel-cap-runner.sh"
+
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "mock": {
+      "command": ["bash"],
+      "args": ["{repo}/parallel-cap-runner.sh", "{last_message_file}"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "delegation-parallel-cap-one",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 1,
+    "completion_promise": "SUPERLOOP_COMPLETE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "delegation": {
+      "enabled": true,
+      "dispatch_mode": "parallel",
+      "wake_policy": "on_wave_complete",
+      "max_children": 3,
+      "max_parallel": 1,
+      "max_waves": 1,
+      "child_timeout_seconds": 120,
+      "retry_limit": 0,
+      "roles": {
+        "implementer": {"enabled": true}
+      }
+    },
+    "roles": {
+      "planner": {"runner": "mock"},
+      "implementer": {"runner": "mock"},
+      "tester": {"runner": "mock"},
+      "reviewer": {"runner": "mock"}
+    }
+  }]
+}
+EOF
+
+  mkdir -p "$TEMP_DIR/schema"
+  cp "$PROJECT_ROOT/schema/config.schema.json" "$TEMP_DIR/schema/"
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  mkdir -p "$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/requests"
+  cat > "$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/requests/implementer.json" << 'EOF'
+{
+  "waves": [
+    {
+      "id": "wave-1",
+      "children": [
+        {"id": "task-1", "prompt": "Parallel child 1"},
+        {"id": "task-2", "prompt": "Parallel child 2"},
+        {"id": "task-3", "prompt": "Parallel child 3"}
+      ]
+    }
+  ]
+}
+EOF
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop delegation-parallel-cap-one
+  [ "$status" -eq 0 ]
+
+  local status_file="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/iter-1/implementer/status.json"
+  local child_status_1="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/iter-1/implementer/children/wave-1/task-1/status.json"
+  local child_status_2="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/iter-1/implementer/children/wave-1/task-2/status.json"
+  local child_status_3="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/delegation/iter-1/implementer/children/wave-1/task-3/status.json"
+  local events_file="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-one/events.jsonl"
+
+  [ -f "$status_file" ]
+  [ -f "$child_status_1" ]
+  [ -f "$child_status_2" ]
+  [ -f "$child_status_3" ]
+
+  run jq -r '.limits.max_parallel' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.scheduler.invariants.cap_enforced' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.execution.executed_children' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -n \
+    --slurpfile c1 "$child_status_1" \
+    --slurpfile c2 "$child_status_2" \
+    --slurpfile c3 "$child_status_3" \
+    '[($c1[0].generated_at | fromdateiso8601), ($c2[0].generated_at | fromdateiso8601), ($c3[0].generated_at | fromdateiso8601)] | (max - min)'
+  [ "$status" -eq 0 ]
+  local ts_span="${output%%.*}"
+  [ "$ts_span" -ge 4 ]
+
+  run bash -lc "grep -q '\"event\":\"delegation_wave_dispatch\"' '$events_file'"
+  [ "$status" -eq 0 ]
+  run bash -lc "grep -q '\"event\":\"delegation_wave_queue_drain\"' '$events_file'"
+  [ "$status" -eq 0 ]
+  run bash -lc "grep -q '\"phase\":\"cap_gate\"' '$events_file'"
+  [ "$status" -eq 0 ]
+}
+
+@test "run enforces max_parallel=2 bounded overlap in parallel mode" {
+  cat > "$TEMP_DIR/parallel-cap-two-runner.sh" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+OUTPUT_FILE="${1:-/dev/stdout}"
+PROMPT="$(cat)"
+if printf '%s' "$PROMPT" | grep -q "You are a delegated child agent in Superloop."; then
+  sleep 2
+fi
+cat > "$OUTPUT_FILE" << 'OUT'
+Parallel cap two runner done.
+<promise>SUPERLOOP_COMPLETE</promise>
+OUT
+EOF
+  chmod +x "$TEMP_DIR/parallel-cap-two-runner.sh"
+
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "mock": {
+      "command": ["bash"],
+      "args": ["{repo}/parallel-cap-two-runner.sh", "{last_message_file}"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "delegation-parallel-cap-two",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 1,
+    "completion_promise": "SUPERLOOP_COMPLETE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "delegation": {
+      "enabled": true,
+      "dispatch_mode": "parallel",
+      "wake_policy": "on_wave_complete",
+      "max_children": 3,
+      "max_parallel": 2,
+      "max_waves": 1,
+      "child_timeout_seconds": 120,
+      "retry_limit": 0,
+      "roles": {
+        "implementer": {"enabled": true}
+      }
+    },
+    "roles": {
+      "planner": {"runner": "mock"},
+      "implementer": {"runner": "mock"},
+      "tester": {"runner": "mock"},
+      "reviewer": {"runner": "mock"}
+    }
+  }]
+}
+EOF
+
+  mkdir -p "$TEMP_DIR/schema"
+  cp "$PROJECT_ROOT/schema/config.schema.json" "$TEMP_DIR/schema/"
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  mkdir -p "$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/requests"
+  cat > "$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/requests/implementer.json" << 'EOF'
+{
+  "waves": [
+    {
+      "id": "wave-1",
+      "children": [
+        {"id": "task-1", "prompt": "Parallel child 1"},
+        {"id": "task-2", "prompt": "Parallel child 2"},
+        {"id": "task-3", "prompt": "Parallel child 3"}
+      ]
+    }
+  ]
+}
+EOF
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop delegation-parallel-cap-two
+  [ "$status" -eq 0 ]
+
+  local status_file="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/status.json"
+  local child_status_1="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-1/status.json"
+  local child_status_2="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-2/status.json"
+  local child_status_3="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-3/status.json"
+
+  [ -f "$status_file" ]
+  [ -f "$child_status_1" ]
+  [ -f "$child_status_2" ]
+  [ -f "$child_status_3" ]
+
+  run jq -r '.limits.max_parallel' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.execution.executed_children' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -n \
+    --slurpfile c1 "$child_status_1" \
+    --slurpfile c2 "$child_status_2" \
+    --slurpfile c3 "$child_status_3" \
+    '[($c1[0].generated_at | fromdateiso8601), ($c2[0].generated_at | fromdateiso8601), ($c3[0].generated_at | fromdateiso8601)] | (max - min)'
+  [ "$status" -eq 0 ]
+  local ts_span="${output%%.*}"
+  [ "$ts_span" -le 3 ]
 }
 
 @test "run adapts delegated execution on child completion and stops remaining work" {

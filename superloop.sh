@@ -9322,11 +9322,14 @@ EOF
 
                     if [[ "$wave_children_to_run" -gt 0 ]]; then
                       local -a wave_parallel_pids=()
+                      local -a wave_parallel_reaped=()
                       local -a wave_parallel_child_ids=()
                       local -a wave_parallel_child_status_files=()
                       local -a wave_parallel_child_log_files=()
                       local -a wave_parallel_child_last_files=()
                       local -a wave_parallel_child_usage_files=()
+                      local wave_parallel_active_workers=0
+                      local wave_parallel_launched_workers=0
 
                       local child_number
                       for ((child_number=1; child_number<=wave_children_to_run; child_number++)); do
@@ -9480,11 +9483,67 @@ EOF
                               }' > "$child_status_file"
                           ) &
                           wave_parallel_pids+=("$!")
+                          wave_parallel_reaped+=("0")
                           wave_parallel_child_ids+=("$child_id")
                           wave_parallel_child_status_files+=("$child_status_file")
                           wave_parallel_child_log_files+=("$child_log_file")
                           wave_parallel_child_last_files+=("$child_last_message_file")
                           wave_parallel_child_usage_files+=("$child_usage_file")
+                          wave_parallel_active_workers=$((wave_parallel_active_workers + 1))
+                          wave_parallel_launched_workers=$((wave_parallel_launched_workers + 1))
+
+                          local wave_dispatch_data
+                          wave_dispatch_data=$(jq -n \
+                            --arg role "$role" \
+                            --arg wave_id "$wave_id" \
+                            --arg child_id "$child_id" \
+                            --argjson wave "$wave_number" \
+                            --argjson launched_children "$wave_parallel_launched_workers" \
+                            --argjson total_children "$wave_children_to_run" \
+                            --argjson active_workers "$wave_parallel_active_workers" \
+                            --argjson concurrency_cap "$wave_concurrency_cap" \
+                            --argjson queued_children "$((wave_children_to_run - wave_parallel_launched_workers))" \
+                            '{role: $role, wave_id: $wave_id, child_id: $child_id, wave: $wave, launched_children: $launched_children, total_children: $total_children, active_workers: $active_workers, concurrency_cap: $concurrency_cap, queued_children: $queued_children}')
+                          log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_dispatch" "$wave_dispatch_data" "$role"
+
+                          if [[ "$wave_concurrency_cap" -gt 0 ]]; then
+                            while [[ "$wave_parallel_active_workers" -ge "$wave_concurrency_cap" ]]; do
+                              local wave_reaped_one=0
+                              local scan_index
+                              for scan_index in "${!wave_parallel_pids[@]}"; do
+                                if [[ "${wave_parallel_reaped[$scan_index]}" == "1" ]]; then
+                                  continue
+                                fi
+                                local scan_pid="${wave_parallel_pids[$scan_index]}"
+                                if ! kill -0 "$scan_pid" 2>/dev/null; then
+                                  set +e
+                                  wait "$scan_pid" >/dev/null 2>&1
+                                  set -e
+                                  wave_parallel_reaped[$scan_index]="1"
+                                  if [[ "$wave_parallel_active_workers" -gt 0 ]]; then
+                                    wave_parallel_active_workers=$((wave_parallel_active_workers - 1))
+                                  fi
+                                  local wave_queue_data
+                                  wave_queue_data=$(jq -n \
+                                    --arg role "$role" \
+                                    --arg wave_id "$wave_id" \
+                                    --arg phase "cap_gate" \
+                                    --argjson wave "$wave_number" \
+                                    --argjson active_workers "$wave_parallel_active_workers" \
+                                    --argjson launched_children "$wave_parallel_launched_workers" \
+                                    --argjson total_children "$wave_children_to_run" \
+                                    --argjson concurrency_cap "$wave_concurrency_cap" \
+                                    '{role: $role, wave_id: $wave_id, wave: $wave, phase: $phase, active_workers: $active_workers, launched_children: $launched_children, total_children: $total_children, concurrency_cap: $concurrency_cap}')
+                                  log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_queue_drain" "$wave_queue_data" "$role"
+                                  wave_reaped_one=1
+                                  break
+                                fi
+                              done
+                              if [[ "$wave_reaped_one" -eq 0 ]]; then
+                                sleep 0.05
+                              fi
+                            done
+                          fi
                           continue
                         fi
 
@@ -9904,12 +9963,44 @@ EOF
                       done
 
                       if [[ "$role_delegation_effective_dispatch_mode" == "parallel" ]]; then
+                        while [[ "$wave_parallel_active_workers" -gt 0 ]]; do
+                          local wave_reaped_any=0
+                          local scan_index
+                          for scan_index in "${!wave_parallel_pids[@]}"; do
+                            if [[ "${wave_parallel_reaped[$scan_index]}" == "1" ]]; then
+                              continue
+                            fi
+                            local scan_pid="${wave_parallel_pids[$scan_index]}"
+                            if ! kill -0 "$scan_pid" 2>/dev/null; then
+                              set +e
+                              wait "$scan_pid" >/dev/null 2>&1
+                              set -e
+                              wave_parallel_reaped[$scan_index]="1"
+                              if [[ "$wave_parallel_active_workers" -gt 0 ]]; then
+                                wave_parallel_active_workers=$((wave_parallel_active_workers - 1))
+                              fi
+                              local wave_queue_data
+                              wave_queue_data=$(jq -n \
+                                --arg role "$role" \
+                                --arg wave_id "$wave_id" \
+                                --arg phase "final_drain" \
+                                --argjson wave "$wave_number" \
+                                --argjson active_workers "$wave_parallel_active_workers" \
+                                --argjson launched_children "$wave_parallel_launched_workers" \
+                                --argjson total_children "$wave_children_to_run" \
+                                --argjson concurrency_cap "$wave_concurrency_cap" \
+                                '{role: $role, wave_id: $wave_id, wave: $wave, phase: $phase, active_workers: $active_workers, launched_children: $launched_children, total_children: $total_children, concurrency_cap: $concurrency_cap}')
+                              log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_queue_drain" "$wave_queue_data" "$role"
+                              wave_reaped_any=1
+                            fi
+                          done
+                          if [[ "$wave_reaped_any" -eq 0 ]]; then
+                            sleep 0.05
+                          fi
+                        done
+
                         local parallel_index
                         for parallel_index in "${!wave_parallel_pids[@]}"; do
-                          set +e
-                          wait "${wave_parallel_pids[$parallel_index]}"
-                          set -e
-
                           local final_child_id="${wave_parallel_child_ids[$parallel_index]}"
                           local final_child_status_file="${wave_parallel_child_status_files[$parallel_index]}"
                           local final_child_log_file="${wave_parallel_child_log_files[$parallel_index]}"
@@ -10095,6 +10186,16 @@ EOF
                     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_end" "$delegation_wave_end_data" "$role"
 
                     if [[ "$role_delegation_stop_after_wave" -eq 1 ]]; then
+                      local delegation_policy_data
+                      delegation_policy_data=$(jq -n \
+                        --arg role "$role" \
+                        --arg wave_id "$wave_id" \
+                        --arg reason "$role_delegation_stop_reason" \
+                        --argjson wave "$wave_number" \
+                        --argjson fail_role_triggered "$(if [[ "$role_delegation_fail_role_triggered" -eq 1 ]]; then echo true; else echo false; fi)" \
+                        '{role: $role, wave_id: $wave_id, wave: $wave, reason: (if ($reason | length) > 0 then $reason else "unspecified" end), fail_role_triggered: $fail_role_triggered}')
+                      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_policy_decision" "$delegation_policy_data" "$role"
+
                       if [[ "$role_delegation_stop_reason" == "failure_policy_fail_role" ]]; then
                         echo "- delegation stopped early by failure policy at wave: $wave_id" >> "$role_delegation_summary_file"
                       else
@@ -10198,7 +10299,12 @@ EOF
               scheduler: {
                 state_model: "pending->running->terminal",
                 concurrency_cap: $max_parallel,
-                terminal_states: ["completed", "failed", "timed_out", "cancelled", "policy_violation", "skipped"]
+                terminal_states: ["completed", "failed", "timed_out", "cancelled", "policy_violation", "skipped"],
+                invariants: {
+                  cap_enforced: true,
+                  deterministic_finalization: true,
+                  single_finalization_per_child: true
+                }
               },
               status: $status,
               implemented: true,

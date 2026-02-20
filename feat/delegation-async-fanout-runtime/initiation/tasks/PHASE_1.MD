@@ -8,17 +8,17 @@
 
 ## P1.2 Scheduler State Model (`src/60-commands.sh`, `README.md`)
 1. [x] Define an internal child lifecycle state machine and transition rules (pending -> running -> terminal).
-2. [ ] Define wave-level invariants for async mode (no over-cap dispatch, no double-finalization, deterministic terminal accounting).
-3. [ ] Add explicit parent adaptation checkpoints in scheduler lifecycle for `on_child_complete`.
+2. [x] Define wave-level invariants for async mode (no over-cap dispatch, no double-finalization, deterministic terminal accounting).
+3. [x] Add explicit parent adaptation checkpoints in scheduler lifecycle for `on_child_complete`.
 
 ## P1.3 Artifact/Event Contract (`src/50-events.sh`, `src/60-commands.sh`)
-1. [ ] Define event set for scheduler lifecycle (wave dispatch start/end, queue drain, child terminal transition, policy decision).
+1. [x] Define event set for scheduler lifecycle (wave dispatch start/end, queue drain, child terminal transition, policy decision).
 2. [x] Extend delegation status/index schema to record concurrency cap, scheduler stats, and per-state counts.
 3. [ ] Define deterministic aggregation metadata fields (aggregation_order, completion_order, policy_reason).
 
 ## P1.4 Test Harness Baseline (`tests/superloop.bats`)
-1. [ ] Add reusable helper patterns for deterministic async assertions (timestamp overlap + max-concurrency cap checks).
-2. [ ] Add baseline regression tests that keep existing serial behavior unchanged when `dispatch_mode=serial`.
+1. [x] Add reusable helper patterns for deterministic async assertions (timestamp overlap + max-concurrency cap checks).
+2. [x] Add baseline regression tests that keep existing serial behavior unchanged when `dispatch_mode=serial`.
 3. [x] Add guard test ensuring async contract fields are present in delegation status artifacts.
 
 ## P1.V Validation / Acceptance Tests

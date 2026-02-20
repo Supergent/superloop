@@ -246,6 +246,8 @@ Notes:
 - If no request file exists, enabled `implementer`/`planner` roles run a delegation-request pass first (`delegation_request_pass_start`/`delegation_request_pass_end`) to author `request.json` for that role turn.
 - Bounds are enforced by config (`max_waves`, `max_children`, `max_parallel`, `child_timeout_seconds`, `retry_limit`).
 - Child events are emitted as `delegation_child_start` and `delegation_child_end`.
+- Scheduler lifecycle emits `delegation_wave_dispatch`, `delegation_wave_queue_drain`, `delegation_wave_start`, and `delegation_wave_end`.
+- Wave stop policy checkpoints emit `delegation_policy_decision` with stop reason metadata.
 - Child status artifacts include `status` plus canonical `terminal_state` (`completed | failed | timed_out | cancelled | policy_violation | skipped`).
 - Planner child prompts include explicit reconnaissance constraints (`mode=reconnaissance`) to keep subtasks read-heavy and bounded.
 - Reconnaissance mode now performs a repo write guard around each child run; violations emit `delegation_recon_violation`.
@@ -259,6 +261,7 @@ Notes:
 - Per-role delegation status and summaries are persisted under:
   - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/status.json`
   - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/summary.md`
+- Delegation status includes scheduler contract metadata (`scheduler.state_model`, `scheduler.concurrency_cap`, `scheduler.invariants`, terminal-state counters).
 - Adaptive replan artifacts are persisted under:
   - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/adaptation/`
 - Run summary entries now include per-iteration delegation rollups (`role_entries`, `enabled_roles`, child execution totals, adaptation counters, recon violations, by-role breakdown).
