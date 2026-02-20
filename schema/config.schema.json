@@ -193,13 +193,18 @@
             "allOf": [
               {
                 "if": {
+                  "type": "object",
                   "properties": {
                     "mode": {"enum": ["every", "on_promise"]}
                   }
                 },
                 "then": {
+                  "type": "object",
                   "properties": {
-                    "commands": {"minItems": 1}
+                    "commands": {
+                      "type": "array",
+                      "minItems": 1
+                    }
                   }
                 }
               }

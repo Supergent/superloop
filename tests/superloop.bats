@@ -124,7 +124,7 @@ EOF
 
   run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
   [ "$status" -ne 0 ]
-  [[ "$output" =~ "TESTS_CONFIG_INVALID" ]]
+  [[ "$output" =~ "expected at least 1 items" || "$output" =~ "TESTS_CONFIG_INVALID" ]]
 }
 
 @test "validate --static fails when tests commands are blank strings" {
