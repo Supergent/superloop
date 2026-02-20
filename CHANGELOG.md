@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1 - 2026-02-20
+
+### Changed
+- **construct-superloop skill guidance**: Added tighter loop-id derivation and explicit dry-run validation flow with non-dry-run delegation checks.
+- **Delegation docs alignment**: Documented delegation wave/parallel behavior and adaptation semantics updates in skill guidance.
+
+### Fixed
+- **E2E pricing fallback assertion**: Updated unknown-model fallback test to match current pricing schema key (`input`).
+- **Runner test portability**: Removed hard dependency on `bc` and stabilized no-python warning assertion to avoid pipeline/SIGPIPE flake.
+
 ## 0.6.0 - 2026-02-20
 
 ### Added
