@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0 - 2026-02-20
+
+### Added
+- **Role-local delegation orchestration**: Parent roles can execute delegated child work with persisted request, per-wave status, and summary artifacts.
+- **Delegation request pass for implementer**: Live runs now support request-generation and execution flow in the same iteration.
+- **Delegation event/usage visibility**: Child lifecycle and adaptation decisions are captured in events and child usage artifacts.
+
+### Changed
+- **Wave dispatch behavior**: `dispatch_mode: "parallel"` executes sibling children concurrently inside each wave.
+- **Adaptive wake-policy hardening**: `on_child_complete` is normalized to `on_wave_complete` for parallel waves with explicit adaptation metadata.
+- **Failure/retry handling**: Delegated-child retries and failure-policy outcomes are enforced with clearer status accounting.
+- **Validation compatibility**: Legacy and explicit wake labels are normalized consistently in static/runtime validation paths.
+
 ## 0.5.1 - 2026-01-14
 
 ### Added

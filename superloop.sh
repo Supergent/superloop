@@ -3,7 +3,7 @@ set -euo pipefail
 # Generated from src/*.sh by scripts/build.sh. Edit source files, not this output.
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-VERSION="0.4.1"
+VERSION="0.6.0"
 
 usage() {
   cat <<'USAGE'
