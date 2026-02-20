@@ -287,6 +287,10 @@ To avoid flaky model-dependent CI:
 
 This ensures stable pass/fail signals while still testing the Superloop RLMS integration path end-to-end.
 
+For the same deterministic flow locally, run:
+
+- `./scripts/run-local-canary.sh --repo .`
+
 #### 8) Test Coverage
 
 Key tests:
