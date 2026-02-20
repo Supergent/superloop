@@ -282,7 +282,7 @@ EOF
   [[ "$unknown" != "" ]]
 
   # Should have fallback pricing
-  local input_price=$(echo "$unknown" | jq -r '.input_per_mtok')
+  local input_price=$(echo "$unknown" | jq -r '.input')
   [[ "$input_price" != "null" ]]
   [[ "$input_price" != "" ]]
 }
