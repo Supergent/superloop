@@ -26,7 +26,7 @@ init_cmd() {
       "completion_promise": "SUPERLOOP_COMPLETE",
       "checklists": [],
       "tests": {
-        "mode": "on_promise",
+        "mode": "disabled",
         "commands": []
       },
       "evidence": {
@@ -1390,8 +1390,15 @@ run_cmd() {
     local test_commands_json
     test_commands_json=$(jq -c '.tests.commands // []' <<<"$loop_json")
 
-    if [[ ${#test_commands[@]} -eq 0 ]]; then
-      tests_mode="disabled"
+    local test_command_count=0
+    for cmd in "${test_commands[@]}"; do
+      if [[ -n "${cmd//[[:space:]]/}" ]]; then
+        test_command_count=$((test_command_count + 1))
+      fi
+    done
+
+    if [[ "$tests_mode" != "disabled" && $test_command_count -eq 0 ]]; then
+      die "loop '$loop_id': tests.mode is '$tests_mode' but tests.commands is empty. Add at least one test command or set tests.mode to 'disabled'."
     fi
 
     local validation_enabled

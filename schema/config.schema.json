@@ -189,7 +189,21 @@
                 "items": {"type": "string"}
               }
             },
-            "required": ["mode", "commands"]
+            "required": ["mode", "commands"],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "mode": {"enum": ["every", "on_promise"]}
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "commands": {"minItems": 1}
+                  }
+                }
+              }
+            ]
           },
           "planning": {
             "type": "object",

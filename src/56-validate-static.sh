@@ -9,6 +9,7 @@ STATIC_ERR_POSSIBLE_TYPO="POSSIBLE_TYPO"
 STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
+STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -332,6 +333,28 @@ check_rlms_config() {
   fi
 }
 
+# Ensure tests gate configuration is internally consistent.
+# Usage: check_tests_gate_config <loop_json> <location_prefix>
+check_tests_gate_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local tests_mode
+  tests_mode=$(jq -r '.tests.mode // "disabled"' <<<"$loop_json" 2>/dev/null || echo "disabled")
+
+  local tests_command_count
+  tests_command_count=$(jq -r '[.tests.commands[]? | strings | select((gsub("^\\s+|\\s+$"; "") | length) > 0)] | length' <<<"$loop_json" 2>/dev/null || echo 0)
+
+  if [[ "$tests_mode" != "disabled" && "$tests_command_count" == "0" ]]; then
+    static_add_error "$STATIC_ERR_TESTS_CONFIG_INVALID" \
+      "tests.mode is '$tests_mode' but tests.commands is empty. Add at least one test command or set tests.mode to 'disabled'." \
+      "$location_prefix.tests"
+    return 1
+  fi
+
+  return 0
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -386,6 +409,9 @@ validate_static() {
 
     # Check RLMS semantic config
     check_rlms_config "$loop_json" "loops[$i]"
+
+    # Check tests gate policy
+    check_tests_gate_config "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands
