@@ -475,6 +475,56 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "run blocks reentrant invocation for the same active loop id" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "mock": {
+      "command": ["bash"],
+      "args": ["-lc", "cat >/dev/null"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "reentrant-loop",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 5,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {
+      "planner": {"runner": "mock"},
+      "implementer": {"runner": "mock"},
+      "tester": {"runner": "mock"},
+      "reviewer": {"runner": "mock"}
+    }
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  cat > "$TEMP_DIR/.superloop/state.json" << 'EOF'
+{
+  "active": true,
+  "loop_index": 0,
+  "iteration": 2,
+  "current_loop_id": "reentrant-loop",
+  "updated_at": "2026-02-20T00:00:00Z"
+}
+EOF
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop reentrant-loop --skip-validate
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "reentrant run blocked" ]]
+  [[ "$output" =~ "reentrant-loop" ]]
+}
+
 @test "run --dry-run accepts delegation wake alias values" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {

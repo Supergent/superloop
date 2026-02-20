@@ -1100,6 +1100,7 @@ run_cmd() {
   local loop_index=0
   local iteration=1
   local was_active="false"
+  local active_loop_id=""
   if [[ "${dry_run:-0}" -ne 1 && -f "$state_file" ]]; then
     loop_index=$(jq -r '.loop_index // 0' "$state_file")
     iteration=$(jq -r '.iteration // 1' "$state_file")
@@ -1107,6 +1108,7 @@ run_cmd() {
     active=$(jq -r '.active // true' "$state_file")
     if [[ "$active" == "true" ]]; then
       was_active="true"
+      active_loop_id=$(jq -r '.current_loop_id // ""' "$state_file")
     fi
     if [[ "$active" != "true" ]]; then
       loop_index=0
@@ -1122,6 +1124,17 @@ run_cmd() {
     echo "  1. Stop the running loop first, OR" >&2
     echo "  2. Reset the state manually:" >&2
     echo "     echo '{\"active\": false, \"loop_index\": 0, \"iteration\": 0}' > $state_file" >&2
+    return 1
+  fi
+
+  # Block re-entrant execution of the same loop when state already marks it active.
+  if [[ "$was_active" == "true" && -n "$target_loop_id" && -n "$active_loop_id" && "$target_loop_id" == "$active_loop_id" ]]; then
+    echo "Error: loop '$target_loop_id' is already running (reentrant run blocked)" >&2
+    echo "" >&2
+    echo "Active loop id from state: $active_loop_id" >&2
+    echo "State file: $state_file" >&2
+    echo "" >&2
+    echo "Wait for the active run to finish, or clear stale state only if you are sure no run is active." >&2
     return 1
   fi
 
