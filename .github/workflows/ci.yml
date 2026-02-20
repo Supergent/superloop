@@ -147,6 +147,23 @@ jobs:
           echo "--- reviewer.json ---"
           cat .superloop/loops/rlms-canary/rlms/latest/reviewer.json
 
+  superloop-ui-contract:
+    needs: [repo-hygiene, secret-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
+      - name: Run superloop-ui contract tests
+        run: |
+          set -euo pipefail
+          cd packages/superloop-ui
+          bun install --frozen-lockfile
+          npm test
+
   test:
     needs: [repo-hygiene, secret-scan]
     runs-on: ubuntu-latest
