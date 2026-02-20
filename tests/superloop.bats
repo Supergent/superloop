@@ -94,6 +94,72 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "validate --static fails when tests are enabled with empty commands" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "tests-empty",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "on_promise", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "expected at least 1 items" || "$output" =~ "TESTS_CONFIG_INVALID" ]]
+}
+
+@test "validate --static fails when tests commands are blank strings" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "tests-blank",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "every", "commands": ["   "]},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "TESTS_CONFIG_INVALID" ]]
+}
+
 @test "validate --static accepts valid rlms configuration" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {

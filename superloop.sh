@@ -5783,6 +5783,7 @@ STATIC_ERR_POSSIBLE_TYPO="POSSIBLE_TYPO"
 STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
+STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -6106,6 +6107,28 @@ check_rlms_config() {
   fi
 }
 
+# Ensure tests gate configuration is internally consistent.
+# Usage: check_tests_gate_config <loop_json> <location_prefix>
+check_tests_gate_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local tests_mode
+  tests_mode=$(jq -r '.tests.mode // "disabled"' <<<"$loop_json" 2>/dev/null || echo "disabled")
+
+  local tests_command_count
+  tests_command_count=$(jq -r '[.tests.commands[]? | strings | select((gsub("^\\s+|\\s+$"; "") | length) > 0)] | length' <<<"$loop_json" 2>/dev/null || echo 0)
+
+  if [[ "$tests_mode" != "disabled" && "$tests_command_count" == "0" ]]; then
+    static_add_error "$STATIC_ERR_TESTS_CONFIG_INVALID" \
+      "tests.mode is '$tests_mode' but tests.commands is empty. Add at least one test command or set tests.mode to 'disabled'." \
+      "$location_prefix.tests"
+    return 1
+  fi
+
+  return 0
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -6160,6 +6183,9 @@ validate_static() {
 
     # Check RLMS semantic config
     check_rlms_config "$loop_json" "loops[$i]"
+
+    # Check tests gate policy
+    check_tests_gate_config "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands
@@ -6914,7 +6940,7 @@ init_cmd() {
       "completion_promise": "SUPERLOOP_COMPLETE",
       "checklists": [],
       "tests": {
-        "mode": "on_promise",
+        "mode": "disabled",
         "commands": []
       },
       "evidence": {
@@ -8278,8 +8304,15 @@ run_cmd() {
     local test_commands_json
     test_commands_json=$(jq -c '.tests.commands // []' <<<"$loop_json")
 
-    if [[ ${#test_commands[@]} -eq 0 ]]; then
-      tests_mode="disabled"
+    local test_command_count=0
+    for cmd in "${test_commands[@]}"; do
+      if [[ -n "${cmd//[[:space:]]/}" ]]; then
+        test_command_count=$((test_command_count + 1))
+      fi
+    done
+
+    if [[ "$tests_mode" != "disabled" && $test_command_count -eq 0 ]]; then
+      die "loop '$loop_id': tests.mode is '$tests_mode' but tests.commands is empty. Add at least one test command or set tests.mode to 'disabled'."
     fi
 
     local validation_enabled
@@ -12319,8 +12352,9 @@ import json
 import sys
 
 
-def error(message, path):
-    sys.stderr.write("schema validation error at {}: {}\n".format(path, message))
+def error(message, path, quiet=False):
+    if not quiet:
+        sys.stderr.write("schema validation error at {}: {}\n".format(path, message))
     return False
 
 
@@ -12332,63 +12366,96 @@ def is_number(value):
     return (isinstance(value, int) or isinstance(value, float)) and not isinstance(value, bool)
 
 
-def validate(instance, schema, path):
+def validate(instance, schema, path, quiet=False):
+    if "allOf" in schema:
+        for index, subschema in enumerate(schema["allOf"]):
+            if not validate(instance, subschema, "{}.allOf[{}]".format(path, index), quiet):
+                return False
+
+    if "anyOf" in schema:
+        any_ok = False
+        for index, subschema in enumerate(schema["anyOf"]):
+            if validate(instance, subschema, "{}.anyOf[{}]".format(path, index), True):
+                any_ok = True
+                break
+        if not any_ok:
+            return error("expected to match at least one schema in anyOf", path, quiet)
+
+    if "oneOf" in schema:
+        one_matches = 0
+        for index, subschema in enumerate(schema["oneOf"]):
+            if validate(instance, subschema, "{}.oneOf[{}]".format(path, index), True):
+                one_matches += 1
+        if one_matches != 1:
+            return error("expected to match exactly one schema in oneOf", path, quiet)
+
+    if "if" in schema:
+        condition_met = validate(instance, schema["if"], "{}.if".format(path), True)
+        if condition_met:
+            then_schema = schema.get("then")
+            if then_schema is not None and not validate(instance, then_schema, "{}.then".format(path), quiet):
+                return False
+        else:
+            else_schema = schema.get("else")
+            if else_schema is not None and not validate(instance, else_schema, "{}.else".format(path), quiet):
+                return False
+
     if "enum" in schema:
         if instance not in schema["enum"]:
-            return error("expected one of {}".format(schema["enum"]), path)
+            return error("expected one of {}".format(schema["enum"]), path, quiet)
 
     schema_type = schema.get("type")
     if schema_type == "object":
         if not isinstance(instance, dict):
-            return error("expected object", path)
+            return error("expected object", path, quiet)
         props = schema.get("properties", {})
         required = schema.get("required", [])
         for key in required:
             if key not in instance:
-                return error("missing required property '{}'".format(key), "{}.{}".format(path, key))
+                return error("missing required property '{}'".format(key), "{}.{}".format(path, key), quiet)
         additional = schema.get("additionalProperties", True)
         for key, value in instance.items():
             if key in props:
-                if not validate(value, props[key], "{}.{}".format(path, key)):
+                if not validate(value, props[key], "{}.{}".format(path, key), quiet):
                     return False
             else:
                 if additional is False:
-                    return error("unexpected property '{}'".format(key), "{}.{}".format(path, key))
+                    return error("unexpected property '{}'".format(key), "{}.{}".format(path, key), quiet)
                 if isinstance(additional, dict):
-                    if not validate(value, additional, "{}.{}".format(path, key)):
+                    if not validate(value, additional, "{}.{}".format(path, key), quiet):
                         return False
         return True
 
     if schema_type == "array":
         if not isinstance(instance, list):
-            return error("expected array", path)
+            return error("expected array", path, quiet)
         if "minItems" in schema and len(instance) < schema["minItems"]:
-            return error("expected at least {} items".format(schema["minItems"]), path)
+            return error("expected at least {} items".format(schema["minItems"]), path, quiet)
         item_schema = schema.get("items")
         if item_schema is not None:
             for index, item in enumerate(instance):
-                if not validate(item, item_schema, "{}[{}]".format(path, index)):
+                if not validate(item, item_schema, "{}[{}]".format(path, index), quiet):
                     return False
         return True
 
     if schema_type == "string":
         if not isinstance(instance, str):
-            return error("expected string", path)
+            return error("expected string", path, quiet)
         return True
 
     if schema_type == "integer":
         if not is_integer(instance):
-            return error("expected integer", path)
+            return error("expected integer", path, quiet)
         return True
 
     if schema_type == "number":
         if not is_number(instance):
-            return error("expected number", path)
+            return error("expected number", path, quiet)
         return True
 
     if schema_type == "boolean":
         if not isinstance(instance, bool):
-            return error("expected boolean", path)
+            return error("expected boolean", path, quiet)
         return True
 
     return True

@@ -95,7 +95,16 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
     "checklists": [],
     "tests": {
       "mode": "on_promise",
-      "commands": ["npm test"]
+      "commands": ["bun run test"]
+    },
+    "validation": {
+      "enabled": true,
+      "mode": "every",
+      "require_on_completion": true,
+      "automated_checklist": {
+        "enabled": true,
+        "mapping_file": ".superloop/validation/my-feature-checklist.json"
+      }
     },
     "evidence": {
       "enabled": false,

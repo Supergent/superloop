@@ -320,7 +320,16 @@ Understanding config helps you set appropriate values:
 
     "tests": {
       "mode": "on_promise",
-      "commands": ["npm test"]
+      "commands": ["bun run test"]
+    },
+    "validation": {
+      "enabled": true,
+      "mode": "every",
+      "require_on_completion": true,
+      "automated_checklist": {
+        "enabled": true,
+        "mapping_file": ".superloop/validation/feature-name-checklist.json"
+      }
     },
     "evidence": {
       "enabled": false,
@@ -393,7 +402,8 @@ Understanding config helps you set appropriate values:
 |-------|---------|----------|
 | `max_iterations` | Safety limit | 10 for small features, 20 for large |
 | `tests.mode` | When tests run | `on_promise` (when Reviewer ready) or `every` (each iteration) |
-| `tests.commands` | Test commands | Must exit 0 on success |
+| `tests.commands` | Test commands | Must exit 0 on success. Required when `tests.mode` is not `disabled`. |
+| `validation.require_on_completion` | Validation gate strictness | Set `true` for build-quality loops so completion cannot skip validation. |
 | `timeouts.*` | Role time limits | Increase for complex features |
 | `stuck.threshold` | Stall detection | Lower = fail faster on stuck loops |
 | `delegation.dispatch_mode` | Child dispatch shape | `serial` for deterministic narrow work, `parallel` for bounded fan-out |
@@ -958,6 +968,11 @@ If user chooses "customize", ask per role using AskUserQuestion.
 
 Generate or update `.superloop/config.json`:
 
+Hard requirements when constructing loops:
+- If `tests.mode` is `every` or `on_promise`, `tests.commands` must include at least one real command.
+- Set `validation.enabled: true` and `validation.require_on_completion: true` unless the user explicitly chooses a looser policy.
+- Include an `automated_checklist.mapping_file` path when validation is enabled, and ensure the file exists.
+
 ```json
 {
   "runners": {
@@ -987,7 +1002,16 @@ Generate or update `.superloop/config.json`:
       "checklists": [],
       "tests": {
         "mode": "on_promise",
-        "commands": ["npm test"]
+        "commands": ["bun run test"]
+      },
+      "validation": {
+        "enabled": true,
+        "mode": "every",
+        "require_on_completion": true,
+        "automated_checklist": {
+          "enabled": true,
+          "mapping_file": ".superloop/validation/<loop-id>-checklist.json"
+        }
       },
       "evidence": {
         "enabled": false,
