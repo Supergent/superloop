@@ -737,6 +737,10 @@ Proposed loop ID: jwt-authentication
 └─────────────────────────────────────────────────────────┘
 ```
 
+Guidance:
+- Prefer lowercase hyphenated IDs.
+- Prefer concise IDs (roughly <=24 chars) to keep `superloop.sh list` output readable.
+
 ### Spec Template
 
 Write to `.superloop/specs/<loop-id>.md`:
@@ -1052,6 +1056,7 @@ Before handoff, always run:
 
 ```bash
 ./superloop.sh validate --repo . --schema schema/config.schema.json
+./superloop.sh run --repo . --loop <loop-id> --dry-run
 ```
 
 If delegation is enabled in the generated config, require explicit verification targets in notes:
@@ -1059,6 +1064,8 @@ If delegation is enabled in the generated config, require explicit verification 
 - Status artifact: `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/status.json`
 - Event signals: `delegation_wave_dispatch`, `delegation_wave_queue_drain`, `delegation_adaptation_start`, `delegation_adaptation_end`
 - Execution metadata: `execution.completion_order`, `execution.aggregation_order`, `execution.policy_reason`
+
+Note: event and execution metadata checks require at least one non-dry run with delegation active.
 
 ### Final Output
 
