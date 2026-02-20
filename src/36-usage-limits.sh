@@ -407,8 +407,13 @@ detect_rate_limit_in_line() {
     return 0
   fi
 
-  # Pattern: HTTP 429
-  if echo "$line" | grep -q "429\|Too Many Requests"; then
+  # Pattern: HTTP 429 / Too Many Requests (strict; avoid matching arbitrary digits)
+  if echo "$line" | grep -qi "Too Many Requests"; then
+    RATE_LIMIT_DETECTED=1
+    RATE_LIMIT_MESSAGE="HTTP 429 Too Many Requests"
+    return 0
+  fi
+  if echo "$line" | grep -Eqi 'HTTP(/[0-9]+(\.[0-9]+)?)?[^0-9\r\n]{0,32}429|((status( code)?)|code)[[:space:]]*[:=][[:space:]]*429'; then
     RATE_LIMIT_DETECTED=1
     RATE_LIMIT_MESSAGE="HTTP 429 Too Many Requests"
     return 0

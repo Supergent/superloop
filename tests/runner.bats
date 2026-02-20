@@ -210,6 +210,39 @@ EOF
   [[ "$message" == *"429"* ]]
 }
 
+@test "runner: does not false-positive on non-rate-limit digits containing 429" {
+  # Skip if Python is not available
+  if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+    skip "Python required for rate limit detection"
+  fi
+
+  local prompt_file="$TEMP_DIR/prompt.txt"
+  local log_file="$TEMP_DIR/log.txt"
+  local rate_limit_file="$TEMP_DIR/rate_limit.json"
+  local mock_script="$TEMP_DIR/mock_non_rate_limit_429_digits.sh"
+
+  echo "input" > "$prompt_file"
+
+  # Simulates codex rollout error line with "...894294..." in timestamp.
+  cat > "$mock_script" << 'EOF'
+#!/bin/bash
+echo "2026-02-20T17:30:43.894294Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c7a13-4993-74a3-ad89-ffe6c8d02a34" >&2
+exit 1
+EOF
+  chmod +x "$mock_script"
+
+  set +e
+  RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+    run_command_with_timeout "$prompt_file" "$log_file" 10 "stdin" 0 "$mock_script"
+  local status=$?
+  set -e
+
+  # Should preserve the original non-zero exit code, not map to rate-limit stop.
+  [ "$status" -eq 1 ]
+  [ ! -f "$rate_limit_file" ]
+  grep -q "rollout::list" "$log_file"
+}
+
 @test "runner: detects generic rate limit error" {
   # Skip if Python is not available
   if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then

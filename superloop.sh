@@ -1883,8 +1883,16 @@ def detect_rate_limit(line):
             info["resets_at"] = int(match.group(1))
         return True, info
 
-    # Pattern: HTTP 429 or Too Many Requests
-    if '429' in line or 'Too Many Requests' in line:
+    # Pattern: HTTP 429 / Too Many Requests (strict; avoid matching arbitrary digits)
+    if 'Too Many Requests' in line:
+        info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info.update(parsed_info)
+        return True, info
+    if re.search(r'\bHTTP(?:/\d+(?:\.\d+)?)?\b[^\n\r]{0,32}\b429\b', line, re.IGNORECASE):
+        info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info.update(parsed_info)
+        return True, info
+    if re.search(r'\b(?:status(?:\s+code)?|code)\s*[:=]\s*429\b', line, re.IGNORECASE):
         info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
         info.update(parsed_info)
         return True, info
@@ -3903,8 +3911,13 @@ detect_rate_limit_in_line() {
     return 0
   fi
 
-  # Pattern: HTTP 429
-  if echo "$line" | grep -q "429\|Too Many Requests"; then
+  # Pattern: HTTP 429 / Too Many Requests (strict; avoid matching arbitrary digits)
+  if echo "$line" | grep -qi "Too Many Requests"; then
+    RATE_LIMIT_DETECTED=1
+    RATE_LIMIT_MESSAGE="HTTP 429 Too Many Requests"
+    return 0
+  fi
+  if echo "$line" | grep -Eqi 'HTTP(/[0-9]+(\.[0-9]+)?)?[^0-9\r\n]{0,32}429|((status( code)?)|code)[[:space:]]*[:=][[:space:]]*429'; then
     RATE_LIMIT_DETECTED=1
     RATE_LIMIT_MESSAGE="HTTP 429 Too Many Requests"
     return 0

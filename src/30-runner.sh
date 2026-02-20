@@ -263,8 +263,16 @@ def detect_rate_limit(line):
             info["resets_at"] = int(match.group(1))
         return True, info
 
-    # Pattern: HTTP 429 or Too Many Requests
-    if '429' in line or 'Too Many Requests' in line:
+    # Pattern: HTTP 429 / Too Many Requests (strict; avoid matching arbitrary digits)
+    if 'Too Many Requests' in line:
+        info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info.update(parsed_info)
+        return True, info
+    if re.search(r'\bHTTP(?:/\d+(?:\.\d+)?)?\b[^\n\r]{0,32}\b429\b', line, re.IGNORECASE):
+        info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
+        info.update(parsed_info)
+        return True, info
+    if re.search(r'\b(?:status(?:\s+code)?|code)\s*[:=]\s*429\b', line, re.IGNORECASE):
         info = {"message": "HTTP 429 Too Many Requests", "type": "http"}
         info.update(parsed_info)
         return True, info
