@@ -865,6 +865,18 @@ normalize_delegation_mode() {
   esac
 }
 
+normalize_delegation_terminal_state() {
+  local status_text="${1:-}"
+  case "$status_text" in
+    ok) echo "completed" ;;
+    timeout) echo "timed_out" ;;
+    cancelled) echo "cancelled" ;;
+    policy_violation) echo "policy_violation" ;;
+    skipped) echo "skipped" ;;
+    *) echo "failed" ;;
+  esac
+}
+
 compute_delegation_retry_backoff_seconds() {
   local base_seconds="$1"
   local max_seconds="$2"
@@ -1438,6 +1450,13 @@ run_cmd() {
     delegation_failure_policy_explicit=$(jq -r 'if ((.delegation // {}) | has("failure_policy")) then "true" else "false" end' <<<"$loop_json")
     local delegation_max_children
     delegation_max_children=$(jq -r '.delegation.max_children // 1' <<<"$loop_json")
+    local delegation_max_parallel
+    delegation_max_parallel=$(jq -r '
+      if ((.delegation // {}) | has("max_parallel")) then
+        .delegation.max_parallel
+      else
+        (.delegation.max_children // 1)
+      end' <<<"$loop_json")
     local delegation_max_waves
     delegation_max_waves=$(jq -r '.delegation.max_waves // 1' <<<"$loop_json")
     local delegation_child_timeout_seconds
@@ -1450,6 +1469,7 @@ run_cmd() {
     delegation_retry_backoff_max_seconds=$(jq -r '.delegation.retry_backoff_max_seconds // 30' <<<"$loop_json")
 
     delegation_max_children=$(rlms_safe_int "$delegation_max_children" 1)
+    delegation_max_parallel=$(rlms_safe_int "$delegation_max_parallel" "$delegation_max_children")
     delegation_max_waves=$(rlms_safe_int "$delegation_max_waves" 1)
     delegation_child_timeout_seconds=$(rlms_safe_int "$delegation_child_timeout_seconds" 300)
     delegation_retry_limit=$(rlms_safe_int "$delegation_retry_limit" 0)
@@ -1457,6 +1477,8 @@ run_cmd() {
     delegation_retry_backoff_max_seconds=$(rlms_safe_int "$delegation_retry_backoff_max_seconds" 30)
 
     if [[ "$delegation_max_children" -lt 1 ]]; then delegation_max_children=1; fi
+    if [[ "$delegation_max_parallel" -lt 1 ]]; then delegation_max_parallel="$delegation_max_children"; fi
+    if [[ "$delegation_max_parallel" -gt "$delegation_max_children" ]]; then delegation_max_parallel="$delegation_max_children"; fi
     if [[ "$delegation_max_waves" -lt 1 ]]; then delegation_max_waves=1; fi
     if [[ "$delegation_child_timeout_seconds" -lt 1 ]]; then delegation_child_timeout_seconds=300; fi
     if [[ "$delegation_retry_limit" -lt 0 ]]; then delegation_retry_limit=0; fi
@@ -1636,6 +1658,7 @@ run_cmd() {
       --arg delegation_wake_policy "$delegation_wake_policy" \
       --arg delegation_failure_policy "$delegation_failure_policy" \
       --argjson delegation_max_children "$delegation_max_children" \
+      --argjson delegation_max_parallel "$delegation_max_parallel" \
       --argjson delegation_max_waves "$delegation_max_waves" \
       --argjson delegation_child_timeout_seconds "$delegation_child_timeout_seconds" \
       --argjson delegation_retry_limit "$delegation_retry_limit" \
@@ -1655,6 +1678,7 @@ run_cmd() {
           wake_policy: $delegation_wake_policy,
           failure_policy: $delegation_failure_policy,
           max_children: $delegation_max_children,
+          max_parallel: $delegation_max_parallel,
           max_waves: $delegation_max_waves,
           child_timeout_seconds: $delegation_child_timeout_seconds,
           retry_limit: $delegation_retry_limit,
@@ -1819,6 +1843,7 @@ run_cmd() {
         local role_delegation_wake_policy="$delegation_wake_policy"
         local role_delegation_failure_policy="$delegation_failure_policy"
         local role_delegation_max_children="$delegation_max_children"
+        local role_delegation_max_parallel="$delegation_max_parallel"
         local role_delegation_max_waves="$delegation_max_waves"
         local role_delegation_child_timeout_seconds="$delegation_child_timeout_seconds"
         local role_delegation_retry_limit="$delegation_retry_limit"
@@ -1877,6 +1902,12 @@ run_cmd() {
           role_delegation_max_children=$(rlms_safe_int "$role_delegation_max_children_override" "$role_delegation_max_children")
         fi
 
+        local role_delegation_max_parallel_override
+        role_delegation_max_parallel_override=$(jq -r --arg role "$role" '.delegation.roles[$role].max_parallel // empty' <<<"$loop_json")
+        if [[ -n "$role_delegation_max_parallel_override" && "$role_delegation_max_parallel_override" != "null" ]]; then
+          role_delegation_max_parallel=$(rlms_safe_int "$role_delegation_max_parallel_override" "$role_delegation_max_children")
+        fi
+
         local role_delegation_max_waves_override
         role_delegation_max_waves_override=$(jq -r --arg role "$role" '.delegation.roles[$role].max_waves // empty' <<<"$loop_json")
         if [[ -n "$role_delegation_max_waves_override" && "$role_delegation_max_waves_override" != "null" ]]; then
@@ -1917,6 +1948,8 @@ run_cmd() {
         fi
 
         if [[ "$role_delegation_max_children" -lt 1 ]]; then role_delegation_max_children=1; fi
+        if [[ "$role_delegation_max_parallel" -lt 1 ]]; then role_delegation_max_parallel="$role_delegation_max_children"; fi
+        if [[ "$role_delegation_max_parallel" -gt "$role_delegation_max_children" ]]; then role_delegation_max_parallel="$role_delegation_max_children"; fi
         if [[ "$role_delegation_max_waves" -lt 1 ]]; then role_delegation_max_waves=1; fi
         if [[ "$role_delegation_child_timeout_seconds" -lt 1 ]]; then role_delegation_child_timeout_seconds=300; fi
         if [[ "$role_delegation_retry_limit" -lt 0 ]]; then role_delegation_retry_limit=0; fi
@@ -2158,6 +2191,12 @@ EOF
           local role_delegation_succeeded_children=0
           local role_delegation_failed_children=0
           local role_delegation_skipped_children=0
+          local role_delegation_terminal_completed=0
+          local role_delegation_terminal_failed=0
+          local role_delegation_terminal_timed_out=0
+          local role_delegation_terminal_cancelled=0
+          local role_delegation_terminal_policy_violation=0
+          local role_delegation_terminal_skipped=0
           local role_delegation_recon_violation_count=0
           local role_delegation_recon_violation_wave_id=""
           local role_delegation_recon_violation_child_id=""
@@ -2332,6 +2371,8 @@ EOF
                   echo "- dispatch: ${role_delegation_effective_dispatch_mode}" >> "$role_delegation_summary_file"
                   echo "- wake policy: ${role_delegation_effective_wake_policy}" >> "$role_delegation_summary_file"
                   echo "- mode: ${role_delegation_mode}" >> "$role_delegation_summary_file"
+                  echo "- max children per wave: ${role_delegation_max_children}" >> "$role_delegation_summary_file"
+                  echo "- max parallel workers: ${role_delegation_max_parallel}" >> "$role_delegation_summary_file"
                   echo "- failure policy: ${role_delegation_failure_policy}" >> "$role_delegation_summary_file"
                   echo "- retry limit: ${role_delegation_retry_limit}" >> "$role_delegation_summary_file"
                   echo "- retry backoff seconds: ${role_delegation_retry_backoff_seconds}" >> "$role_delegation_summary_file"
@@ -2367,6 +2408,14 @@ EOF
                     if [[ "$wave_children_to_run" -lt 0 ]]; then
                       wave_children_to_run=0
                     fi
+                    local wave_concurrency_cap="$wave_children_to_run"
+                    if [[ "$wave_children_to_run" -le 0 ]]; then
+                      wave_concurrency_cap=0
+                    elif [[ "$role_delegation_effective_dispatch_mode" == "serial" ]]; then
+                      wave_concurrency_cap=1
+                    elif [[ "$wave_concurrency_cap" -gt "$role_delegation_max_parallel" ]]; then
+                      wave_concurrency_cap="$role_delegation_max_parallel"
+                    fi
 
                     role_delegation_requested_children=$((role_delegation_requested_children + wave_requested_children))
 
@@ -2379,13 +2428,20 @@ EOF
                       --argjson enabled "$role_delegation_enabled_json" \
                       --argjson requested_children "$wave_requested_children" \
                       --argjson children_to_run "$wave_children_to_run" \
+                      --argjson concurrency_cap "$wave_concurrency_cap" \
                       --argjson wave "$wave_number" \
-                      '{role: $role, wave_id: $wave_id, wave: $wave, dispatch_mode: $dispatch_mode, wake_policy: $wake_policy, enabled: $enabled, requested_children: $requested_children, children_to_run: $children_to_run}')
+                      '{role: $role, wave_id: $wave_id, wave: $wave, dispatch_mode: $dispatch_mode, wake_policy: $wake_policy, enabled: $enabled, requested_children: $requested_children, children_to_run: $children_to_run, concurrency_cap: $concurrency_cap}')
                     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_start" "$delegation_wave_start_data" "$role"
 
                     local wave_executed_children=0
                     local wave_succeeded_children=0
                     local wave_failed_children=0
+                    local wave_terminal_completed=0
+                    local wave_terminal_failed=0
+                    local wave_terminal_timed_out=0
+                    local wave_terminal_cancelled=0
+                    local wave_terminal_policy_violation=0
+                    local wave_terminal_skipped=0
                     local wave_adaptation_attempted=0
                     local wave_adaptation_stopped=0
 
@@ -2518,6 +2574,7 @@ EOF
                             elif [[ "$child_rc" -eq 125 ]]; then
                               child_status_text="rate_limited"
                             fi
+                            child_terminal_state=$(normalize_delegation_terminal_state "$child_status_text")
 
                             jq -n \
                               --arg generated_at "$(timestamp)" \
@@ -2525,6 +2582,7 @@ EOF
                               --arg wave_id "$wave_id" \
                               --arg child_id "$child_id" \
                               --arg status "$child_status_text" \
+                              --arg terminal_state "$child_terminal_state" \
                               --argjson exit_code "$child_rc" \
                               --argjson attempts "$child_attempt" \
                               --arg prompt_file "${child_prompt_file#$repo/}" \
@@ -2537,6 +2595,7 @@ EOF
                                 wave_id: $wave_id,
                                 child_id: $child_id,
                                 status: $status,
+                                terminal_state: $terminal_state,
                                 exit_code: $exit_code,
                                 attempts: $attempts,
                                 prompt_file: $prompt_file,
@@ -2652,12 +2711,16 @@ EOF
                           } >> "$role_delegation_summary_file"
                         fi
 
+                        local child_terminal_state
+                        child_terminal_state=$(normalize_delegation_terminal_state "$child_status_text")
+
                         jq -n \
                           --arg generated_at "$(timestamp)" \
                           --arg role "$role" \
                           --arg wave_id "$wave_id" \
                           --arg child_id "$child_id" \
                           --arg status "$child_status_text" \
+                          --arg terminal_state "$child_terminal_state" \
                           --argjson exit_code "$child_rc" \
                           --argjson attempts "$child_attempt" \
                           --arg prompt_file "${child_prompt_file#$repo/}" \
@@ -2670,6 +2733,7 @@ EOF
                             wave_id: $wave_id,
                             child_id: $child_id,
                             status: $status,
+                            terminal_state: $terminal_state,
                             exit_code: $exit_code,
                             attempts: $attempts,
                             prompt_file: $prompt_file,
@@ -2686,16 +2750,18 @@ EOF
                           --arg wave_id "$wave_id" \
                           --arg child_id "$child_id" \
                           --arg status "$child_status_text" \
+                          --arg terminal_state "$child_terminal_state" \
                           --argjson exit_code "$child_rc" \
                           --argjson attempts "$child_attempt" \
                           --arg log_file "${child_log_file#$repo/}" \
                           --arg last_message_file "${child_last_message_file#$repo/}" \
-                          '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
+                          '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, terminal_state: $terminal_state, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
                         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_child_end" "$child_end_data" "$role"
 
                         {
                           echo "- child: $child_id"
                           echo "  status: $child_status_text"
+                          echo "  terminal_state: $child_terminal_state"
                           echo "  attempts: $child_attempt"
                           echo "  exit_code: $child_rc"
                           echo "  log_file: ${child_log_file#$repo/}"
@@ -2743,6 +2809,15 @@ EOF
                             fi
                           fi
                         fi
+
+                        case "$child_terminal_state" in
+                          completed) wave_terminal_completed=$((wave_terminal_completed + 1)) ;;
+                          timed_out) wave_terminal_timed_out=$((wave_terminal_timed_out + 1)) ;;
+                          cancelled) wave_terminal_cancelled=$((wave_terminal_cancelled + 1)) ;;
+                          policy_violation) wave_terminal_policy_violation=$((wave_terminal_policy_violation + 1)) ;;
+                          skipped) wave_terminal_skipped=$((wave_terminal_skipped + 1)) ;;
+                          *) wave_terminal_failed=$((wave_terminal_failed + 1)) ;;
+                        esac
 
                         if [[ "$role_delegation_fail_role_triggered" -eq 1 ]]; then
                           break
@@ -2973,6 +3048,7 @@ EOF
                               --arg wave_id "$wave_id" \
                               --arg child_id "$final_child_id" \
                               --arg status "failed" \
+                              --arg terminal_state "failed" \
                               --argjson exit_code 1 \
                               --argjson attempts 0 \
                               --arg prompt_file "" \
@@ -2985,6 +3061,7 @@ EOF
                                 wave_id: $wave_id,
                                 child_id: $child_id,
                                 status: $status,
+                                terminal_state: $terminal_state,
                                 exit_code: $exit_code,
                                 attempts: $attempts,
                                 prompt_file: (if ($prompt_file | length) > 0 then $prompt_file else null end),
@@ -2996,6 +3073,11 @@ EOF
 
                           local final_child_status_text final_child_rc final_child_attempts
                           final_child_status_text=$(jq -r '.status // "failed"' "$final_child_status_file" 2>/dev/null || echo "failed")
+                          local final_child_terminal_state
+                          final_child_terminal_state=$(jq -r '.terminal_state // empty' "$final_child_status_file" 2>/dev/null || echo "")
+                          if [[ -z "$final_child_terminal_state" || "$final_child_terminal_state" == "null" ]]; then
+                            final_child_terminal_state=$(normalize_delegation_terminal_state "$final_child_status_text")
+                          fi
                           final_child_rc=$(jq -r '.exit_code // 1' "$final_child_status_file" 2>/dev/null || echo "1")
                           final_child_attempts=$(jq -r '.attempts // 0' "$final_child_status_file" 2>/dev/null || echo "0")
                           final_child_rc=$(rlms_safe_int "$final_child_rc" 1)
@@ -3007,16 +3089,18 @@ EOF
                             --arg wave_id "$wave_id" \
                             --arg child_id "$final_child_id" \
                             --arg status "$final_child_status_text" \
+                            --arg terminal_state "$final_child_terminal_state" \
                             --argjson exit_code "$final_child_rc" \
                             --argjson attempts "$final_child_attempts" \
                             --arg log_file "${final_child_log_file#$repo/}" \
                             --arg last_message_file "${final_child_last_message_file#$repo/}" \
-                            '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
+                            '{role: $role, wave_id: $wave_id, child_id: $child_id, status: $status, terminal_state: $terminal_state, exit_code: $exit_code, attempts: $attempts, log_file: $log_file, last_message_file: $last_message_file}')
                           log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_child_end" "$final_child_end_data" "$role"
 
                           {
                             echo "- child: $final_child_id"
                             echo "  status: $final_child_status_text"
+                            echo "  terminal_state: $final_child_terminal_state"
                             echo "  attempts: $final_child_attempts"
                             echo "  exit_code: $final_child_rc"
                             echo "  log_file: ${final_child_log_file#$repo/}"
@@ -3050,6 +3134,15 @@ EOF
                               fi
                             fi
                           fi
+
+                          case "$final_child_terminal_state" in
+                            completed) wave_terminal_completed=$((wave_terminal_completed + 1)) ;;
+                            timed_out) wave_terminal_timed_out=$((wave_terminal_timed_out + 1)) ;;
+                            cancelled) wave_terminal_cancelled=$((wave_terminal_cancelled + 1)) ;;
+                            policy_violation) wave_terminal_policy_violation=$((wave_terminal_policy_violation + 1)) ;;
+                            skipped) wave_terminal_skipped=$((wave_terminal_skipped + 1)) ;;
+                            *) wave_terminal_failed=$((wave_terminal_failed + 1)) ;;
+                          esac
                         done
                       fi
                     fi
@@ -3067,12 +3160,22 @@ EOF
                     role_delegation_executed_children=$((role_delegation_executed_children + wave_executed_children))
                     role_delegation_succeeded_children=$((role_delegation_succeeded_children + wave_succeeded_children))
                     role_delegation_failed_children=$((role_delegation_failed_children + wave_failed_children))
+                    local wave_skipped_due_unfinished=0
                     if [[ "$wave_children_to_run" -gt "$wave_executed_children" ]]; then
-                      role_delegation_skipped_children=$((role_delegation_skipped_children + (wave_children_to_run - wave_executed_children)))
+                      wave_skipped_due_unfinished=$((wave_children_to_run - wave_executed_children))
                     fi
+                    local wave_skipped_due_limits=0
                     if [[ "$wave_requested_children" -gt "$wave_children_to_run" ]]; then
-                      role_delegation_skipped_children=$((role_delegation_skipped_children + (wave_requested_children - wave_children_to_run)))
+                      wave_skipped_due_limits=$((wave_requested_children - wave_children_to_run))
                     fi
+                    wave_terminal_skipped=$((wave_terminal_skipped + wave_skipped_due_unfinished + wave_skipped_due_limits))
+                    role_delegation_skipped_children=$((role_delegation_skipped_children + wave_terminal_skipped))
+                    role_delegation_terminal_completed=$((role_delegation_terminal_completed + wave_terminal_completed))
+                    role_delegation_terminal_failed=$((role_delegation_terminal_failed + wave_terminal_failed))
+                    role_delegation_terminal_timed_out=$((role_delegation_terminal_timed_out + wave_terminal_timed_out))
+                    role_delegation_terminal_cancelled=$((role_delegation_terminal_cancelled + wave_terminal_cancelled))
+                    role_delegation_terminal_policy_violation=$((role_delegation_terminal_policy_violation + wave_terminal_policy_violation))
+                    role_delegation_terminal_skipped=$((role_delegation_terminal_skipped + wave_terminal_skipped))
 
                     {
                       echo "## $wave_id"
@@ -3080,6 +3183,12 @@ EOF
                       echo "- executed children: $wave_executed_children"
                       echo "- succeeded children: $wave_succeeded_children"
                       echo "- failed children: $wave_failed_children"
+                      echo "- terminal completed: $wave_terminal_completed"
+                      echo "- terminal failed: $wave_terminal_failed"
+                      echo "- terminal timed_out: $wave_terminal_timed_out"
+                      echo "- terminal cancelled: $wave_terminal_cancelled"
+                      echo "- terminal policy_violation: $wave_terminal_policy_violation"
+                      echo "- terminal skipped: $wave_terminal_skipped"
                       echo "- adaptation replans (wave): $wave_adaptation_attempted"
                       if [[ "$wave_adaptation_stopped" -eq 1 ]]; then
                         echo "- adaptation stopped remaining children: true"
@@ -3098,9 +3207,16 @@ EOF
                       --argjson children_completed "$wave_executed_children" \
                       --argjson children_succeeded "$wave_succeeded_children" \
                       --argjson children_failed "$wave_failed_children" \
+                      --argjson concurrency_cap "$wave_concurrency_cap" \
+                      --argjson terminal_completed "$wave_terminal_completed" \
+                      --argjson terminal_failed "$wave_terminal_failed" \
+                      --argjson terminal_timed_out "$wave_terminal_timed_out" \
+                      --argjson terminal_cancelled "$wave_terminal_cancelled" \
+                      --argjson terminal_policy_violation "$wave_terminal_policy_violation" \
+                      --argjson terminal_skipped "$wave_terminal_skipped" \
                       --argjson adaptation_replans "$wave_adaptation_attempted" \
                       --argjson adaptation_stopped "$(if [[ "$wave_adaptation_stopped" -eq 1 ]]; then echo true; else echo false; fi)" \
-                      '{role: $role, wave_id: $wave_id, wave: $wave, status: $status, requested_children: $requested_children, children_completed: $children_completed, children_succeeded: $children_succeeded, children_failed: $children_failed, adaptation_replans: $adaptation_replans, adaptation_stopped: $adaptation_stopped}')
+                      '{role: $role, wave_id: $wave_id, wave: $wave, status: $status, requested_children: $requested_children, children_completed: $children_completed, children_succeeded: $children_succeeded, children_failed: $children_failed, concurrency_cap: $concurrency_cap, terminal_state_counts: {completed: $terminal_completed, failed: $terminal_failed, timed_out: $terminal_timed_out, cancelled: $terminal_cancelled, policy_violation: $terminal_policy_violation, skipped: $terminal_skipped}, adaptation_replans: $adaptation_replans, adaptation_stopped: $adaptation_stopped}')
                     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "delegation_wave_end" "$delegation_wave_end_data" "$role"
 
                     if [[ "$role_delegation_stop_after_wave" -eq 1 ]]; then
@@ -3150,6 +3266,7 @@ EOF
             --arg adaptation_dir "${role_delegation_adaptation_dir#$repo/}" \
             --argjson enabled "$role_delegation_enabled_json" \
             --argjson max_children "$role_delegation_max_children" \
+            --argjson max_parallel "$role_delegation_max_parallel" \
             --argjson max_waves "$role_delegation_max_waves" \
             --argjson child_timeout_seconds "$role_delegation_child_timeout_seconds" \
             --argjson retry_limit "$role_delegation_retry_limit" \
@@ -3171,6 +3288,12 @@ EOF
             --argjson succeeded_children "$role_delegation_succeeded_children" \
             --argjson failed_children "$role_delegation_failed_children" \
             --argjson skipped_children "$role_delegation_skipped_children" \
+            --argjson terminal_completed "$role_delegation_terminal_completed" \
+            --argjson terminal_failed "$role_delegation_terminal_failed" \
+            --argjson terminal_timed_out "$role_delegation_terminal_timed_out" \
+            --argjson terminal_cancelled "$role_delegation_terminal_cancelled" \
+            --argjson terminal_policy_violation "$role_delegation_terminal_policy_violation" \
+            --argjson terminal_skipped "$role_delegation_terminal_skipped" \
             --argjson recon_violations "$role_delegation_recon_violation_count" \
             --arg recon_violation_wave_id "$role_delegation_recon_violation_wave_id" \
             --arg recon_violation_child_id "$role_delegation_recon_violation_child_id" \
@@ -3190,11 +3313,17 @@ EOF
               },
               limits: {
                 max_children: $max_children,
+                max_parallel: $max_parallel,
                 max_waves: $max_waves,
                 child_timeout_seconds: $child_timeout_seconds,
                 retry_limit: $retry_limit,
                 retry_backoff_seconds: $retry_backoff_seconds,
                 retry_backoff_max_seconds: $retry_backoff_max_seconds
+              },
+              scheduler: {
+                state_model: "pending->running->terminal",
+                concurrency_cap: $max_parallel,
+                terminal_states: ["completed", "failed", "timed_out", "cancelled", "policy_violation", "skipped"]
               },
               status: $status,
               implemented: true,
@@ -3228,7 +3357,15 @@ EOF
                 executed_children: $executed_children,
                 succeeded_children: $succeeded_children,
                 failed_children: $failed_children,
-                skipped_children: $skipped_children
+                skipped_children: $skipped_children,
+                terminal_state_counts: {
+                  completed: $terminal_completed,
+                  failed: $terminal_failed,
+                  timed_out: $terminal_timed_out,
+                  cancelled: $terminal_cancelled,
+                  policy_violation: $terminal_policy_violation,
+                  skipped: $terminal_skipped
+                }
               },
               reconnaissance: {
                 enabled: ($mode == "reconnaissance"),
@@ -3253,6 +3390,7 @@ EOF
             --arg dispatch_mode "$role_delegation_dispatch_mode" \
             --arg wake_policy "$role_delegation_wake_policy" \
             --arg failure_policy "$role_delegation_failure_policy" \
+            --argjson max_parallel "$role_delegation_max_parallel" \
             --arg status "$role_delegation_status_text" \
             --arg reason "$role_delegation_execution_reason" \
             --arg request_file "${role_delegation_request_file#$repo/}" \
@@ -3261,6 +3399,13 @@ EOF
             --argjson executed_children "$role_delegation_executed_children" \
             --argjson succeeded_children "$role_delegation_succeeded_children" \
             --argjson failed_children "$role_delegation_failed_children" \
+            --argjson skipped_children "$role_delegation_skipped_children" \
+            --argjson terminal_completed "$role_delegation_terminal_completed" \
+            --argjson terminal_failed "$role_delegation_terminal_failed" \
+            --argjson terminal_timed_out "$role_delegation_terminal_timed_out" \
+            --argjson terminal_cancelled "$role_delegation_terminal_cancelled" \
+            --argjson terminal_policy_violation "$role_delegation_terminal_policy_violation" \
+            --argjson terminal_skipped "$role_delegation_terminal_skipped" \
             --argjson adaptation_attempted "$role_delegation_adaptation_attempted" \
             --argjson adaptation_applied "$role_delegation_adaptation_applied" \
             --argjson adaptation_skipped "$role_delegation_adaptation_skipped" \
@@ -3277,6 +3422,7 @@ EOF
               dispatch_mode: $dispatch_mode,
               wake_policy: $wake_policy,
               failure_policy: $failure_policy,
+              max_parallel: $max_parallel,
               status: $status,
               reason: $reason,
               request_file: (if ($request_file | length) > 0 then $request_file else null end),
@@ -3284,6 +3430,15 @@ EOF
               executed_children: $executed_children,
               succeeded_children: $succeeded_children,
               failed_children: $failed_children,
+              skipped_children: $skipped_children,
+              terminal_state_counts: {
+                completed: $terminal_completed,
+                failed: $terminal_failed,
+                timed_out: $terminal_timed_out,
+                cancelled: $terminal_cancelled,
+                policy_violation: $terminal_policy_violation,
+                skipped: $terminal_skipped
+              },
               adaptation_attempted: $adaptation_attempted,
               adaptation_applied: $adaptation_applied,
               adaptation_skipped: $adaptation_skipped,

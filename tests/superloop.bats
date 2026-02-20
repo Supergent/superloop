@@ -202,6 +202,7 @@ EOF
       "dispatch_mode": "parallel",
       "wake_policy": "after_all",
       "max_children": 3,
+      "max_parallel": 2,
       "max_waves": 2,
       "child_timeout_seconds": 180,
       "retry_limit": 1,
@@ -212,7 +213,8 @@ EOF
         },
         "implementer": {
           "enabled": true,
-          "wake_policy": "on_wave_complete"
+          "wake_policy": "on_wave_complete",
+          "max_parallel": 2
         },
         "tester": {
           "enabled": true,
@@ -560,6 +562,7 @@ EOF
       "dispatch_mode": "serial",
       "wake_policy": "on_wave_complete",
       "max_children": 2,
+      "max_parallel": 2,
       "max_waves": 2,
       "child_timeout_seconds": 120,
       "retry_limit": 0,
@@ -619,6 +622,26 @@ EOF
   run jq -r '.execution.executed_children' "$delegation_status"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+
+  run jq -r '.limits.max_parallel' "$delegation_status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.scheduler.state_model' "$delegation_status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "pending->running->terminal" ]
+
+  run jq -r '.execution.terminal_state_counts.completed' "$delegation_status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.execution.terminal_state_counts.skipped' "$delegation_status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.terminal_state' "$delegation_child_status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "completed" ]
 
   run jq -r '.implemented' "$delegation_status"
   [ "$status" -eq 0 ]

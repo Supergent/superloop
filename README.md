@@ -149,6 +149,7 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "dispatch_mode": "serial",
       "wake_policy": "on_wave_complete",
       "max_children": 1,
+      "max_parallel": 1,
       "max_waves": 1,
       "child_timeout_seconds": 300,
       "retry_limit": 0,
@@ -162,7 +163,8 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
           "enabled": true,
           "dispatch_mode": "parallel",
           "wake_policy": "on_wave_complete",
-          "max_children": 3
+          "max_children": 3,
+          "max_parallel": 2
         }
       }
     },
@@ -189,6 +191,8 @@ Superloop supports loop-level delegation config for nested, role-local orchestra
 - `delegation.enabled`: opt-in switch (default `false`)
 - `delegation.dispatch_mode`: `serial | parallel`
 - `delegation.wake_policy`: `on_child_complete | on_wave_complete`
+- `delegation.max_children`: max delegated children selected from a wave
+- `delegation.max_parallel`: optional parallel worker cap alias (defaults to `max_children`)
 - `delegation.failure_policy`: `warn_and_continue | fail_role` (default `warn_and_continue`; planner reconnaissance defaults to `fail_role` when policy is unset at loop + role levels)
 - `delegation.roles.<role>.mode`: `standard | reconnaissance` (`planner` delegation is forced to `reconnaissance`)
 - `delegation.retry_limit`: max retry count per child (default `0`)
@@ -240,8 +244,9 @@ Notes:
 
 - `children` can also be provided at top level (treated as one implicit wave).
 - If no request file exists, enabled `implementer`/`planner` roles run a delegation-request pass first (`delegation_request_pass_start`/`delegation_request_pass_end`) to author `request.json` for that role turn.
-- Bounds are enforced by config (`max_waves`, `max_children`, `child_timeout_seconds`, `retry_limit`).
+- Bounds are enforced by config (`max_waves`, `max_children`, `max_parallel`, `child_timeout_seconds`, `retry_limit`).
 - Child events are emitted as `delegation_child_start` and `delegation_child_end`.
+- Child status artifacts include `status` plus canonical `terminal_state` (`completed | failed | timed_out | cancelled | policy_violation | skipped`).
 - Planner child prompts include explicit reconnaissance constraints (`mode=reconnaissance`) to keep subtasks read-heavy and bounded.
 - Reconnaissance mode now performs a repo write guard around each child run; violations emit `delegation_recon_violation`.
 - Recon violations are policy-governed: `failure_policy=warn_and_continue` downgrades child status to `policy_violation`, `failure_policy=fail_role` aborts the role.

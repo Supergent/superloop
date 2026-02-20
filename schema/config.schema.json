@@ -97,7 +97,13 @@
         },
         "max_children": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "Maximum delegated children selected from a wave for this role turn"
+        },
+        "max_parallel": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional parallel worker cap alias (defaults to max_children)"
         },
         "max_waves": {
           "type": "integer",
@@ -525,6 +531,11 @@
                 "type": "integer",
                 "minimum": 1,
                 "default": 1
+              },
+              "max_parallel": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Optional parallel worker cap alias (defaults to max_children)"
               },
               "max_waves": {
                 "type": "integer",
