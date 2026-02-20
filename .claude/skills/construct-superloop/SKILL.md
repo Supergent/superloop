@@ -57,6 +57,9 @@ Superloop is a **bash orchestration harness** that runs AI coding agents in an i
 | **Loop** | A configured automation run for one feature |
 | **Iteration** | One pass through all 4 roles |
 | **Role** | An AI agent with specific responsibilities (Planner/Implementer/Tester/Reviewer) |
+| **Delegation** | Role-local child execution within a role turn (request-driven) |
+| **Wave** | An ordered child batch in a delegation request |
+| **Child** | A delegated subtask execution unit inside a wave |
 | **Runner** | The AI CLI that executes a role (Codex, Claude, etc.) |
 | **Spec** | Your output - defines WHAT to build |
 | **Plan** | Planner's output - defines HOW to build it |
@@ -90,6 +93,19 @@ ITERATION 2:
 4. **Reviewer runs last**: Decides if complete or needs more work
 
 If Reviewer doesn't output the promise tag, the loop continues.
+
+### Delegation Execution Model
+
+Superloop now supports bounded role-local delegation for `planner` and `implementer`.
+
+- Top-level role order remains sequential (Planner -> Implementer -> Tester -> Reviewer).
+- Inside a delegated role turn, child tasks execute from a request file in waves.
+- `dispatch_mode=serial` executes one child at a time.
+- `dispatch_mode=parallel` executes bounded fan-out controlled by `max_parallel`.
+- `wake_policy=on_wave_complete` adapts only after a full wave.
+- `wake_policy=on_child_complete` adapts after child completion in both serial and parallel dispatch.
+- Parallel `on_child_complete` is supported (not coerced) and can stop queued children/waves via adaptation decisions.
+- Scheduler telemetry includes deterministic completion and aggregation ordering for auditability.
 
 ## The Four Roles (What They Do)
 
@@ -287,22 +303,42 @@ Understanding config helps you set appropriate values:
 {
   "runners": {
     "codex": { ... },           // Codex CLI configuration
-    "claude-vanilla": { ... },  // Claude Code configuration
-    "claude-glm-mantic": { ... } // Claude with Mantic/Relace
+    "claude": { ... }           // Claude Code configuration
+  },
+  "role_defaults": {
+    "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+    "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+    "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
   },
   "loops": [{
-    "id": "feature-name",       // Unique identifier for this loop
-    "spec_file": ".superloop/specs/feature-name.md",  // YOUR SPEC
-    "max_iterations": 10,       // Safety limit
-    "completion_promise": "SUPERLOOP_COMPLETE",  // What Reviewer outputs
+    "id": "feature-name",
+    "spec_file": ".superloop/specs/feature-name.md",
+    "max_iterations": 10,
+    "completion_promise": "SUPERLOOP_COMPLETE",
+    "checklists": [],
 
     "tests": {
-      "mode": "on_promise",     // When to run tests
-      "commands": ["npm test"]  // Test commands
+      "mode": "on_promise",
+      "commands": ["npm test"]
+    },
+    "evidence": {
+      "enabled": false,
+      "require_on_completion": false,
+      "artifacts": []
+    },
+    "approval": {
+      "enabled": false,
+      "require_on_completion": false
+    },
+    "reviewer_packet": {
+      "enabled": true
     },
 
     "timeouts": {
-      "planner": 120,           // Seconds before timeout
+      "enabled": true,
+      "default": 300,
+      "planner": 120,
       "implementer": 300,
       "tester": 300,
       "reviewer": 120
@@ -310,23 +346,42 @@ Understanding config helps you set appropriate values:
 
     "stuck": {
       "enabled": true,
-      "threshold": 3,           // Iterations without progress
-      "action": "report_and_stop"
+      "threshold": 3,
+      "action": "report_and_stop",
+      "ignore": []
+    },
+
+    "delegation": {
+      "enabled": false,
+      "dispatch_mode": "serial",
+      "wake_policy": "on_wave_complete",
+      "max_children": 1,
+      "max_parallel": 1,
+      "max_waves": 1,
+      "child_timeout_seconds": 300,
+      "retry_limit": 0,
+      "retry_backoff_seconds": 0,
+      "retry_backoff_max_seconds": 30,
+      "failure_policy": "warn_and_continue",
+      "roles": {
+        "planner": {"enabled": true, "mode": "reconnaissance"},
+        "implementer": {"enabled": true}
+      }
     },
 
     "usage_check": {
-      "enabled": true,          // Pre-flight rate limit check (default: true)
-      "warn_threshold": 70,     // Warn at this % usage
-      "block_threshold": 95,    // Stop at this % usage
-      "wait_on_limit": true,    // Wait for reset instead of stopping
-      "max_wait_seconds": 7200  // Max wait time (2 hours)
+      "enabled": true,
+      "warn_threshold": 70,
+      "block_threshold": 95,
+      "wait_on_limit": false,
+      "max_wait_seconds": 7200
     },
 
     "roles": {
-      "planner": {"runner": "codex"},
-      "implementer": {"runner": "claude-vanilla"},
-      "tester": {"runner": "claude-glm-mantic"},
-      "reviewer": {"runner": "codex"}
+      "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
+      "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+      "tester": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
+      "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
     }
   }]
 }
@@ -341,6 +396,11 @@ Understanding config helps you set appropriate values:
 | `tests.commands` | Test commands | Must exit 0 on success |
 | `timeouts.*` | Role time limits | Increase for complex features |
 | `stuck.threshold` | Stall detection | Lower = fail faster on stuck loops |
+| `delegation.dispatch_mode` | Child dispatch shape | `serial` for deterministic narrow work, `parallel` for bounded fan-out |
+| `delegation.wake_policy` | Parent adaptation cadence | `on_child_complete` for fast feedback, `on_wave_complete` for simpler control flow |
+| `delegation.max_parallel` | Parallel cap | Set explicitly when using `dispatch_mode=parallel` |
+| `delegation.failure_policy` | Child-failure behavior | `warn_and_continue` for resilience, `fail_role` for strict gates |
+| `delegation.roles.<role>.mode` | Role-local delegation mode | Planner is forced to `reconnaissance`; include this intentionally |
 | `usage_check.enabled` | Pre-flight rate limit check | Default `true`, disable if no API credentials |
 | `usage_check.wait_on_limit` | Wait vs stop on limit | `true` for unattended runs, `false` for interactive |
 | `usage_check.block_threshold` | Usage % to stop | 95 default, lower for safety margin |
@@ -463,6 +523,7 @@ Now that you understand Superloop, here's your workflow:
 ┌─────────────────────────────────────────┐
 │  Phase 3: SPECIFICATION                 │
 │  - Draft spec.md                        │
+│  - Encode delegation strategy if needed │
 │  - Review with user                     │
 │  - Iterate until approved               │
 └─────────────────────────────────────────┘
@@ -473,6 +534,7 @@ Now that you understand Superloop, here's your workflow:
 │  - Check runner availability            │
 │  - Recommend runners per role           │
 │  - Generate superloop config            │
+│  - Validate schema + delegation settings│
 │  - Provide run command                  │
 └─────────────────────────────────────────┘
 ```
@@ -508,13 +570,13 @@ ls -la
 find . -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" 2>/dev/null | head -5
 
 # Find related code (replace FEATURE with relevant terms)
-grep -r "FEATURE" --include="*.ts" --include="*.js" -l | head -10
+rg -l "FEATURE" --glob "*.ts" --glob "*.js" | head -10
 
 # Understand test patterns
 find . -name "*test*" -o -name "*spec*" | head -10
 
 # Check existing superloop setup
-cat .superloop/config.json 2>/dev/null | jq '.runners // empty'
+jq '.runners // empty' .superloop/config.json 2>/dev/null
 ```
 
 ### Report Findings
@@ -587,6 +649,13 @@ After exploration, present to user:
 - What existing code does this touch?
 - What APIs/services does it connect to?
 - Database changes needed?
+
+**Delegation Strategy** (for Planner + Implementer):
+- Should this feature decompose into child waves?
+- Which work is independent enough for parallel child execution?
+- What is the safe `max_parallel` bound for this repo/runtime?
+- Should adaptation happen `on_child_complete` or `on_wave_complete`?
+- On child failure, should the role continue or fail fast (`failure_policy`)?
 
 **Testing** (for Tester + Reviewer):
 - How do we know it works?
@@ -672,7 +741,7 @@ Proposed loop ID: jwt-authentication
 
 Write to `.superloop/specs/<loop-id>.md`:
 
-```markdown
+````markdown
 # Feature: [Feature Name]
 
 ## Overview
@@ -704,6 +773,24 @@ Planner uses this to structure PLAN.MD.]
 ### Dependencies
 - [Existing packages to use]
 - [New packages needed, if any]
+
+## Delegation Strategy (Optional but Recommended)
+
+[Only include when decomposition helps. This guides planner/implementer request shaping.]
+
+- `dispatch_mode`: [serial | parallel]
+- `wake_policy`: [on_child_complete | on_wave_complete]
+- `max_children`: [integer bound per wave]
+- `max_parallel`: [integer cap when parallel]
+- `max_waves`: [integer]
+- `failure_policy`: [warn_and_continue | fail_role]
+
+### Candidate Waves
+- `wave-1`: [child task candidates]
+- `wave-2`: [child task candidates]
+
+### Adaptation Stop Criteria
+- [When parent should stop remaining children/waves after child completion]
 
 ## Acceptance Criteria
 
@@ -748,7 +835,24 @@ npm test -- --grep "authentication"
 [Questions for Planner to investigate during first iteration, if any]
 
 - [Question 1]
+
+## Delegation Request Seed (Optional)
+
+[If known, provide an initial request shape to accelerate iteration 1.]
+
+```json
+{
+  "waves": [
+    {
+      "id": "wave-1",
+      "children": [
+        {"id": "task-a", "prompt": "Subtask prompt", "context_files": ["path/to/file.ts"]}
+      ]
+    }
+  ]
+}
 ```
+````
 
 ### Spec Quality Gates
 
@@ -758,21 +862,25 @@ Before finalizing, verify your spec against Superloop needs:
 - [ ] Requirements are atomic (can become single tasks)
 - [ ] Technical approach references actual files
 - [ ] Architecture decisions are clear
+- [ ] Delegation strategy is explicit when wave decomposition is beneficial
 
 **For Implementer**:
 - [ ] File paths are specified
 - [ ] Patterns to follow are documented
 - [ ] Dependencies are listed
+- [ ] Parallelism bounds are explicit (`max_parallel`, `max_children`, `max_waves`)
 
 **For Tester**:
 - [ ] Acceptance criteria use "When X, then Y" format
 - [ ] Edge cases are covered
 - [ ] Test commands are specified
+- [ ] Delegation behavior has verifiable signals (events/status fields to inspect)
 
 **For Reviewer**:
 - [ ] Out of scope is explicit
 - [ ] "Done" is clearly defined
 - [ ] No contradictions or ambiguities
+- [ ] Policy behavior is unambiguous (`failure_policy`, adaptation stop criteria)
 
 ## Phase 4: Handoff
 
@@ -903,11 +1011,28 @@ Generate or update `.superloop/config.json`:
         "action": "report_and_stop",
         "ignore": []
       },
+      "delegation": {
+        "enabled": false,
+        "dispatch_mode": "serial",
+        "wake_policy": "on_wave_complete",
+        "max_children": 1,
+        "max_parallel": 1,
+        "max_waves": 1,
+        "child_timeout_seconds": 300,
+        "retry_limit": 0,
+        "retry_backoff_seconds": 0,
+        "retry_backoff_max_seconds": 30,
+        "failure_policy": "warn_and_continue",
+        "roles": {
+          "planner": {"enabled": true, "mode": "reconnaissance"},
+          "implementer": {"enabled": true}
+        }
+      },
       "usage_check": {
         "enabled": true,
         "warn_threshold": 70,
         "block_threshold": 95,
-        "wait_on_limit": true,
+        "wait_on_limit": false,
         "max_wait_seconds": 7200
       },
       "roles": {
@@ -921,11 +1046,25 @@ Generate or update `.superloop/config.json`:
 }
 ```
 
+### Post-Generation Verification Checklist
+
+Before handoff, always run:
+
+```bash
+./superloop.sh validate --repo . --schema schema/config.schema.json
+```
+
+If delegation is enabled in the generated config, require explicit verification targets in notes:
+
+- Status artifact: `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/status.json`
+- Event signals: `delegation_wave_dispatch`, `delegation_wave_queue_drain`, `delegation_adaptation_start`, `delegation_adaptation_end`
+- Execution metadata: `execution.completion_order`, `execution.aggregation_order`, `execution.policy_reason`
+
 ### Final Output
 
 After generating spec and config:
 
-```
+````
 ## Construction Complete!
 
 **Spec created**: `.superloop/specs/<loop-id>.md`
@@ -946,16 +1085,21 @@ After generating spec and config:
 4. Reviewer approves or requests changes
 5. Loop continues until SUPERLOOP_COMPLETE
 
+**To validate config**:
+```bash
+./superloop.sh validate --repo . --schema schema/config.schema.json
+```
+
 **To run Superloop**:
 ```bash
-superloop run --loop <loop-id>
+./superloop.sh run --repo . --loop <loop-id>
 ```
 
 **To review the spec first**:
 ```bash
 cat .superloop/specs/<loop-id>.md
 ```
-```
+````
 
 ---
 
@@ -968,19 +1112,22 @@ cat .superloop/specs/<loop-id>.md
 ├── config.json              # Runners + loops configuration
 ├── specs/                   # Specs created by Constructor
 │   └── <loop-id>.md
-├── loops/                   # Runtime data per loop
+├── loops/                   # Runtime artifacts per loop
 │   └── <loop-id>/
-│       ├── tasks/           # Planner output
-│       │   ├── PLAN.MD
-│       │   ├── PHASE_1.MD
-│       │   └── PHASE_2.MD
-│       └── reports/         # Role reports
+│       ├── state.json
+│       ├── events.jsonl
+│       ├── run-summary.json
+│       ├── timeline.md
+│       ├── plan.md
+│       ├── delegation/      # Delegation requests/status/children/adaptation artifacts
+│       ├── rlms/            # RLMS artifacts (if enabled)
+│       └── logs/iter-N/
 ├── roles/                   # Role templates
 │   ├── planner.md
 │   ├── implementer.md
 │   ├── tester.md
 │   └── reviewer.md
-└── logs/                    # Execution logs
+└── templates/               # Spec templates
 ```
 
 ## Abort Handling
@@ -1003,4 +1150,5 @@ To restart: /construct-superloop "your feature"
 6. **Think like Tester** - Acceptance criteria must be verifiable
 7. **Think like Reviewer** - "Done" must be unambiguous
 8. **Check AVAILABILITY** - Only recommend runners that exist
-9. **User CONTROLS completion** - They decide when spec is ready
+9. **Design delegation intentionally** - specify waves/parallelism/policies when useful
+10. **User CONTROLS completion** - They decide when spec is ready
