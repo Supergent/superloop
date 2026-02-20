@@ -1270,11 +1270,13 @@ EOF
   local child_status_1="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-1/status.json"
   local child_status_2="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-2/status.json"
   local child_status_3="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/delegation/iter-1/implementer/children/wave-1/task-3/status.json"
+  local events_file="$TEMP_DIR/.superloop/loops/delegation-parallel-cap-two/events.jsonl"
 
   [ -f "$status_file" ]
   [ -f "$child_status_1" ]
   [ -f "$child_status_2" ]
   [ -f "$child_status_3" ]
+  [ -f "$events_file" ]
 
   run jq -r '.limits.max_parallel' "$status_file"
   [ "$status" -eq 0 ]
@@ -1284,14 +1286,13 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
 
-  run jq -n \
-    --slurpfile c1 "$child_status_1" \
-    --slurpfile c2 "$child_status_2" \
-    --slurpfile c3 "$child_status_3" \
-    '[($c1[0].generated_at | fromdateiso8601), ($c2[0].generated_at | fromdateiso8601), ($c3[0].generated_at | fromdateiso8601)] | (max - min)'
+  run jq -s '[.[] | select(.event == "delegation_wave_dispatch") | .data.active_workers] | max' "$events_file"
   [ "$status" -eq 0 ]
-  local ts_span="${output%%.*}"
-  [ "$ts_span" -le 3 ]
+  [ "$output" = "2" ]
+
+  run jq -s '[.[] | select(.event == "delegation_wave_dispatch") | .data.active_workers] | any(. > 2)' "$events_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
 }
 
 @test "run adapts delegated execution on child completion and stops remaining work" {
@@ -1441,12 +1442,31 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "run coerces on_child_complete to on_wave_complete for parallel dispatch" {
+@test "run adapts on child completion in parallel dispatch without wake policy coercion" {
   cat > "$TEMP_DIR/adaptive-parallel-runner.sh" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 OUTPUT_FILE="${1:-/dev/stdout}"
-cat >/dev/null
+
+PROMPT="$(cat)"
+
+if printf '%s' "$PROMPT" | grep -q "Write adaptation decision JSON to this exact file path:"; then
+  DECISION_PATH=$(printf '%s\n' "$PROMPT" | awk '/Write adaptation decision JSON to this exact file path:/{getline; print; exit}')
+  DECISION_PATH="$(echo "$DECISION_PATH" | xargs)"
+  mkdir -p "$(dirname "$DECISION_PATH")"
+  cat > "$DECISION_PATH" << 'JSON'
+{
+  "continue_wave": false,
+  "continue_delegation": false,
+  "reason": "First completion is sufficient"
+}
+JSON
+  cat > "$OUTPUT_FILE" << 'OUT'
+Adaptation decision written.
+OUT
+  exit 0
+fi
+
 cat > "$OUTPUT_FILE" << 'OUT'
 Role complete.
 <promise>SUPERLOOP_COMPLETE</promise>
@@ -1479,7 +1499,8 @@ EOF
       "enabled": true,
       "dispatch_mode": "parallel",
       "wake_policy": "on_child_complete",
-      "max_children": 2,
+      "max_children": 3,
+      "max_parallel": 3,
       "max_waves": 1,
       "child_timeout_seconds": 120,
       "retry_limit": 0,
@@ -1509,7 +1530,8 @@ EOF
       "id": "wave-1",
       "children": [
         {"id": "task-1", "prompt": "Parallel child 1"},
-        {"id": "task-2", "prompt": "Parallel child 2"}
+        {"id": "task-2", "prompt": "Parallel child 2"},
+        {"id": "task-3", "prompt": "Parallel child 3"}
       ]
     }
   ]
@@ -1526,14 +1548,42 @@ EOF
 
   run jq -r '.wake_policy_effective' "$status_file"
   [ "$status" -eq 0 ]
-  [ "$output" = "on_wave_complete" ]
+  [ "$output" = "on_child_complete" ]
 
   run jq -r '.adaptation.status' "$status_file"
   [ "$status" -eq 0 ]
-  [ "$output" = "disabled_parallel_dispatch" ]
+  [ "$output" = "enabled" ]
+
+  run jq -r '.adaptation.reason' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "on_child_complete_parallel" ]
+
+  run jq -r '.adaptation.counters.replans_attempted' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.adaptation.counters.replans_applied' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.execution.policy_reason' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "adaptation_decision" ]
+
+  run jq -r '.execution.completion_order | length' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -r '.execution.aggregation_order | length' "$status_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run bash -lc "find '$TEMP_DIR/.superloop/loops/delegation-adaptive-parallel/delegation/iter-1/implementer/adaptation' -name '*.decision.json' | wc -l | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
 
   run bash -lc "grep -q '\"event\":\"delegation_adaptation_start\"' '$events_file'"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
 }
 
 @test "run fails role when delegation failure_policy is fail_role" {

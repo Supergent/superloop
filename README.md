@@ -210,8 +210,8 @@ Current pilot behavior is intentionally conservative:
 - Planner delegation is reconnaissance-only (read-heavy analysis/synthesis subtasks, no canonical artifact writes).
 - Planner reconnaissance enforces serial child dispatch for safer write-guard checks.
 - Child execution uses a bounded executor with `serial` and wave-level `parallel` dispatch support.
-- `wake_policy=on_child_complete` now supports adaptive parent replans between serial child completions.
-- `wake_policy=on_child_complete` with `dispatch_mode=parallel` is coerced to `on_wave_complete` (bounded safeguard).
+- `wake_policy=on_child_complete` supports adaptive parent replans for serial and parallel child completions.
+- Parallel dispatch uses bounded fan-out (`max_parallel`) with deterministic aggregation, while adaptation decisions can stop remaining queued children/waves.
 - Canonical role outputs remain parent-owned.
 
 #### Delegation Request File Contract
