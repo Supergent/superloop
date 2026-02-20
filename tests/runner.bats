@@ -377,10 +377,12 @@ EOF
   }
   export -f select_python
 
-  run_command_with_timeout "$prompt_file" "$log_file" 10 "stdin" 0 echo "No Python" 2>&1 | grep -q "warning: python not found"
-  status=${PIPESTATUS[0]}
+  local output
+  output="$(run_command_with_timeout "$prompt_file" "$log_file" 10 "stdin" 0 echo "No Python" 2>&1)"
+  status=$?
 
   [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: python not found"* ]]
   [ -f "$log_file" ]
   grep -q "No Python" "$log_file"
 }

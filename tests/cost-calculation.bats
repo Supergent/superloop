@@ -597,8 +597,8 @@ EOF
   # Total: ~$0.721
 
   # Check that cost is calculated (approximately)
-  [[ $(echo "$total_cost > 0.7" | bc -l) -eq 1 ]]
-  [[ $(echo "$total_cost < 0.8" | bc -l) -eq 1 ]]
+  awk -v cost="$total_cost" 'BEGIN { exit !(cost > 0.7) }'
+  awk -v cost="$total_cost" 'BEGIN { exit !(cost < 0.8) }'
 }
 
 @test "pricing: verify all formatters produce expected output" {
