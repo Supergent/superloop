@@ -144,6 +144,28 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
         "fail_mode": "warn_and_continue"
       }
     },
+    "delegation": {
+      "enabled": false,
+      "dispatch_mode": "serial",
+      "wake_policy": "on_wave_complete",
+      "max_children": 1,
+      "max_waves": 1,
+      "child_timeout_seconds": 300,
+      "retry_limit": 0,
+      "roles": {
+        "planner": {
+          "enabled": true,
+          "mode": "reconnaissance",
+          "max_children": 2
+        },
+        "implementer": {
+          "enabled": true,
+          "dispatch_mode": "parallel",
+          "wake_policy": "on_wave_complete",
+          "max_children": 3
+        }
+      }
+    },
     "roles": {
       "planner": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"},
       "implementer": {"runner": "claude", "model": "claude-sonnet-4-5-20250929", "thinking": "standard"},
@@ -159,6 +181,83 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
 - Claude: maps to `MAX_THINKING_TOKENS` env var (0→32000 per request)
 
 See `schema/config.schema.json` for all options.
+
+### Role-Local Delegation (Phase 4 Implementer + Planner Recon Pilot)
+
+Superloop supports loop-level delegation config for nested, role-local orchestration.
+
+- `delegation.enabled`: opt-in switch (default `false`)
+- `delegation.dispatch_mode`: `serial | parallel`
+- `delegation.wake_policy`: `on_child_complete | on_wave_complete`
+- `delegation.failure_policy`: `warn_and_continue | fail_role` (default `warn_and_continue`; planner reconnaissance defaults to `fail_role` when policy is unset at loop + role levels)
+- `delegation.roles.<role>.mode`: `standard | reconnaissance` (`planner` delegation is forced to `reconnaissance`)
+- `delegation.retry_limit`: max retry count per child (default `0`)
+- `delegation.retry_backoff_seconds`: base retry backoff (default `0`)
+- `delegation.retry_backoff_max_seconds`: max retry backoff cap (default `30`)
+- Legacy aliases are accepted for compatibility:
+  - `immediate` -> `on_child_complete`
+  - `after_all` -> `on_wave_complete`
+- Per-role overrides can be set under `delegation.roles.<role>.*`.
+
+Current pilot behavior is intentionally conservative:
+
+- Top-level role order remains sequential.
+- Delegation execution is enabled for `implementer` and `planner`; `tester`/`reviewer` remain guardrailed off.
+- Planner delegation is reconnaissance-only (read-heavy analysis/synthesis subtasks, no canonical artifact writes).
+- Planner reconnaissance enforces serial child dispatch for safer write-guard checks.
+- Child execution uses a bounded executor with `serial` and wave-level `parallel` dispatch support.
+- `wake_policy=on_child_complete` now supports adaptive parent replans between serial child completions.
+- `wake_policy=on_child_complete` with `dispatch_mode=parallel` is coerced to `on_wave_complete` (bounded safeguard).
+- Canonical role outputs remain parent-owned.
+
+#### Delegation Request File Contract
+
+Delegated child work is request-driven. Provide one of:
+
+- Iteration-local: `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/request.json`
+- Shared fallback: `.superloop/loops/<loop-id>/delegation/requests/<role>.json`
+
+Request shape:
+
+```json
+{
+  "waves": [
+    {
+      "id": "wave-1",
+      "children": [
+        {
+          "id": "task-a",
+          "prompt": "Implement the API endpoint for user search",
+          "context_files": ["src/api/users.ts", "src/routes/index.ts"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Notes:
+
+- `children` can also be provided at top level (treated as one implicit wave).
+- If no request file exists, enabled `implementer`/`planner` roles run a delegation-request pass first (`delegation_request_pass_start`/`delegation_request_pass_end`) to author `request.json` for that role turn.
+- Bounds are enforced by config (`max_waves`, `max_children`, `child_timeout_seconds`, `retry_limit`).
+- Child events are emitted as `delegation_child_start` and `delegation_child_end`.
+- Planner child prompts include explicit reconnaissance constraints (`mode=reconnaissance`) to keep subtasks read-heavy and bounded.
+- Reconnaissance mode now performs a repo write guard around each child run; violations emit `delegation_recon_violation`.
+- Recon violations are policy-governed: `failure_policy=warn_and_continue` downgrades child status to `policy_violation`, `failure_policy=fail_role` aborts the role.
+- If planner reconnaissance policy is unspecified at both loop and role scopes, Superloop applies a safety default of `fail_role`.
+- Adaptive wake emits `delegation_adaptation_start`, `delegation_adaptation_end`, and `delegation_adaptation_skipped` events.
+- Adaptation decisions are bounded by per-wave and per-iteration replan limits derived from active delegation bounds.
+- `failure_policy=fail_role` aborts the current role turn when delegated child failure is observed (with `delegation_fail_role` event).
+- Retry backoff uses bounded exponential delay between child retry attempts.
+- Parent role prompts receive delegation status + summary references so the parent can consume child outputs in the same turn.
+- Per-role delegation status and summaries are persisted under:
+  - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/status.json`
+  - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/summary.md`
+- Adaptive replan artifacts are persisted under:
+  - `.superloop/loops/<loop-id>/delegation/iter-<n>/<role>/adaptation/`
+- Run summary entries now include per-iteration delegation rollups (`role_entries`, `enabled_roles`, child execution totals, adaptation counters, recon violations, by-role breakdown).
+- Timeline lines and `status --summary` output include delegation rollup counters for quick operational inspection.
 
 ### RLMS Hybrid Long-Context Mode
 
@@ -400,7 +499,8 @@ evidence.json        # Artifact hashes
 gate-summary.txt     # Gate statuses
 events.jsonl         # Event stream
 usage.jsonl          # Token usage and cost per role
-rlms/               # RLMS index + per-iteration role analysis artifacts
+rlms/                # RLMS index + per-iteration role analysis artifacts
+delegation/          # Delegation index + request/summary/child execution artifacts
 timeline.md          # Human-readable timeline
 report.html          # Visual report (includes usage/cost section)
 logs/iter-N/         # Per-iteration logs

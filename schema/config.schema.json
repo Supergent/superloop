@@ -53,6 +53,76 @@
         }
       },
       "required": ["runner"]
+    },
+    "delegation_dispatch_mode": {
+      "type": "string",
+      "enum": ["serial", "parallel"],
+      "default": "serial",
+      "description": "How delegated child subtasks are scheduled inside a role turn"
+    },
+    "delegation_wake_policy": {
+      "type": "string",
+      "enum": ["on_child_complete", "on_wave_complete", "immediate", "after_all"],
+      "default": "on_wave_complete",
+      "description": "Parent wake behavior for delegated work; immediate/after_all are legacy aliases"
+    },
+    "delegation_failure_policy": {
+      "type": "string",
+      "enum": ["warn_and_continue", "fail_role"],
+      "default": "warn_and_continue",
+      "description": "How role turn handles delegated child failures"
+    },
+    "delegation_mode": {
+      "type": "string",
+      "enum": ["standard", "reconnaissance"],
+      "default": "standard",
+      "description": "Role-local delegation mode; planner delegation is forced to reconnaissance"
+    },
+    "delegation_role_config": {
+      "type": "object",
+      "description": "Per-role delegation overrides",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable role-local delegation for this role"
+        },
+        "mode": {
+          "$ref": "#/definitions/delegation_mode"
+        },
+        "dispatch_mode": {
+          "$ref": "#/definitions/delegation_dispatch_mode"
+        },
+        "wake_policy": {
+          "$ref": "#/definitions/delegation_wake_policy"
+        },
+        "max_children": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_waves": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "child_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retry_backoff_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retry_backoff_max_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure_policy": {
+          "$ref": "#/definitions/delegation_failure_policy"
+        }
+      }
     }
   },
   "properties": {
@@ -436,6 +506,65 @@
               }
             },
             "required": ["enabled"]
+          },
+          "delegation": {
+            "type": "object",
+            "description": "Role-local delegated execution scaffold (nested under top-level sequential role loop)",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "dispatch_mode": {
+                "$ref": "#/definitions/delegation_dispatch_mode"
+              },
+              "wake_policy": {
+                "$ref": "#/definitions/delegation_wake_policy"
+              },
+              "max_children": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
+              },
+              "max_waves": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
+              },
+              "child_timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 300
+              },
+              "retry_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "retry_backoff_seconds": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "retry_backoff_max_seconds": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 30
+              },
+              "failure_policy": {
+                "$ref": "#/definitions/delegation_failure_policy"
+              },
+              "roles": {
+                "type": "object",
+                "description": "Optional per-role delegation overrides",
+                "properties": {
+                  "planner": {"$ref": "#/definitions/delegation_role_config"},
+                  "implementer": {"$ref": "#/definitions/delegation_role_config"},
+                  "tester": {"$ref": "#/definitions/delegation_role_config"},
+                  "reviewer": {"$ref": "#/definitions/delegation_role_config"}
+                }
+              }
+            }
           },
           "usage_check": {
             "type": "object",
