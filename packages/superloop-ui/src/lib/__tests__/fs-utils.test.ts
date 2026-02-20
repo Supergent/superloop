@@ -77,7 +77,7 @@ describe('fs-utils', () => {
 
       vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(complexData));
 
-      const result = await readJson(path);
+      const result = await readJson('/test/complex.json');
 
       expect(result).toEqual(complexData);
     });

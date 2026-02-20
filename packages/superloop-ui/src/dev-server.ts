@@ -26,6 +26,12 @@ export type DevServerOptions = {
   watch?: boolean;
 };
 
+export type DevServerHandle = {
+  url: string;
+  port: number;
+  close: () => Promise<void>;
+};
+
 type SseClient = http.ServerResponse;
 
 const SAFE_DIST_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -53,7 +59,7 @@ function resolveDistAssetPath(distWebRoot: string, requestPath: string): string 
   return filePath;
 }
 
-export async function startDevServer(options: DevServerOptions): Promise<void> {
+export async function startDevServer(options: DevServerOptions): Promise<DevServerHandle> {
   const packageRoot = resolvePackageRoot(import.meta.url);
   const webRoot = path.join(packageRoot, "src", "web");
   const distWebRoot = path.join(packageRoot, "dist", "web");
@@ -326,7 +332,9 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     server.listen(options.port, options.host, () => resolve());
   });
 
-  const address = `http://${options.host}:${options.port}`;
+  const bound = server.address();
+  const boundPort = typeof bound === "object" && bound ? bound.port : options.port;
+  const address = `http://${options.host}:${boundPort}`;
   console.log(`Superloop UI dev server running at ${address}`);
 
   if (options.open) {
@@ -372,18 +380,43 @@ export async function startDevServer(options: DevServerOptions): Promise<void> {
     broadcastEvent(clients, "reload", { reason: "bundle" });
   });
 
-  const shutdown = () => {
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
     dataWatcher.close();
     bundleWatcher.close();
     for (const client of clients) {
       client.end();
     }
     buildProcess?.kill();
-    server.close();
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  const close = async () => {
+    dispose();
+    if (server.listening) {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  };
+
+  const onSignal = () => {
+    void close();
+  };
+
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+
+  return {
+    url: address,
+    port: boundPort,
+    close,
+  };
 }
 
 function broadcastEvent(clients: Set<SseClient>, event: string, payload: unknown) {

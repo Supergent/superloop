@@ -59,6 +59,7 @@ npm run test:coverage
 
 # superloop-ui
 cd packages/superloop-ui
+bun install --frozen-lockfile
 npm test
 npm run test:coverage
 ```

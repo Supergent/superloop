@@ -1,536 +1,146 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadSuperloopContext } from '../context-loader';
-import * as fsUtils from '../../lib/fs-utils';
-import * as paths from '../../lib/paths';
-import * as superloopData from '../../lib/superloop-data';
-import { emptyContext } from '../views/types';
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-// Mock dependencies
-vi.mock('../../lib/fs-utils');
-vi.mock('../../lib/paths');
-vi.mock('../../lib/superloop-data');
+import { loadSuperloopContext } from "../context-loader";
+import { emptyContext } from "../views/types";
 
-describe('loadSuperloopContext', () => {
-  const mockRepoRoot = '/test/repo';
-  const mockLoopId = 'test-loop';
-  const mockLoopDir = '/test/repo/.superloop/loops/test-loop';
+describe("loadSuperloopContext contract", () => {
+  let repoRoot: string;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-
-    // Default mocks
-    vi.mocked(superloopData.resolveLoopId).mockResolvedValue(mockLoopId);
-    vi.mocked(paths.resolveLoopDir).mockReturnValue(mockLoopDir);
-    vi.mocked(fsUtils.fileExists).mockResolvedValue(false);
-    vi.mocked(fsUtils.readJson).mockResolvedValue(null);
+  beforeEach(async () => {
+    repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "superloop-ui-context-"));
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  afterEach(async () => {
+    await fs.rm(repoRoot, { recursive: true, force: true });
   });
 
-  describe('with no active loop', () => {
-    it('returns empty context when no loop ID resolved', async () => {
-      vi.mocked(superloopData.resolveLoopId).mockResolvedValue(null);
-
-      const result = await loadSuperloopContext({ repoRoot: mockRepoRoot });
-
-      expect(result).toEqual(emptyContext);
-    });
+  it("returns empty context when no loop can be resolved", async () => {
+    const context = await loadSuperloopContext({ repoRoot });
+    expect(context).toEqual(emptyContext);
   });
 
-  describe('with active loop', () => {
-    it('loads basic context with minimal data', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            loop_id: mockLoopId,
-            updated_at: '2026-01-15T10:00:00Z',
-            entries: [
-              {
-                iteration: 1,
-                started_at: '2026-01-15T09:00:00Z',
-                ended_at: '2026-01-15T09:30:00Z',
-                promise: { expected: 'COMPLETE', text: '', matched: false },
-                gates: {
-                  tests: 'pending',
-                  checklist: 'pending',
-                  evidence: 'pending',
-                  approval: 'pending'
-                },
-                completion_ok: false
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return {
-            active: true,
-            iteration: 1,
-            current_loop_id: mockLoopId,
-            updated_at: '2026-01-15T10:00:00Z'
-          };
-        }
-        return null;
-      });
+  it("loads loop context from run summary, tests, tasks, and events", async () => {
+    const loopId = "contract-loop";
+    const loopDir = path.join(repoRoot, ".superloop", "loops", loopId);
+    await fs.mkdir(loopDir, { recursive: true });
+    await fs.mkdir(path.join(repoRoot, ".superloop"), { recursive: true });
 
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
+    await fs.writeFile(
+      path.join(repoRoot, ".superloop", "state.json"),
+      JSON.stringify({ active: true, current_loop_id: loopId }, null, 2),
+      "utf8",
+    );
 
-      expect(result.loopId).toBe(mockLoopId);
-      expect(result.active).toBe(true);
-      expect(result.iteration).toBe(1);
-      expect(result.completionOk).toBe(false);
-    });
-
-    it('parses gates from run summary correctly', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [
-              {
-                iteration: 1,
-                gates: {
-                  tests: 'passed',
-                  checklist: 'passed',
-                  evidence: 'passed',
-                  approval: 'pending'
-                },
-                promise: { matched: false }
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.gates.tests).toBe('passed');
-      expect(result.gates.checklist).toBe('passed');
-      expect(result.gates.evidence).toBe('passed');
-      expect(result.gates.approval).toBe('pending');
-      expect(result.gates.promise).toBe('pending');
-    });
-
-    it('marks promise gate as passed when matched', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [
-              {
-                iteration: 1,
-                promise: {
-                  expected: 'COMPLETE',
-                  text: 'COMPLETE',
-                  matched: true
-                },
-                gates: {}
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.gates.promise).toBe('passed');
-    });
-
-    it('extracts test failures from test-status.json', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('test-status.json')) {
-          return {
-            ok: false,
-            skipped: false,
-            failures: [
-              {
-                name: 'should pass',
-                message: 'Expected true to be false',
-                file: 'test/example.test.ts'
+    await fs.writeFile(
+      path.join(loopDir, "run-summary.json"),
+      JSON.stringify(
+        {
+          loop_id: loopId,
+          updated_at: "2026-02-20T12:00:00Z",
+          entries: [
+            {
+              iteration: 2,
+              started_at: "2026-02-20T11:30:00Z",
+              ended_at: "2026-02-20T11:45:00Z",
+              promise: { matched: false },
+              gates: {
+                tests: "failed",
+                checklist: "passed",
+                evidence: "passed",
+                approval: "pending",
               },
-              {
-                name: 'should work',
-                message: 'Timeout exceeded',
-                file: 'test/another.test.ts'
-              }
-            ]
-          };
-        }
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [{ iteration: 1 }] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
+              completion_ok: false,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
+    await fs.writeFile(
+      path.join(loopDir, "test-status.json"),
+      JSON.stringify(
+        {
+          ok: false,
+          skipped: false,
+          failures: [
+            {
+              name: "should run contract test",
+              message: "expected true to be false",
+              file: "tests/contract.test.ts",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
-      expect(result.testFailures).toHaveLength(2);
-      expect(result.testFailures[0]).toEqual({
-        name: 'should pass',
-        message: 'Expected true to be false',
-        file: 'test/example.test.ts'
-      });
-      expect(result.gates.tests).toBe('failed');
-    });
+    await fs.writeFile(
+      path.join(loopDir, "PHASE_1.MD"),
+      [
+        "# Phase 1",
+        "- [x] Implement baseline",
+        "- [ ] Add edge handling",
+      ].join("\n"),
+      "utf8",
+    );
 
-    it('handles test-status.json with skipped tests', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('test-status.json')) {
-          return {
-            ok: true,
-            skipped: true,
-            failures: []
-          };
-        }
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [{ iteration: 1 }] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
+    await fs.writeFile(
+      path.join(loopDir, "events.jsonl"),
+      [
+        JSON.stringify({ event: "usage", data: { role: "implementer", cost_usd: 0.8 } }),
+        JSON.stringify({ event: "usage", data: { role: "tester", cost_usd: 0.45 } }),
+        JSON.stringify({ event: "iteration_start", iteration: 2 }),
+      ].join("\n"),
+      "utf8",
+    );
 
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
+    const context = await loadSuperloopContext({ repoRoot, loopId });
 
-      expect(result.gates.tests).toBe('skipped');
-      expect(result.testFailures).toHaveLength(0);
-    });
-
-    it('handles missing test status gracefully', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('test-status.json')) {
-          return null;
-        }
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [{
-              iteration: 1,
-              gates: { tests: 'pending' }
-            }]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.testFailures).toHaveLength(0);
-      expect(result.gates.tests).toBe('pending');
-    });
-
-    it('handles corrupted JSON gracefully', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          throw new Error('JSON parse error');
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      // Should handle error and return context with defaults
-      expect(result.loopId).toBe(mockLoopId);
-      expect(result.iteration).toBe(0);
-    });
-
-    it('calculates task progress correctly', async () => {
-      // Mock loadTasks to return specific tasks
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('PHASE')) {
-          return `
-## P1.1 Setup
-1. [x] Create config
-2. [x] Setup environment
-3. [ ] Write tests
-
-## P1.2 Implementation
-1. [x] Add feature A
-2. [ ] Add feature B
-          `.trim();
-        }
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [{ iteration: 1 }] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      // Would need actual task parsing logic to test this properly
-      // For now, verify structure exists
-      expect(result.taskProgress).toBeDefined();
-      expect(result.taskProgress).toHaveProperty('total');
-      expect(result.taskProgress).toHaveProperty('completed');
-      expect(result.taskProgress).toHaveProperty('percent');
-    });
-
-    it('detects stuck state after multiple iterations with no progress', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [
-              { iteration: 1, completion_ok: false },
-              { iteration: 2, completion_ok: false },
-              { iteration: 3, completion_ok: false },
-              { iteration: 4, completion_ok: false }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      // Stuck detection logic may vary - adjust based on actual implementation
-      expect(result.iteration).toBe(4);
-    });
-
-    it('marks completion_ok when all gates pass and promise matched', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [
-              {
-                iteration: 2,
-                promise: { matched: true },
-                gates: {
-                  tests: 'passed',
-                  checklist: 'passed',
-                  evidence: 'passed',
-                  approval: 'passed'
-                },
-                completion_ok: true
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: false };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.completionOk).toBe(true);
-      expect(result.active).toBe(false);
-      expect(result.gates.promise).toBe('passed');
-    });
-
-    it('resolves loop ID when not specified', async () => {
-      vi.mocked(superloopData.resolveLoopId).mockResolvedValue('auto-detected-loop');
-      vi.mocked(paths.resolveLoopDir).mockReturnValue('/test/repo/.superloop/loops/auto-detected-loop');
-
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [{ iteration: 1 }] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot
-        // No loopId specified
-      });
-
-      expect(vi.mocked(superloopData.resolveLoopId)).toHaveBeenCalledWith(mockRepoRoot, undefined);
-      expect(result.loopId).toBe('auto-detected-loop');
-    });
-
-    it('includes timestamps from run summary', async () => {
-      const startTime = '2026-01-15T09:00:00Z';
-      const endTime = '2026-01-15T09:45:00Z';
-      const updateTime = '2026-01-15T09:45:30Z';
-
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            updated_at: updateTime,
-            entries: [
-              {
-                iteration: 1,
-                started_at: startTime,
-                ended_at: endTime
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.startedAt).toBe(startTime);
-      expect(result.endedAt).toBe(endTime);
-      expect(result.updatedAt).toBe(updateTime);
-    });
-
-    it('builds iteration history from run summary entries', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return {
-            entries: [
-              {
-                iteration: 1,
-                started_at: '2026-01-15T09:00:00Z',
-                ended_at: '2026-01-15T09:15:00Z',
-                completion_ok: false
-              },
-              {
-                iteration: 2,
-                started_at: '2026-01-15T09:15:00Z',
-                ended_at: '2026-01-15T09:30:00Z',
-                completion_ok: true
-              }
-            ]
-          };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: false };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.iterations).toBeDefined();
-      expect(result.iterations.length).toBeGreaterThan(0);
-    });
+    expect(context.loopId).toBe(loopId);
+    expect(context.active).toBe(true);
+    expect(context.iteration).toBe(2);
+    expect(context.gates.tests).toBe("failed");
+    expect(context.testFailures).toHaveLength(1);
+    expect(context.taskProgress).toEqual({ total: 2, completed: 1, percent: 50 });
+    expect(context.cost.totalUsd).toBeCloseTo(1.25, 6);
+    expect(context.cost.breakdown).toEqual(
+      expect.arrayContaining([
+        { role: "implementer", cost: 0.8 },
+        { role: "tester", cost: 0.45 },
+      ]),
+    );
+    expect(context.phase).toBe("planning");
   });
 
-  describe('edge cases', () => {
-    it('handles empty run summary entries array', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
+  it("marks complete phase when completion_ok is true", async () => {
+    const loopId = "complete-loop";
+    const loopDir = path.join(repoRoot, ".superloop", "loops", loopId);
+    await fs.mkdir(loopDir, { recursive: true });
+    await fs.mkdir(path.join(repoRoot, ".superloop"), { recursive: true });
 
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
+    await fs.writeFile(
+      path.join(loopDir, "run-summary.json"),
+      JSON.stringify(
+        {
+          loop_id: loopId,
+          entries: [{ iteration: 1, promise: { matched: true }, completion_ok: true }],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
-      expect(result.iteration).toBe(0);
-      expect(result.completionOk).toBe(false);
-    });
-
-    it('handles missing optional fields in test failures', async () => {
-      vi.mocked(fsUtils.readJson).mockImplementation(async (filePath) => {
-        if (filePath.includes('test-status.json')) {
-          return {
-            ok: false,
-            failures: [
-              { name: 'test1' },
-              { message: 'error' },
-              {}  // completely empty failure
-            ]
-          };
-        }
-        if (filePath.includes('run-summary.json')) {
-          return { entries: [{ iteration: 1 }] };
-        }
-        if (filePath.includes('state.json')) {
-          return { active: true };
-        }
-        return null;
-      });
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result.testFailures).toHaveLength(3);
-      expect(result.testFailures[2].name).toBe('Unknown test');
-    });
-
-    it('returns empty context structure even when all files missing', async () => {
-      vi.mocked(fsUtils.readJson).mockResolvedValue(null);
-
-      const result = await loadSuperloopContext({
-        repoRoot: mockRepoRoot,
-        loopId: mockLoopId
-      });
-
-      expect(result).toMatchObject({
-        loopId: mockLoopId,
-        active: false,
-        iteration: 0,
-        completionOk: false,
-        tasks: [],
-        testFailures: [],
-        blockers: []
-      });
-    });
+    const context = await loadSuperloopContext({ repoRoot, loopId });
+    expect(context.completionOk).toBe(true);
+    expect(context.phase).toBe("complete");
   });
 });

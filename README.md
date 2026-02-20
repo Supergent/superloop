@@ -563,7 +563,7 @@ Superloop has comprehensive test coverage across TypeScript packages and bash or
 # Run TypeScript tests
 cd packages/json-render-core && npm test
 cd packages/json-render-react && npm test
-cd packages/superloop-ui && npm test
+cd packages/superloop-ui && bun install --frozen-lockfile && npm test
 
 # Run BATS integration tests
 bats tests/*.bats
