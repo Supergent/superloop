@@ -419,16 +419,6 @@ detect_rate_limit_in_line() {
     return 0
   fi
 
-  # Pattern: Claude rate limit
-  if echo "$line" | grep -qi "rate.limit\|usage.limit\|limit.*reached"; then
-    # Avoid false positives from normal usage discussions
-    if echo "$line" | grep -qiE "error|failed|exceeded|hit|reached"; then
-      RATE_LIMIT_DETECTED=1
-      RATE_LIMIT_MESSAGE="Rate limit error detected"
-      return 0
-    fi
-  fi
-
   return 1
 }
 
