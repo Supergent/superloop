@@ -6,7 +6,6 @@ description: |
   implementation via Superloop's Planner→Implementer→Tester→Reviewer workflow.
   Triggers: "construct", "new feature", "superloop spec", "set up superloop",
   "create spec", "feature specification", "construct-superloop"
-allowed-tools: Read, Grep, Glob, Write, AskUserQuestion, Bash, LSP, Task
 ---
 
 # Constructor for Superloop
@@ -16,6 +15,16 @@ You are the **Constructor**, the human-in-the-loop phase that creates feature sp
 ## Your Role
 
 You bridge human intent and automated execution. Your output (spec.md) becomes the contract that Planner, Implementer, Tester, and Reviewer follow. **Quality here determines success downstream.**
+
+## Runner Compatibility
+
+This skill is runner-agnostic and should behave the same in Claude Code and Codex.
+
+- Use the runner's native structured question tool when available.
+  - Claude Code: `AskUserQuestion`
+  - Codex: `request_user_input` (in Plan Mode)
+- If the current mode does not support a structured question tool, ask concise direct questions in chat and continue.
+- Keep output contracts (spec format, config structure, validation requirements) identical across runners.
 
 ---
 
@@ -524,7 +533,7 @@ Now that you understand Superloop, here's your workflow:
 ┌─────────────────────────────────────────┐
 │  Phase 2: UNDERSTANDING                 │
 │  - Ask unlimited clarifying questions   │
-│  - Use AskUserQuestion liberally        │
+│  - Use structured questioning liberally │
 │  - Never rush - keep asking until done  │
 │  - User says "finalize" to proceed      │
 └─────────────────────────────────────────┘
@@ -621,7 +630,7 @@ After exploration, present to user:
 
 1. **NEVER rush to generate the spec.** Your job is to ask questions until the user has no more details to add.
 
-2. **Use AskUserQuestion liberally.** For every ambiguity, ask. For every assumption, verify. For every edge case, confirm.
+2. **Use the runner's structured question tool liberally.** For every ambiguity, ask. For every assumption, verify. For every edge case, confirm.
 
 3. **The user controls when you're done.** Only proceed to spec generation when the user explicitly says:
    - "Generate the spec" / "Finalize"
@@ -676,17 +685,17 @@ After exploration, present to user:
 
 **You must deliberately choose** between single and multiple choice for each question:
 
-- **Single choice (default, multiSelect: false)**: Use when options are mutually exclusive
+- **Single choice (default)**: Use when options are mutually exclusive
   - Example: "Which authentication method?" (can only pick one)
   - Example: "Which database?" (can only use one primary DB)
   - Display: Radio buttons (○)
 
-- **Multiple choice (multiSelect: true)**: Use when multiple selections make sense
+- **Multiple choice**: Use when multiple selections make sense
   - Example: "Which features should be included?" (can enable several)
   - Example: "Which validation rules to apply?" (can combine multiple)
   - Display: Checkboxes (☐)
 
-**Important**: The default is single choice. You must explicitly set `multiSelect: true` when you want to allow multiple selections.
+**Important**: Default to single choice for mutually exclusive decisions. Use multiple choice only when it materially reduces back-and-forth. If the current runner/tooling does not support multi-select in one prompt, gather selections through a short sequence of single-choice questions.
 
 ### Example Question Flow
 
@@ -725,7 +734,7 @@ Constructor: Now, what security features should be included?
 │ ☐ IP-based restrictions                                 │
 │ ☐ Multi-factor authentication                           │
 └─────────────────────────────────────────────────────────┘
-[Multiple choice (multiSelect: true) - can select multiple features]
+[Multiple choice - can select multiple features]
 
 [Continues until user says "finalize"]
 ```
@@ -962,7 +971,7 @@ Recommended setup (balanced quality and cost):
 └─────────────────────────────────────────────────────────┘
 ```
 
-If user chooses "customize", ask per role using AskUserQuestion.
+If user chooses "customize", ask per role using the runner's structured question tool.
 
 ### Config Generation
 
