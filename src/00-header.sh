@@ -259,6 +259,35 @@ write_state() {
     > "$state_file"
 }
 
+write_active_run_state() {
+  local active_run_file="$1"
+  local repo="$2"
+  local pid="$3"
+  local pgid="$4"
+  local loop_id="$5"
+  local iteration="${6:-0}"
+  local stage="${7:-run}"
+
+  jq -n \
+    --arg repo "$repo" \
+    --argjson pid "$pid" \
+    --argjson pgid "$pgid" \
+    --arg loop_id "$loop_id" \
+    --argjson iteration "$iteration" \
+    --arg stage "$stage" \
+    --arg updated_at "$(timestamp)" \
+    '{
+      repo: $repo,
+      pid: $pid,
+      pgid: $pgid,
+      loop_id: (if ($loop_id | length) > 0 then $loop_id else null end),
+      iteration: $iteration,
+      stage: $stage,
+      updated_at: $updated_at
+    }' \
+    > "$active_run_file"
+}
+
 expand_pattern() {
   local repo="$1"
   local pattern="$2"

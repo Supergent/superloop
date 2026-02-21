@@ -977,6 +977,10 @@ run_cmd() {
 
   local superloop_dir="$repo/.superloop"
   local state_file="$superloop_dir/state.json"
+  local active_run_file="$superloop_dir/active-run.json"
+  local active_run_pid="$$"
+  local active_run_pgid=""
+  local active_run_tracking_enabled="false"
 
   if [[ ! -f "$config_path" ]]; then
     die "config not found: $config_path"
@@ -1148,6 +1152,17 @@ run_cmd() {
     iteration=1
   fi
 
+  if [[ "${dry_run:-0}" -ne 1 ]]; then
+    active_run_pgid="$(ps -o pgid= -p "$active_run_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -z "$active_run_pgid" ]]; then
+      active_run_pgid="$active_run_pid"
+    fi
+
+    write_active_run_state "$active_run_file" "$repo" "$active_run_pid" "$active_run_pgid" "$target_loop_id" "$iteration" "run_start"
+    trap "rm -f '$active_run_file' 2>/dev/null || true" EXIT
+    active_run_tracking_enabled="true"
+  fi
+
   for ((i=loop_index; i<loop_count; i++)); do
     local loop_json loop_id spec_file max_iterations completion_promise
     loop_json=$(jq -c ".loops[$i]" "$config_path")
@@ -1155,6 +1170,10 @@ run_cmd() {
 
     if [[ -n "$target_loop_id" && "$loop_id" != "$target_loop_id" ]]; then
       continue
+    fi
+
+    if [[ "$active_run_tracking_enabled" == "true" ]]; then
+      write_active_run_state "$active_run_file" "$repo" "$active_run_pid" "$active_run_pgid" "$loop_id" "$iteration" "loop_start"
     fi
 
     spec_file=$(jq -r '.spec_file' <<<"$loop_json")
@@ -5253,6 +5272,7 @@ EOF
 
   if [[ "${dry_run:-0}" -ne 1 ]]; then
     write_state "$state_file" "$loop_count" 0 "" "false"
+    rm -f "$active_run_file" 2>/dev/null || true
     echo "All loops complete."
   else
     echo "Dry-run complete."
@@ -5326,14 +5346,96 @@ status_cmd() {
 cancel_cmd() {
   local repo="$1"
   local state_file="$repo/.superloop/state.json"
+  local active_run_file="$repo/.superloop/active-run.json"
+  local had_state_file="false"
+  local had_active_run_file="false"
+  local run_stopped="false"
+  local forced_kill="false"
 
-  if [[ ! -f "$state_file" ]]; then
+  terminate_descendants() {
+    local root_pid="$1"
+    local signal_name="$2"
+    local child_pid
+    while IFS= read -r child_pid; do
+      [[ -z "$child_pid" ]] && continue
+      terminate_descendants "$child_pid" "$signal_name"
+      kill "-$signal_name" "$child_pid" 2>/dev/null || true
+    done < <(pgrep -P "$root_pid" 2>/dev/null || true)
+  }
+
+  if [[ -f "$state_file" ]]; then
+    rm "$state_file"
+    had_state_file="true"
+  fi
+
+  if [[ -f "$active_run_file" ]]; then
+    had_active_run_file="true"
+    local active_pid active_pgid active_loop_id process_cmd
+    local can_use_group_kill="false"
+    active_pid=$(jq -r '.pid // ""' "$active_run_file" 2>/dev/null || true)
+    active_pgid=$(jq -r '.pgid // ""' "$active_run_file" 2>/dev/null || true)
+    active_loop_id=$(jq -r '.loop_id // ""' "$active_run_file" 2>/dev/null || true)
+
+    if [[ "$active_pid" =~ ^[0-9]+$ && "$active_pgid" =~ ^[0-9]+$ ]]; then
+      if [[ "$active_pgid" -gt 1 && "$active_pid" -eq "$active_pgid" ]]; then
+        can_use_group_kill="true"
+      fi
+    fi
+
+    if [[ "$active_pid" =~ ^[0-9]+$ ]] && kill -0 "$active_pid" 2>/dev/null; then
+      process_cmd="$(ps -o command= -p "$active_pid" 2>/dev/null || true)"
+      if [[ "$process_cmd" == *"superloop.sh run"* ]]; then
+        if [[ "$can_use_group_kill" == "true" ]]; then
+          kill -TERM -- "-$active_pgid" 2>/dev/null || kill -TERM "$active_pid" 2>/dev/null || true
+        else
+          terminate_descendants "$active_pid" TERM
+          kill -TERM "$active_pid" 2>/dev/null || true
+        fi
+
+        for _ in $(seq 1 10); do
+          if ! kill -0 "$active_pid" 2>/dev/null; then
+            run_stopped="true"
+            break
+          fi
+          sleep 1
+        done
+
+        if [[ "$run_stopped" != "true" ]]; then
+          if [[ "$can_use_group_kill" == "true" ]]; then
+            kill -KILL -- "-$active_pgid" 2>/dev/null || kill -KILL "$active_pid" 2>/dev/null || true
+          else
+            terminate_descendants "$active_pid" KILL
+            kill -KILL "$active_pid" 2>/dev/null || true
+          fi
+          forced_kill="true"
+          sleep 1
+          if ! kill -0 "$active_pid" 2>/dev/null; then
+            run_stopped="true"
+          fi
+        fi
+      fi
+    fi
+
+    rm -f "$active_run_file" 2>/dev/null || true
+    if [[ -n "$active_loop_id" ]]; then
+      echo "Cancelled loop: $active_loop_id"
+    fi
+  fi
+
+  if [[ "$had_state_file" != "true" && "$had_active_run_file" != "true" && "$run_stopped" != "true" ]]; then
     echo "No active state file found."
     return 0
   fi
 
-  rm "$state_file"
-  echo "Cancelled loop state."
+  if [[ "$run_stopped" == "true" ]]; then
+    if [[ "$forced_kill" == "true" ]]; then
+      echo "Cancelled loop state and force-stopped active run process."
+    else
+      echo "Cancelled loop state and stopped active run process."
+    fi
+  else
+    echo "Cancelled loop state."
+  fi
 }
 
 approve_cmd() {
