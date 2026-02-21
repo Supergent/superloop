@@ -591,6 +591,76 @@ EOF
   [[ "$output" =~ "reentrant-loop" ]]
 }
 
+@test "cancel stops active run process and clears active-run metadata" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "mock": {
+      "command": ["bash"],
+      "args": ["-lc", "sleep 120"],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "cancel-loop",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 5,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {
+      "planner": {"runner": "mock"},
+      "implementer": {"runner": "mock"},
+      "tester": {"runner": "mock"},
+      "reviewer": {"runner": "mock"}
+    }
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop cancel-loop --skip-validate >"$TEMP_DIR/run.log" 2>&1 &
+  local run_pid=$!
+
+  local active_file="$TEMP_DIR/.superloop/active-run.json"
+  local seen_active=0
+  for _ in $(seq 1 100); do
+    if [[ -f "$active_file" ]]; then
+      seen_active=1
+      break
+    fi
+    sleep 0.1
+  done
+  [ "$seen_active" -eq 1 ]
+
+  run "$PROJECT_ROOT/superloop.sh" cancel --repo "$TEMP_DIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Cancelled loop state" ]]
+
+  local exited=0
+  for _ in $(seq 1 30); do
+    if ! kill -0 "$run_pid" 2>/dev/null; then
+      exited=1
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$exited" -ne 1 ]]; then
+    kill -KILL "$run_pid" 2>/dev/null || true
+  fi
+
+  [ "$exited" -eq 1 ]
+  [ ! -f "$TEMP_DIR/.superloop/active-run.json" ]
+  [ ! -f "$TEMP_DIR/.superloop/state.json" ]
+}
+
 @test "run --dry-run accepts delegation wake alias values" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {
