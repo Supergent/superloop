@@ -277,18 +277,6 @@ def detect_rate_limit(line):
         info.update(parsed_info)
         return True, info
 
-    # Pattern: usage limit / rate limit errors
-    lower = line.lower()
-    if ('usage' in lower or 'rate' in lower) and 'limit' in lower:
-        if any(word in lower for word in ['reached', 'exceeded', 'error', 'failed', 'hit']):
-            info = {"message": "Rate limit error detected", "type": "generic"}
-            info.update(parsed_info)
-            # Try to extract reset time
-            match = re.search(r'resets?_?(at|in)["\s:]+(\d+)', line, re.IGNORECASE)
-            if match:
-                info["resets_at" if match.group(1).lower() == "at" else "resets_in"] = int(match.group(2))
-            return True, info
-
     return False, {}
 
 

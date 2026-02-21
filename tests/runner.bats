@@ -243,7 +243,7 @@ EOF
   grep -q "rollout::list" "$log_file"
 }
 
-@test "runner: detects generic rate limit error" {
+@test "runner: does not treat generic rate-limit text as a hard rate-limit signal" {
   # Skip if Python is not available
   if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
     skip "Python required for rate limit detection"
@@ -256,7 +256,7 @@ EOF
 
   echo "input" > "$prompt_file"
 
-  # Create mock script with generic rate limit message
+  # Create mock script with generic rate-limit text but no structured/HTTP signal.
   cat > "$mock_script" << 'EOF'
 #!/bin/bash
 echo "Processing..."
@@ -271,11 +271,40 @@ EOF
   local status=$?
   set -e
 
-  [ "$status" -eq 125 ]
-  [ -f "$rate_limit_file" ]
+  # Should preserve original exit code and not emit rate-limit metadata.
+  [ "$status" -eq 1 ]
+  [ ! -f "$rate_limit_file" ]
+}
 
-  local message=$(jq -r '.message' "$rate_limit_file")
-  [[ "$message" == *"Rate limit"* ]]
+@test "runner: does not re-detect historical superloop rate-limit log lines" {
+  # Skip if Python is not available
+  if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+    skip "Python required for rate limit detection"
+  fi
+
+  local prompt_file="$TEMP_DIR/prompt.txt"
+  local log_file="$TEMP_DIR/log.txt"
+  local rate_limit_file="$TEMP_DIR/rate_limit.json"
+  local mock_script="$TEMP_DIR/mock_historical_superloop_rate_limit_line.sh"
+
+  echo "input" > "$prompt_file"
+
+  # This mirrors a historical log line that previously caused false positives.
+  cat > "$mock_script" << 'EOF'
+#!/bin/bash
+echo "[superloop] Rate limit detected: Rate limit error detected" >&2
+exit 1
+EOF
+  chmod +x "$mock_script"
+
+  set +e
+  RUNNER_RATE_LIMIT_FILE="$rate_limit_file" \
+    run_command_with_timeout "$prompt_file" "$log_file" 10 "stdin" 0 "$mock_script"
+  local status=$?
+  set -e
+
+  [ "$status" -eq 1 ]
+  [ ! -f "$rate_limit_file" ]
 }
 
 @test "runner: codex rate-limit retries from scratch by default" {
