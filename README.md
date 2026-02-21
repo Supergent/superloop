@@ -21,13 +21,23 @@ A bash orchestration harness that runs AI coding agents in an iterative loop unt
 
 ## Quick Start
 
-**1. Create a spec** (in Claude Code):
+**0. Install/sync constructor skill** (Claude Code + Codex):
+
+```bash
+./scripts/install-skill.sh
+```
+
+Use `./scripts/install-skill.sh --force` to overwrite without prompts.
+
+**1. Create a spec**:
 
 ```
-/construct-superloop
+Claude Code: /construct-superloop
+Codex: construct-superloop "feature description"
 ```
 
 This guides you through creating `spec.md` and `config.json`.
+In Codex, restart after install so new skills are discovered.
 
 **2. Run the loop:**
 

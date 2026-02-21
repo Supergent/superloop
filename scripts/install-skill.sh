@@ -1,50 +1,68 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Install construct-superloop skill for Claude Code
+# Install/sync construct-superloop skill for Claude Code and Codex.
 #
-# This script copies the construct-superloop skill to the user's
-# Claude Code skills directory, making /construct-superloop available.
+# Copies the repository skill source to:
+# - ~/.claude/skills/construct-superloop
+# - ~/.codex/skills/construct-superloop
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUPERLOOP_DIR="$(dirname "$SCRIPT_DIR")"
-SKILL_SOURCE="$SUPERLOOP_DIR/.claude/skills/construct-superloop"
-SKILL_DEST="$HOME/.claude/skills/construct-superloop"
+SKILL_NAME="construct-superloop"
+SKILL_SOURCE="$SUPERLOOP_DIR/.claude/skills/$SKILL_NAME"
+FORCE="${1:-}"
 
-echo "Installing construct-superloop skill..."
+confirm_overwrite() {
+    local target="$1"
+    if [[ "$FORCE" == "--force" ]]; then
+        return 0
+    fi
 
-# Check source exists
+    echo "Skill already exists at $target"
+    read -r -p "Overwrite? [y/N] " reply
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+        echo "Skipping $target"
+        return 1
+    fi
+    return 0
+}
+
+sync_target() {
+    local parent_dir="$1"
+    local target="$2"
+    local label="$3"
+
+    mkdir -p "$parent_dir"
+    if [[ -d "$target" ]]; then
+        if ! confirm_overwrite "$target"; then
+            return 0
+        fi
+        rm -rf "$target"
+    fi
+
+    cp -R "$SKILL_SOURCE" "$target"
+    echo "Synced to $label: $target"
+}
+
+echo "Installing $SKILL_NAME skill from $SKILL_SOURCE"
+
 if [[ ! -d "$SKILL_SOURCE" ]]; then
     echo "ERROR: Skill source not found at $SKILL_SOURCE"
     exit 1
 fi
 
-# Create destination directory
-mkdir -p "$HOME/.claude/skills"
+CLAUDE_PARENT="$HOME/.claude/skills"
+CLAUDE_DEST="$CLAUDE_PARENT/$SKILL_NAME"
+CODEX_PARENT="$HOME/.codex/skills"
+CODEX_DEST="$CODEX_PARENT/$SKILL_NAME"
 
-# Check if already installed
-if [[ -d "$SKILL_DEST" ]]; then
-    echo "Skill already installed at $SKILL_DEST"
-    read -p "Overwrite? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 0
-    fi
-    rm -rf "$SKILL_DEST"
-fi
+sync_target "$CLAUDE_PARENT" "$CLAUDE_DEST" "Claude Code"
+sync_target "$CODEX_PARENT" "$CODEX_DEST" "Codex"
 
-# Copy skill directory
-cp -r "$SKILL_SOURCE" "$SKILL_DEST"
-
-echo ""
-echo "Skill installed successfully!"
-echo ""
-echo "Location: $SKILL_DEST"
-echo ""
-echo "Usage: In Claude Code, run:"
-echo "  /construct-superloop \"Your feature description\""
-echo ""
-echo "Or just describe a feature and Claude will suggest using the skill."
+echo
+echo "Skill sync complete."
+echo "Claude usage: /construct-superloop \"Your feature description\""
+echo "Codex note: restart Codex to pick up newly installed skills."
