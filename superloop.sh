@@ -17,6 +17,7 @@ Usage:
   superloop.sh usage [--repo DIR] [--loop ID] [--json]
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   superloop.sh cancel [--repo DIR]
+  superloop.sh lifecycle-audit [--repo DIR] [--feature-prefix PREFIX] [--main-ref REF] [--strict] [--json-out FILE] [--no-fetch]
   superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
   superloop.sh runner-smoke [--repo DIR] [--config FILE] [--schema FILE] [--loop ID]
   superloop.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
@@ -36,6 +37,11 @@ Options:
   --by NAME        Approver name for approval decisions (default: $USER)
   --note TEXT      Optional decision note for approval/rejection
   --reject         Record a rejection instead of approval
+  --feature-prefix Branch/worktree prefix to audit (default: feat/)
+  --main-ref REF   Main/trunk reference for merge-base checks (default: origin/main)
+  --strict         Fail non-zero when lifecycle thresholds are breached
+  --json-out FILE  Write lifecycle audit JSON report to file
+  --no-fetch       Skip fetch --prune before lifecycle audit
   --version        Print version and exit
 
 Notes:
@@ -7525,6 +7531,376 @@ list_cmd() {
   echo "Total: $loop_count loop(s)"
 }
 
+lifecycle_count_lines() {
+  local file="$1"
+  if [[ -s "$file" ]]; then
+    wc -l < "$file" | tr -d ' '
+  else
+    echo "0"
+  fi
+}
+
+lifecycle_lines_to_json() {
+  local file="$1"
+  if [[ -s "$file" ]]; then
+    jq -R -s 'split("\n")[:-1]' "$file"
+  else
+    echo "[]"
+  fi
+}
+
+lifecycle_branch_ahead_behind() {
+  local repo="$1"
+  local main_ref="$2"
+  local branch_ref="$3"
+  git -C "$repo" rev-list --left-right --count "$main_ref...$branch_ref" 2>/dev/null || echo "0 0"
+}
+
+lifecycle_branch_merged_to_main() {
+  local repo="$1"
+  local main_ref="$2"
+  local branch_ref="$3"
+  if git -C "$repo" merge-base --is-ancestor "$branch_ref" "$main_ref" >/dev/null 2>&1; then
+    echo "1"
+  else
+    echo "0"
+  fi
+}
+
+lifecycle_audit_cmd() {
+  local repo="$1"
+  local feature_prefix="${2:-feat/}"
+  local main_ref="${3:-origin/main}"
+  local strict_mode="${4:-0}"
+  local json_out="${5:-}"
+  local no_fetch="${6:-0}"
+
+  need_cmd jq
+
+  if [[ "$no_fetch" != "1" ]]; then
+    git -C "$repo" fetch origin --prune >/dev/null 2>&1 || true
+  fi
+
+  if ! git -C "$repo" rev-parse --verify "${main_ref}^{commit}" >/dev/null 2>&1; then
+    die "main ref is not a valid commit: $main_ref"
+  fi
+
+  local gh_available=0
+  if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
+      gh_available=1
+    fi
+  fi
+
+  declare -A pr_count_cache
+  lifecycle_get_pr_count() {
+    local branch="$1"
+    if [[ "$gh_available" != "1" ]]; then
+      echo "-1"
+      return
+    fi
+
+    if [[ -n "${pr_count_cache[$branch]:-}" ]]; then
+      echo "${pr_count_cache[$branch]}"
+      return
+    fi
+
+    local count="-1"
+    if count="$(
+      cd "$repo" && gh pr list \
+        --state all \
+        --search "head:${branch}" \
+        --json number \
+        --limit 1 2>/dev/null | jq 'length'
+    )"; then
+      :
+    else
+      count="-1"
+    fi
+    pr_count_cache["$branch"]="$count"
+    echo "$count"
+  }
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/superloop-lifecycle-audit.XXXXXX")"
+
+  local ahead_candidates_file="$tmp_dir/ahead_candidates.txt"
+  local ahead_without_pr_file="$tmp_dir/ahead_without_pr.txt"
+  local pr_lookup_unknown_file="$tmp_dir/pr_lookup_unknown.txt"
+  local stale_local_file="$tmp_dir/stale_local.txt"
+  local stale_remote_file="$tmp_dir/stale_remote.txt"
+  local behind_dirty_wt_file="$tmp_dir/behind_dirty_worktrees.txt"
+  local stale_merged_wt_file="$tmp_dir/stale_merged_worktrees.txt"
+  local threshold_failures_file="$tmp_dir/threshold_failures.txt"
+  local active_dirty_branches_file="$tmp_dir/active_dirty_branches.txt"
+
+  touch \
+    "$ahead_candidates_file" \
+    "$ahead_without_pr_file" \
+    "$pr_lookup_unknown_file" \
+    "$stale_local_file" \
+    "$stale_remote_file" \
+    "$behind_dirty_wt_file" \
+    "$stale_merged_wt_file" \
+    "$threshold_failures_file" \
+    "$active_dirty_branches_file"
+
+  mapfile -t local_refs < <(git -C "$repo" for-each-ref --format='%(refname:short)' "refs/heads/${feature_prefix}*")
+  local local_ref
+  for local_ref in "${local_refs[@]}"; do
+    local behind=0
+    local ahead=0
+    read -r behind ahead <<<"$(lifecycle_branch_ahead_behind "$repo" "$main_ref" "$local_ref")"
+    if (( ahead > 0 )); then
+      echo "${local_ref}|local|${ahead}|${behind}" >> "$ahead_candidates_file"
+    fi
+
+    local merged_to_main
+    merged_to_main="$(lifecycle_branch_merged_to_main "$repo" "$main_ref" "$local_ref")"
+    if [[ "$merged_to_main" == "1" && "$ahead" == "0" ]]; then
+      echo "${local_ref}|behind=${behind}" >> "$stale_local_file"
+    fi
+  done
+
+  mapfile -t remote_refs < <(git -C "$repo" for-each-ref --format='%(refname:short)' "refs/remotes/origin/${feature_prefix}*")
+  local remote_ref
+  for remote_ref in "${remote_refs[@]}"; do
+    local branch="${remote_ref#origin/}"
+    local behind=0
+    local ahead=0
+    read -r behind ahead <<<"$(lifecycle_branch_ahead_behind "$repo" "$main_ref" "$remote_ref")"
+    if (( ahead > 0 )); then
+      echo "${branch}|remote|${ahead}|${behind}" >> "$ahead_candidates_file"
+    fi
+
+    local merged_to_main
+    merged_to_main="$(lifecycle_branch_merged_to_main "$repo" "$main_ref" "$remote_ref")"
+    if [[ "$merged_to_main" == "1" && "$ahead" == "0" ]]; then
+      echo "${branch}|behind=${behind}" >> "$stale_remote_file"
+    fi
+  done
+
+  if [[ -s "$ahead_candidates_file" ]]; then
+    while IFS= read -r branch; do
+      [[ -z "$branch" ]] && continue
+
+      local max_ahead=0
+      local max_behind=0
+      local sources=""
+      max_ahead="$(awk -F'|' -v b="$branch" '$1==b {if(($3 + 0) > m) m=($3 + 0)} END {print m + 0}' "$ahead_candidates_file")"
+      max_behind="$(awk -F'|' -v b="$branch" '$1==b {if(($4 + 0) > m) m=($4 + 0)} END {print m + 0}' "$ahead_candidates_file")"
+      sources="$(awk -F'|' -v b="$branch" '$1==b {print $2}' "$ahead_candidates_file" | sort -u | paste -sd, -)"
+
+      local pr_count
+      pr_count="$(lifecycle_get_pr_count "$branch")"
+      if [[ "$pr_count" == "0" ]]; then
+        echo "${branch}|ahead=${max_ahead}|behind=${max_behind}|sources=${sources}" >> "$ahead_without_pr_file"
+      elif [[ "$pr_count" == "-1" ]]; then
+        echo "${branch}|ahead=${max_ahead}|behind=${max_behind}|sources=${sources}" >> "$pr_lookup_unknown_file"
+      fi
+    done < <(awk -F'|' '{print $1}' "$ahead_candidates_file" | sort -u)
+  fi
+
+  local current_worktree=""
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        current_worktree="${line#worktree }"
+        ;;
+      branch\ refs/heads/*)
+        local branch_ref="${line#branch }"
+        local branch="${branch_ref#refs/heads/}"
+        if [[ "$branch" != "${feature_prefix}"* ]]; then
+          continue
+        fi
+
+        local behind=0
+        local ahead=0
+        read -r behind ahead <<<"$(lifecycle_branch_ahead_behind "$repo" "$main_ref" "$branch_ref")"
+        local merged_to_main
+        merged_to_main="$(lifecycle_branch_merged_to_main "$repo" "$main_ref" "$branch_ref")"
+        local dirty_count
+        dirty_count="$(
+          git -C "$current_worktree" status --porcelain 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' '
+        )"
+
+        if (( behind > 0 && dirty_count > 0 )); then
+          echo "${current_worktree}|${branch}|behind=${behind}|dirty=${dirty_count}" >> "$behind_dirty_wt_file"
+        fi
+
+        if (( dirty_count > 0 )); then
+          echo "$branch" >> "$active_dirty_branches_file"
+        fi
+
+        if [[ "$merged_to_main" == "1" && "$ahead" == "0" && "$dirty_count" == "0" ]]; then
+          echo "${current_worktree}|${branch}|behind=${behind}|dirty=${dirty_count}" >> "$stale_merged_wt_file"
+        fi
+        ;;
+    esac
+  done < <(git -C "$repo" worktree list --porcelain)
+
+  sort -u "$ahead_without_pr_file" -o "$ahead_without_pr_file"
+  sort -u "$pr_lookup_unknown_file" -o "$pr_lookup_unknown_file"
+  sort -u "$stale_local_file" -o "$stale_local_file"
+  sort -u "$stale_remote_file" -o "$stale_remote_file"
+  sort -u "$behind_dirty_wt_file" -o "$behind_dirty_wt_file"
+  sort -u "$stale_merged_wt_file" -o "$stale_merged_wt_file"
+  sort -u "$active_dirty_branches_file" -o "$active_dirty_branches_file"
+
+  if [[ -s "$active_dirty_branches_file" && -s "$stale_local_file" ]]; then
+    awk -F'|' 'NR==FNR {skip[$1]=1; next} !($1 in skip)' \
+      "$active_dirty_branches_file" "$stale_local_file" > "$tmp_dir/stale_local.filtered"
+    mv "$tmp_dir/stale_local.filtered" "$stale_local_file"
+  fi
+
+  local ahead_without_pr_count
+  local pr_lookup_unknown_count
+  local stale_local_count
+  local stale_remote_count
+  local behind_dirty_wt_count
+  local stale_merged_wt_count
+
+  ahead_without_pr_count="$(lifecycle_count_lines "$ahead_without_pr_file")"
+  pr_lookup_unknown_count="$(lifecycle_count_lines "$pr_lookup_unknown_file")"
+  stale_local_count="$(lifecycle_count_lines "$stale_local_file")"
+  stale_remote_count="$(lifecycle_count_lines "$stale_remote_file")"
+  behind_dirty_wt_count="$(lifecycle_count_lines "$behind_dirty_wt_file")"
+  stale_merged_wt_count="$(lifecycle_count_lines "$stale_merged_wt_file")"
+
+  check_lifecycle_threshold() {
+    local metric="$1"
+    local count="$2"
+    if (( count > 0 )); then
+      echo "${metric}|count=${count}|max=0" >> "$threshold_failures_file"
+    fi
+  }
+
+  check_lifecycle_threshold "ahead_without_pr" "$ahead_without_pr_count"
+  check_lifecycle_threshold "pr_lookup_unknown" "$pr_lookup_unknown_count"
+  check_lifecycle_threshold "stale_merged_local_branch" "$stale_local_count"
+  check_lifecycle_threshold "stale_merged_remote_branch" "$stale_remote_count"
+  check_lifecycle_threshold "behind_and_dirty_worktree" "$behind_dirty_wt_count"
+  check_lifecycle_threshold "stale_merged_worktree" "$stale_merged_wt_count"
+
+  local threshold_failure_count
+  threshold_failure_count="$(lifecycle_count_lines "$threshold_failures_file")"
+
+  echo "Lifecycle audit"
+  echo "  repo: $repo"
+  echo "  feature_prefix: $feature_prefix"
+  echo "  main_ref: $main_ref"
+  echo "  strict: $([[ "$strict_mode" == "1" ]] && echo true || echo false)"
+  echo "  gh_available: $([[ "$gh_available" == "1" ]] && echo true || echo false)"
+  echo
+  echo "counts:"
+  echo "  ahead_without_pr: $ahead_without_pr_count"
+  echo "  pr_lookup_unknown: $pr_lookup_unknown_count"
+  echo "  stale_merged_local_branch: $stale_local_count"
+  echo "  stale_merged_remote_branch: $stale_remote_count"
+  echo "  behind_and_dirty_worktree: $behind_dirty_wt_count"
+  echo "  stale_merged_worktree: $stale_merged_wt_count"
+  echo
+
+  print_lifecycle_details() {
+    local title="$1"
+    local file="$2"
+    if [[ -s "$file" ]]; then
+      echo "${title}:"
+      sed 's/^/  - /' "$file"
+      echo
+    fi
+  }
+
+  print_lifecycle_details "ahead_without_pr details" "$ahead_without_pr_file"
+  print_lifecycle_details "pr_lookup_unknown details" "$pr_lookup_unknown_file"
+  print_lifecycle_details "stale_merged_local_branch details" "$stale_local_file"
+  print_lifecycle_details "stale_merged_remote_branch details" "$stale_remote_file"
+  print_lifecycle_details "behind_and_dirty_worktree details" "$behind_dirty_wt_file"
+  print_lifecycle_details "stale_merged_worktree details" "$stale_merged_wt_file"
+
+  if [[ -n "$json_out" ]]; then
+    mkdir -p "$(dirname "$json_out")"
+
+    local ahead_without_pr_json
+    local pr_lookup_unknown_json
+    local stale_local_json
+    local stale_remote_json
+    local behind_dirty_wt_json
+    local stale_merged_wt_json
+    local threshold_failures_json
+
+    ahead_without_pr_json="$(lifecycle_lines_to_json "$ahead_without_pr_file")"
+    pr_lookup_unknown_json="$(lifecycle_lines_to_json "$pr_lookup_unknown_file")"
+    stale_local_json="$(lifecycle_lines_to_json "$stale_local_file")"
+    stale_remote_json="$(lifecycle_lines_to_json "$stale_remote_file")"
+    behind_dirty_wt_json="$(lifecycle_lines_to_json "$behind_dirty_wt_file")"
+    stale_merged_wt_json="$(lifecycle_lines_to_json "$stale_merged_wt_file")"
+    threshold_failures_json="$(lifecycle_lines_to_json "$threshold_failures_file")"
+
+    jq -n \
+      --arg generated_at "$(timestamp)" \
+      --arg repo "$repo" \
+      --arg feature_prefix "$feature_prefix" \
+      --arg main_ref "$main_ref" \
+      --argjson strict "$(if [[ "$strict_mode" == "1" ]]; then echo true; else echo false; fi)" \
+      --argjson gh_available "$(if [[ "$gh_available" == "1" ]]; then echo true; else echo false; fi)" \
+      --argjson ahead_without_pr_count "$ahead_without_pr_count" \
+      --argjson pr_lookup_unknown_count "$pr_lookup_unknown_count" \
+      --argjson stale_local_count "$stale_local_count" \
+      --argjson stale_remote_count "$stale_remote_count" \
+      --argjson behind_dirty_wt_count "$behind_dirty_wt_count" \
+      --argjson stale_merged_wt_count "$stale_merged_wt_count" \
+      --argjson threshold_failure_count "$threshold_failure_count" \
+      --argjson ahead_without_pr "$ahead_without_pr_json" \
+      --argjson pr_lookup_unknown "$pr_lookup_unknown_json" \
+      --argjson stale_local "$stale_local_json" \
+      --argjson stale_remote "$stale_remote_json" \
+      --argjson behind_dirty_wt "$behind_dirty_wt_json" \
+      --argjson stale_merged_wt "$stale_merged_wt_json" \
+      --argjson threshold_failures "$threshold_failures_json" \
+      '{
+        generated_at: $generated_at,
+        repo: $repo,
+        feature_prefix: $feature_prefix,
+        main_ref: $main_ref,
+        strict: $strict,
+        gh_available: $gh_available,
+        counts: {
+          ahead_without_pr: $ahead_without_pr_count,
+          pr_lookup_unknown: $pr_lookup_unknown_count,
+          stale_merged_local_branch: $stale_local_count,
+          stale_merged_remote_branch: $stale_remote_count,
+          behind_and_dirty_worktree: $behind_dirty_wt_count,
+          stale_merged_worktree: $stale_merged_wt_count,
+          threshold_failures: $threshold_failure_count
+        },
+        details: {
+          ahead_without_pr: $ahead_without_pr,
+          pr_lookup_unknown: $pr_lookup_unknown,
+          stale_merged_local_branch: $stale_local,
+          stale_merged_remote_branch: $stale_remote,
+          behind_and_dirty_worktree: $behind_dirty_wt,
+          stale_merged_worktree: $stale_merged_wt,
+          threshold_failures: $threshold_failures
+        },
+        status: (if $threshold_failure_count > 0 then "fail" else "pass" end)
+      }' > "$json_out"
+    echo "json report written: $json_out"
+  fi
+
+  if [[ "$threshold_failure_count" -gt 0 ]]; then
+    echo "threshold failures:"
+    sed 's/^/  - /' "$threshold_failures_file"
+    if [[ "$strict_mode" == "1" ]]; then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+  fi
+
+  rm -rf "$tmp_dir"
+  return 0
+}
+
 rlms_safe_int() {
   local value="$1"
   local fallback="$2"
@@ -13106,6 +13482,11 @@ main() {
   local static=0
   local probe=0
   local skip_validate=0
+  local lifecycle_feature_prefix="feat/"
+  local lifecycle_main_ref="origin/main"
+  local lifecycle_strict=0
+  local lifecycle_json_out=""
+  local lifecycle_no_fetch=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -13121,9 +13502,21 @@ main() {
         schema_path="$2"
         shift 2
         ;;
+      --feature-prefix)
+        lifecycle_feature_prefix="$2"
+        shift 2
+        ;;
+      --main-ref)
+        lifecycle_main_ref="$2"
+        shift 2
+        ;;
       --loop)
         loop_id="$2"
         shift 2
+        ;;
+      --strict)
+        lifecycle_strict=1
+        shift
         ;;
       --summary)
         summary=1
@@ -13135,6 +13528,10 @@ main() {
         ;;
       --out)
         out_path="$2"
+        shift 2
+        ;;
+      --json-out)
+        lifecycle_json_out="$2"
         shift 2
         ;;
       --by)
@@ -13171,6 +13568,10 @@ main() {
         ;;
       --skip-validate)
         skip_validate=1
+        shift
+        ;;
+      --no-fetch)
+        lifecycle_no_fetch=1
         shift
         ;;
       -h|--help)
@@ -13214,6 +13615,9 @@ main() {
       ;;
     cancel)
       cancel_cmd "$repo"
+      ;;
+    lifecycle-audit)
+      lifecycle_audit_cmd "$repo" "$lifecycle_feature_prefix" "$lifecycle_main_ref" "$lifecycle_strict" "$lifecycle_json_out" "$lifecycle_no_fetch"
       ;;
     validate)
       validate_cmd "$repo" "$config_path" "$schema_path" "$static" "$probe"

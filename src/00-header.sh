@@ -17,6 +17,7 @@ Usage:
   superloop.sh usage [--repo DIR] [--loop ID] [--json]
   superloop.sh approve --loop ID [--repo DIR] [--by NAME] [--note TEXT] [--reject]
   superloop.sh cancel [--repo DIR]
+  superloop.sh lifecycle-audit [--repo DIR] [--feature-prefix PREFIX] [--main-ref REF] [--strict] [--json-out FILE] [--no-fetch]
   superloop.sh validate [--repo DIR] [--config FILE] [--schema FILE]
   superloop.sh runner-smoke [--repo DIR] [--config FILE] [--schema FILE] [--loop ID]
   superloop.sh report [--repo DIR] [--config FILE] [--loop ID] [--out FILE]
@@ -36,6 +37,11 @@ Options:
   --by NAME        Approver name for approval decisions (default: $USER)
   --note TEXT      Optional decision note for approval/rejection
   --reject         Record a rejection instead of approval
+  --feature-prefix Branch/worktree prefix to audit (default: feat/)
+  --main-ref REF   Main/trunk reference for merge-base checks (default: origin/main)
+  --strict         Fail non-zero when lifecycle thresholds are breached
+  --json-out FILE  Write lifecycle audit JSON report to file
+  --no-fetch       Skip fetch --prune before lifecycle audit
   --version        Print version and exit
 
 Notes:

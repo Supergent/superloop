@@ -462,6 +462,73 @@ EOF
 }
 
 # =============================================================================
+# Lifecycle Audit Command
+# =============================================================================
+
+@test "lifecycle-audit passes on clean repository and writes JSON output" {
+  git -C "$TEMP_DIR" init -q -b main
+  git -C "$TEMP_DIR" config user.email "test@example.com"
+  git -C "$TEMP_DIR" config user.name "Test User"
+  echo "base" > "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md
+  git -C "$TEMP_DIR" commit -q -m "init"
+
+  local out_json="$TEMP_DIR/lifecycle-report.json"
+  run "$PROJECT_ROOT/superloop.sh" lifecycle-audit --repo "$TEMP_DIR" --feature-prefix "feat/" --main-ref main --json-out "$out_json"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "ahead_without_pr: 0" ]]
+  [[ "$output" =~ "behind_and_dirty_worktree: 0" ]]
+  [ -f "$out_json" ]
+
+  run jq -r '.status' "$out_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "pass" ]
+}
+
+@test "lifecycle-audit strict fails on stale merged local feature branch" {
+  git -C "$TEMP_DIR" init -q -b main
+  git -C "$TEMP_DIR" config user.email "test@example.com"
+  git -C "$TEMP_DIR" config user.name "Test User"
+  echo "base" > "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md
+  git -C "$TEMP_DIR" commit -q -m "init"
+
+  git -C "$TEMP_DIR" checkout -q -b feat/lifecycle-stale
+  echo "feature" > "$TEMP_DIR/feature.txt"
+  git -C "$TEMP_DIR" add feature.txt
+  git -C "$TEMP_DIR" commit -q -m "feature"
+
+  git -C "$TEMP_DIR" checkout -q main
+  git -C "$TEMP_DIR" merge -q --no-ff feat/lifecycle-stale -m "merge feature"
+
+  run "$PROJECT_ROOT/superloop.sh" lifecycle-audit --repo "$TEMP_DIR" --feature-prefix "feat/lifecycle" --main-ref main --strict
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "stale_merged_local_branch: 1" ]]
+}
+
+@test "lifecycle-audit strict fails when feature worktree is behind and dirty" {
+  git -C "$TEMP_DIR" init -q -b main
+  git -C "$TEMP_DIR" config user.email "test@example.com"
+  git -C "$TEMP_DIR" config user.name "Test User"
+  echo "base" > "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md
+  git -C "$TEMP_DIR" commit -q -m "init"
+
+  git -C "$TEMP_DIR" branch feat/lifecycle-drift
+  git -C "$TEMP_DIR" worktree add -q "$TEMP_DIR/wt-drift" feat/lifecycle-drift
+
+  echo "main-update" >> "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md
+  git -C "$TEMP_DIR" commit -q -m "main update"
+
+  echo "dirty-change" >> "$TEMP_DIR/wt-drift/README.md"
+
+  run "$PROJECT_ROOT/superloop.sh" lifecycle-audit --repo "$TEMP_DIR" --feature-prefix "feat/lifecycle" --main-ref main --strict
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "behind_and_dirty_worktree: 1" ]]
+}
+
+# =============================================================================
 # Init Command
 # =============================================================================
 
