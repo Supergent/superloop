@@ -22,6 +22,11 @@ main() {
   local static=0
   local probe=0
   local skip_validate=0
+  local lifecycle_feature_prefix="feat/"
+  local lifecycle_main_ref="origin/main"
+  local lifecycle_strict=0
+  local lifecycle_json_out=""
+  local lifecycle_no_fetch=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,9 +42,21 @@ main() {
         schema_path="$2"
         shift 2
         ;;
+      --feature-prefix)
+        lifecycle_feature_prefix="$2"
+        shift 2
+        ;;
+      --main-ref)
+        lifecycle_main_ref="$2"
+        shift 2
+        ;;
       --loop)
         loop_id="$2"
         shift 2
+        ;;
+      --strict)
+        lifecycle_strict=1
+        shift
         ;;
       --summary)
         summary=1
@@ -51,6 +68,10 @@ main() {
         ;;
       --out)
         out_path="$2"
+        shift 2
+        ;;
+      --json-out)
+        lifecycle_json_out="$2"
         shift 2
         ;;
       --by)
@@ -87,6 +108,10 @@ main() {
         ;;
       --skip-validate)
         skip_validate=1
+        shift
+        ;;
+      --no-fetch)
+        lifecycle_no_fetch=1
         shift
         ;;
       -h|--help)
@@ -130,6 +155,9 @@ main() {
       ;;
     cancel)
       cancel_cmd "$repo"
+      ;;
+    lifecycle-audit)
+      lifecycle_audit_cmd "$repo" "$lifecycle_feature_prefix" "$lifecycle_main_ref" "$lifecycle_strict" "$lifecycle_json_out" "$lifecycle_no_fetch"
       ;;
     validate)
       validate_cmd "$repo" "$config_path" "$schema_path" "$static" "$probe"
