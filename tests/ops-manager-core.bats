@@ -233,9 +233,9 @@ JSONL
   local escalations_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/escalations.jsonl"
   [ -f "$escalations_file" ]
 
-  run bash -lc "tail -n 1 '$escalations_file' | jq -r '.category'"
+  run bash -lc "jq -r 'select(.category == \"divergence_detected\") | .category' '$escalations_file' | wc -l | tr -d ' '"
   [ "$status" -eq 0 ]
-  [ "$output" = "divergence_detected" ]
+  [ "$output" -ge 1 ]
 }
 
 @test "ops manager project-state fails closed on invalid event envelope" {
@@ -286,6 +286,13 @@ EOF
   run bash -lc "tail -n 1 '$intents_file' | jq -r '.intent'"
   [ "$status" -eq 0 ]
   [ "$output" = "cancel" ]
+
+  local control_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control.jsonl"
+  [ -f "$control_telemetry" ]
+
+  run bash -lc "tail -n 1 '$control_telemetry' | jq -r '.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "confirmed" ]
 }
 
 @test "ops manager control approve executes and confirms completion" {

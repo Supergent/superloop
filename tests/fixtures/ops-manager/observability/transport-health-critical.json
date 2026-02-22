@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "v1",
+  "updatedAt": "2026-02-22T12:10:00Z",
+  "transport": "sprite_service",
+  "lastResult": "failed",
+  "failureStreak": 2,
+  "lastFailureCode": "service_request_failed",
+  "lastFailureAt": "2026-02-22T12:10:00Z"
+}

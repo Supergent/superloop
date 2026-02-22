@@ -173,7 +173,13 @@ fi
 
 ops_dir="$repo/.superloop/ops-manager/$loop_id"
 intents_file="$ops_dir/intents.jsonl"
+telemetry_dir="$ops_dir/telemetry"
+control_telemetry_file="$telemetry_dir/control.jsonl"
 mkdir -p "$ops_dir"
+mkdir -p "$telemetry_dir"
+
+control_started_at="$(timestamp)"
+control_started_epoch=$(date -u +%s)
 
 status="failed_command"
 confirmed="false"
@@ -344,6 +350,58 @@ entry_json=$(jq -cn \
   } | with_entries(select(.value != null))')
 
 printf '%s\n' "$entry_json" >> "$intents_file"
+
+reason_code=""
+case "$status" in
+  ambiguous)
+    reason_code="control_ambiguous"
+    ;;
+  failed_command)
+    reason_code="control_failed_command"
+    ;;
+esac
+
+control_completed_at="$(timestamp)"
+control_completed_epoch=$(date -u +%s)
+duration_seconds=$(( control_completed_epoch - control_started_epoch ))
+if (( duration_seconds < 0 )); then
+  duration_seconds=0
+fi
+
+telemetry_json=$(jq -cn \
+  --arg timestamp "$control_completed_at" \
+  --arg started_at "$control_started_at" \
+  --arg loop_id "$loop_id" \
+  --arg intent "$intent" \
+  --arg transport "$transport" \
+  --arg status "$status" \
+  --arg reason_code "$reason_code" \
+  --arg idempotency_key "$idempotency_ref" \
+  --arg requested_by "$by" \
+  --argjson exit_code "$exit_code" \
+  --argjson confirm_exit_code "$confirm_exit_code" \
+  --argjson confirmed "$confirmed" \
+  --argjson duration_seconds "$duration_seconds" \
+  --argjson retry_attempts "$retry_attempts" \
+  --argjson retry_backoff_seconds "$retry_backoff_seconds" \
+  '{
+    timestamp: $timestamp,
+    startedAt: $started_at,
+    loopId: $loop_id,
+    intent: $intent,
+    transport: $transport,
+    status: $status,
+    reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+    idempotencyKey: (if ($idempotency_key | length) > 0 then $idempotency_key else null end),
+    requestedBy: $requested_by,
+    exitCode: $exit_code,
+    confirmExitCode: $confirm_exit_code,
+    confirmed: $confirmed,
+    durationSeconds: $duration_seconds,
+    retryAttempts: $retry_attempts,
+    retryBackoffSeconds: $retry_backoff_seconds
+  } | with_entries(select(.value != null))')
+printf '%s\n' "$telemetry_json" >> "$control_telemetry_file"
 
 jq -c '.' <<<"$entry_json"
 

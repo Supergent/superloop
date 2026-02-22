@@ -11,7 +11,11 @@ Operational procedures for manager core behavior across local and sprite-service
 ## Quick Paths
 - manager state: `.superloop/ops-manager/<loop>/state.json`
 - manager cursor: `.superloop/ops-manager/<loop>/cursor.json`
+- manager health: `.superloop/ops-manager/<loop>/health.json`
 - intent log: `.superloop/ops-manager/<loop>/intents.jsonl`
+- reconcile telemetry: `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl`
+- control telemetry: `.superloop/ops-manager/<loop>/telemetry/control.jsonl`
+- transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
 
 ## Standard Reconcile
@@ -22,6 +26,15 @@ scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --pretty
 Expected outputs:
 - updated projection state file
 - updated cursor file
+- updated health file
+- appended reconcile telemetry
+
+## Operator Status Snapshot
+```bash
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
+
+Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, and latest control/reconcile outcomes.
 
 ## Divergence Triage
 1. Inspect current manager projection:
@@ -42,6 +55,14 @@ scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --from-st
 ```
 - if divergence persists, append escalation evidence to `.superloop/ops-manager/<loop>/escalations.jsonl`
 
+4. Confirm health reason surface:
+```bash
+jq '.health.status, .health.reasonCodes' .superloop/ops-manager/<loop>/state.json
+```
+
+Expected reason code for this workflow:
+- `divergence_detected`
+
 ## Safe Control-Intent Retry
 1. Inspect latest intent entries:
 ```bash
@@ -59,6 +80,13 @@ scripts/ops-manager-control.sh --repo /path/to/repo --loop <loop-id> --intent ca
 ```bash
 scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id>
 ```
+
+5. Validate control telemetry and ambiguous outcomes:
+```bash
+tail -n 5 .superloop/ops-manager/<loop>/telemetry/control.jsonl
+```
+
+If latest reason code is `control_ambiguous`, do not repeat actions blindly; inspect runtime artifacts first.
 
 ## Cursor Reset and Replay
 Use when cursor drift or corrupted cursor JSON is detected.
@@ -108,3 +136,26 @@ scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --transpo
 scripts/ops-manager-control.sh --repo /path/to/repo --loop <loop-id> --intent cancel --transport local
 ```
 3. After service recovery, replay from start or stable cursor and re-enable service mode.
+
+Operational reason codes expected in this flow:
+- `transport_unreachable`
+- `invalid_transport_payload`
+- `ingest_stale` (if outage delays event freshness long enough)
+
+## Threshold Tuning
+Default reconcile thresholds:
+- degraded ingest lag: `300s`
+- critical ingest lag: `900s`
+- degraded transport failure streak: `2`
+- critical transport failure streak: `4`
+
+Override example:
+```bash
+scripts/ops-manager-reconcile.sh \
+  --repo /path/to/repo \
+  --loop <loop-id> \
+  --degraded-ingest-lag-seconds 120 \
+  --critical-ingest-lag-seconds 300 \
+  --degraded-transport-failure-streak 1 \
+  --critical-transport-failure-streak 3
+```
