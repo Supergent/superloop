@@ -49,8 +49,24 @@ scripts/dev-supergent-lab.sh
 Prefer env-driven URLs over hardcoded ports.
 
 - Superloop UI: `SUPERLOOP_UI_URL` (default `http://superloop-ui.localhost:1355`)
-- Supergent app: `SUPERGENT_BASE_URL` (default `http://supergent.localhost:1355`)
-- Supergent lab: `SUPERGENT_LAB_BASE_URL` (default `http://lab.supergent.localhost:1355`)
+- Canonical app URL: `SUPERLOOP_DEV_BASE_URL` (profile default depends on target repo)
+- Canonical lab URL: `SUPERLOOP_LAB_BASE_URL` (profile default depends on target repo)
+- Canonical raw dev port (optional): `SUPERLOOP_DEV_PORT` (target-repo default often `5174`)
+
+For repos still migrating, keep compatibility aliases as fallback only:
+
+- `SUPERGENT_BASE_URL` -> fallback alias for `SUPERLOOP_DEV_BASE_URL`
+- `SUPERGENT_LAB_BASE_URL` -> fallback alias for `SUPERLOOP_LAB_BASE_URL`
+- `SUPERGENT_DEV_PORT` -> fallback alias for `SUPERLOOP_DEV_PORT`
+
+Resolution order should be:
+
+1. Canonical `SUPERLOOP_*`
+2. Product-specific alias
+3. Generic env fallback (`TEST_BASE_URL`, `PORT`) where applicable
+4. Explicit localhost fallback only for approved raw-runtime scripts
+
+See `docs/dev-env-contract-v1.md` for the full contract.
 
 ## Escape Hatches
 

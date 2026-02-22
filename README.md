@@ -40,6 +40,11 @@ scripts/dev-env-doctor.sh
 This enables the default local stack (`devenv` + `direnv` + `portless`).
 Use `PORTLESS=0` to bypass proxy routing temporarily.
 
+Cross-repo env contract:
+
+- Canonical local execution env keys are documented in `docs/dev-env-contract-v1.md`.
+- New loop construction should prefer `SUPERLOOP_*` keys; target-repo aliases are fallback-only during migration.
+
 **1. Create a spec**:
 
 ```
