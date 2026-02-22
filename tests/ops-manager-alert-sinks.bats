@@ -8,12 +8,20 @@ setup() {
   RECEIVER_PORT=""
   RECEIVER_URL=""
   RECEIVER_LOG="$TEMP_DIR/alert-receiver.jsonl"
+  SERVICE_PID=""
+  SERVICE_PORT=""
+  SERVICE_URL=""
+  SERVICE_TOKEN="test-token"
 }
 
 teardown() {
   if [[ -n "$RECEIVER_PID" ]] && kill -0 "$RECEIVER_PID" 2>/dev/null; then
     kill "$RECEIVER_PID" 2>/dev/null || true
     wait "$RECEIVER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$SERVICE_PID" ]] && kill -0 "$SERVICE_PID" 2>/dev/null; then
+    kill "$SERVICE_PID" 2>/dev/null || true
+    wait "$SERVICE_PID" 2>/dev/null || true
   fi
   rm -rf "$TEMP_DIR"
 }
@@ -107,6 +115,32 @@ wait_for_log_lines() {
   done
 
   return 1
+}
+
+start_service() {
+  local repo="$1"
+  local token="$2"
+
+  SERVICE_PORT="$(get_free_port)"
+  SERVICE_URL="http://127.0.0.1:$SERVICE_PORT"
+
+  OPS_MANAGER_SERVICE_TOKEN="$token" \
+    "$PROJECT_ROOT/scripts/ops-manager-sprite-service.py" \
+    --repo "$repo" --host 127.0.0.1 --port "$SERVICE_PORT" --token "$token" \
+    >"$TEMP_DIR/service.log" 2>&1 &
+
+  SERVICE_PID=$!
+
+  local ready=0
+  for _ in $(seq 1 60); do
+    if curl -sS -H "X-Ops-Token: $token" "$SERVICE_URL/healthz" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.1
+  done
+
+  [ "$ready" -eq 1 ]
 }
 
 write_runtime_artifacts() {
@@ -398,4 +432,112 @@ JSONL
   run jq -r '.processedCount' "$dispatch_state_file"
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
+}
+
+@test "status includes alert dispatch and last delivery summaries" {
+  local loop_id="demo-loop"
+  local repo="$TEMP_DIR/repo-status"
+  local stale_ts="2020-01-01T00:00:00Z"
+  write_runtime_artifacts "$repo" "$loop_id" "$stale_ts"
+
+  local config_file="$PROJECT_ROOT/config/ops-manager-alert-sinks.v1.json"
+  local dispatch_state_file="$repo/.superloop/ops-manager/$loop_id/alert-dispatch-state.json"
+  local dispatch_telemetry_file="$repo/.superloop/ops-manager/$loop_id/telemetry/alerts.jsonl"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --alerts-enabled true \
+    --alert-config-file "$config_file" \
+    --degraded-ingest-lag-seconds 1 \
+    --critical-ingest-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.alerts.dispatch.status' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "success" ]
+
+  run jq -e '.alerts.dispatch.processedCount >= 1' <<<"$status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.alerts.lastDelivery.status' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "skipped" ]
+
+  run jq -r '.alerts.lastDelivery.reasonCode' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "no_dispatchable_sinks" ]
+
+  run jq -r '.files.alertDispatchStateFile' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$dispatch_state_file" ]
+
+  run jq -r '.files.alertDispatchTelemetryFile' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$dispatch_telemetry_file" ]
+}
+
+@test "alert dispatch is transport-parity across local and sprite_service reconciles" {
+  local loop_id="demo-loop"
+  local stale_ts="2020-01-01T00:00:00Z"
+  local local_repo="$TEMP_DIR/local-alerts"
+  local service_repo="$TEMP_DIR/service-alerts"
+  mkdir -p "$local_repo" "$service_repo"
+
+  write_runtime_artifacts "$local_repo" "$loop_id" "$stale_ts"
+  write_runtime_artifacts "$service_repo" "$loop_id" "$stale_ts"
+
+  local config_file="$PROJECT_ROOT/config/ops-manager-alert-sinks.v1.json"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --alerts-enabled true \
+    --alert-config-file "$config_file" \
+    --degraded-ingest-lag-seconds 1 \
+    --critical-ingest-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --alerts-enabled true \
+    --alert-config-file "$config_file" \
+    --degraded-ingest-lag-seconds 1 \
+    --critical-ingest-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+
+  local local_dispatch_state="$local_repo/.superloop/ops-manager/$loop_id/alert-dispatch-state.json"
+  local service_dispatch_state="$service_repo/.superloop/ops-manager/$loop_id/alert-dispatch-state.json"
+  [ -f "$local_dispatch_state" ]
+  [ -f "$service_dispatch_state" ]
+
+  local local_state_summary
+  local service_state_summary
+  local_state_summary="$(jq -c '{status, processedCount, dispatchedCount, skippedCount, failedCount, failureReasonCodes}' "$local_dispatch_state")"
+  service_state_summary="$(jq -c '{status, processedCount, dispatchedCount, skippedCount, failedCount, failureReasonCodes}' "$service_dispatch_state")"
+  [ "$local_state_summary" = "$service_state_summary" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$local_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local local_status_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$service_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local service_status_json="$output"
+
+  local local_alert_summary
+  local service_alert_summary
+  local_alert_summary="$(jq -c '{dispatch: (.alerts.dispatch | {status, processedCount, dispatchedCount, skippedCount, failedCount}), lastDelivery: (.alerts.lastDelivery | {status, reasonCode, escalationCategory, eventSeverity, sinkCount, dispatchedSinkCount, failedSinkCount})}' <<<"$local_status_json")"
+  service_alert_summary="$(jq -c '{dispatch: (.alerts.dispatch | {status, processedCount, dispatchedCount, skippedCount, failedCount}), lastDelivery: (.alerts.lastDelivery | {status, reasonCode, escalationCategory, eventSeverity, sinkCount, dispatchedSinkCount, failedSinkCount})}' <<<"$service_status_json")"
+  [ "$local_alert_summary" = "$service_alert_summary" ]
 }

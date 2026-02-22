@@ -14,9 +14,11 @@ Operational procedures for manager core behavior across local and sprite-service
 - manager health: `.superloop/ops-manager/<loop>/health.json`
 - intent log: `.superloop/ops-manager/<loop>/intents.jsonl`
 - profile drift state: `.superloop/ops-manager/<loop>/profile-drift.json`
+- alert dispatch state: `.superloop/ops-manager/<loop>/alert-dispatch-state.json`
 - reconcile telemetry: `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl`
 - control telemetry: `.superloop/ops-manager/<loop>/telemetry/control.jsonl`
 - profile drift telemetry: `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl`
+- alert dispatch telemetry: `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
@@ -39,6 +41,7 @@ scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-wi
 ```
 
 Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, latest control/reconcile outcomes, and tuning guidance (`recommendedProfile`, `confidence`).
+Alert delivery fields are included under `alerts.dispatch` and `alerts.lastDelivery`.
 
 ## Profile Drift Triage
 Use when policy profile and telemetry recommendation may be diverging.
@@ -186,6 +189,62 @@ Config precedence:
 1. `--config-file`
 2. `OPS_MANAGER_ALERT_SINKS_FILE`
 3. `config/ops-manager-alert-sinks.v1.json`
+
+## Alert Delivery Triage
+Use when escalations are being generated but expected external notifications are not observed.
+
+1. Check current delivery summary in status:
+```bash
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
+
+2. Inspect dispatch state:
+```bash
+jq '.' .superloop/ops-manager/<loop>/alert-dispatch-state.json
+```
+
+3. Inspect recent delivery telemetry:
+```bash
+tail -n 20 .superloop/ops-manager/<loop>/telemetry/alerts.jsonl
+```
+
+4. Map reason codes to likely operator actions:
+- `missing_secret`: set required sink env vars or disable the sink.
+- `route_resolution_failed` / `invalid_route_resolution`: validate `config/ops-manager-alert-sinks.v1.json` against schema and route references.
+- `http_error` / `request_failed`: verify endpoint reachability, credentials, and timeout settings.
+- `no_dispatchable_sinks`: expected when matching routes only reference disabled sinks.
+- `alert_dispatch_failed`: dispatch command failed during reconcile wrapper invocation; rerun dispatch manually after correcting root cause.
+
+5. Manual replay after fix:
+```bash
+scripts/ops-manager-alert-dispatch.sh \
+  --repo /path/to/repo \
+  --loop <loop-id> \
+  --alert-config-file config/ops-manager-alert-sinks.v1.json \
+  --pretty
+```
+
+## Alert Outage Fallback
+When downstream sinks are degraded/outage-level:
+
+1. Keep reconcile/control available by temporarily disabling dispatch in reconcile:
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --alerts-enabled false
+```
+
+2. Continue collecting escalation evidence in:
+- `.superloop/ops-manager/<loop>/escalations.jsonl`
+
+3. After sink recovery, replay pending escalations through dispatch:
+```bash
+scripts/ops-manager-alert-dispatch.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
+
+4. Re-enable dispatch and verify status summary reports fresh alert activity:
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --alerts-enabled true
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
 
 ## Threshold Tuning
 Default profile catalog (`config/ops-manager-threshold-profiles.v1.json`):

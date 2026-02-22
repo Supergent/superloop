@@ -149,6 +149,7 @@ Purpose:
 - Normalizes state, health, cursor, latest control, and latest reconcile telemetry.
 - Includes tuning guidance fields from telemetry summaries (`recommendedProfile`, `confidence`, `rationale`).
 - Includes profile-drift state/action fields when drift artifacts are present.
+- Includes alert delivery summary fields from dispatch artifacts (`alerts.dispatch`, `alerts.lastDelivery`).
 
 ### Threshold Profile Resolver
 ```bash
@@ -175,6 +176,21 @@ Config file precedence:
 1. Explicit `--config-file`
 2. `OPS_MANAGER_ALERT_SINKS_FILE`
 3. `config/ops-manager-alert-sinks.v1.json`
+
+### Alert Dispatch
+```bash
+scripts/ops-manager-alert-dispatch.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --alert-config-file config/ops-manager-alert-sinks.v1.json \
+  --pretty
+```
+
+Purpose:
+- Consumes new rows from `.superloop/ops-manager/<loop>/escalations.jsonl` using cursor-style offsets.
+- Resolves dispatch policy via alert sink config and routes to `webhook`, `slack`, and `pagerduty_events`.
+- Persists dispatch state and per-attempt delivery telemetry for operator triage.
+- Runs automatically in `scripts/ops-manager-reconcile.sh` when `--alerts-enabled true` (default).
 
 ### Telemetry Summary
 ```bash
@@ -232,9 +248,11 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/intents.jsonl` - control intent execution log.
 - `.superloop/ops-manager/<loop>/escalations.jsonl` - divergence/escalation records.
 - `.superloop/ops-manager/<loop>/profile-drift.json` - current profile drift state.
+- `.superloop/ops-manager/<loop>/alert-dispatch-state.json` - latest alert dispatch summary and cursor offsets.
 - `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl` - reconcile attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/control.jsonl` - control attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl` - profile drift history.
+- `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl` - alert delivery attempts/outcomes and reason codes.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
@@ -251,6 +269,24 @@ Current reason-code surface used in health and escalation artifacts:
 - `projection_failed`
 - `reconcile_failed`
 - `profile_drift_detected`
+
+## Alert Dispatch Reason Codes
+Current alert dispatch telemetry/state may include:
+- `invalid_escalation_json`
+- `missing_escalation_category`
+- `route_resolution_failed`
+- `invalid_route_resolution`
+- `severity_below_min`
+- `no_dispatchable_sinks`
+- `missing_secret`
+- `http_error`
+- `request_failed`
+- `unsupported_sink_type`
+- `invalid_sink_result`
+- `sink_dispatch_failed`
+- `partial_dispatch_failure`
+- `dispatch_failed`
+- `alert_dispatch_failed`
 
 ## Compatibility and Versioning Rules
 - `schemaVersion` is required and currently fixed to `v1`.

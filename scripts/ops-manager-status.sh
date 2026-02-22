@@ -13,6 +13,8 @@ Options:
   --intents-file <path>   Manager intents log. Default: <repo>/.superloop/ops-manager/<loop>/intents.jsonl
   --drift-state-file <path>   Profile drift state path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
   --drift-history-file <path> Profile drift history path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
+  --alert-dispatch-state-file <path>      Alert dispatch state path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
+  --alert-dispatch-telemetry-file <path>  Alert dispatch telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/alerts.jsonl
   --summary-window <n>    Telemetry summary window size (default: 200)
   --pretty                Pretty-print output JSON.
   --help                  Show this help message.
@@ -43,6 +45,8 @@ health_file=""
 intents_file=""
 drift_state_file=""
 drift_history_file=""
+alert_dispatch_state_file=""
+alert_dispatch_telemetry_file=""
 summary_window="200"
 pretty="0"
 
@@ -78,6 +82,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --drift-history-file)
       drift_history_file="${2:-}"
+      shift 2
+      ;;
+    --alert-dispatch-state-file)
+      alert_dispatch_state_file="${2:-}"
+      shift 2
+      ;;
+    --alert-dispatch-telemetry-file)
+      alert_dispatch_telemetry_file="${2:-}"
       shift 2
       ;;
     --summary-window)
@@ -136,6 +148,12 @@ if [[ -z "$drift_state_file" ]]; then
 fi
 if [[ -z "$drift_history_file" ]]; then
   drift_history_file="$telemetry_dir/profile-drift.jsonl"
+fi
+if [[ -z "$alert_dispatch_state_file" ]]; then
+  alert_dispatch_state_file="$ops_dir/alert-dispatch-state.json"
+fi
+if [[ -z "$alert_dispatch_telemetry_file" ]]; then
+  alert_dispatch_telemetry_file="$telemetry_dir/alerts.jsonl"
 fi
 
 if [[ ! -f "$state_file" && ! -f "$health_file" ]]; then
@@ -196,6 +214,20 @@ elif jq -e '.drift != null' <<<"$state_json" >/dev/null 2>&1; then
   drift_json=$(jq -c '.drift' <<<"$state_json")
 fi
 
+alert_dispatch_state_json='null'
+if [[ -f "$alert_dispatch_state_file" ]]; then
+  alert_dispatch_state_json=$(jq -c '.' "$alert_dispatch_state_file" 2>/dev/null) || die "invalid alert dispatch state JSON: $alert_dispatch_state_file"
+fi
+
+last_alert_delivery_json='null'
+if [[ -f "$alert_dispatch_telemetry_file" ]]; then
+  if line=$(tail -n 1 "$alert_dispatch_telemetry_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      last_alert_delivery_json=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
 status_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg generated_at "$(timestamp)" \
@@ -207,6 +239,8 @@ status_json=$(jq -cn \
   --arg intents_file "$intents_file" \
   --arg drift_state_file "$drift_state_file" \
   --arg drift_history_file "$drift_history_file" \
+  --arg alert_dispatch_state_file "$alert_dispatch_state_file" \
+  --arg alert_dispatch_telemetry_file "$alert_dispatch_telemetry_file" \
   --arg reconcile_telemetry_file "$reconcile_telemetry_file" \
   --arg control_telemetry_file "$control_telemetry_file" \
   --argjson state "$state_json" \
@@ -216,6 +250,8 @@ status_json=$(jq -cn \
   --argjson last_reconcile "$last_reconcile_json" \
   --argjson tuning_summary "$tuning_summary_json" \
   --argjson drift "$drift_json" \
+  --argjson alert_dispatch_state "$alert_dispatch_state_json" \
+  --argjson last_alert_delivery "$last_alert_delivery_json" \
   --argjson summary_window "$summary_window" \
   '{
     schemaVersion: $schema_version,
@@ -277,6 +313,41 @@ status_json=$(jq -cn \
       else ($state.drift // null)
       end
     ),
+    alerts: (
+      if $alert_dispatch_state == null and $last_alert_delivery == null then null
+      else {
+        dispatch: (
+          if $alert_dispatch_state == null then null
+          else {
+            status: ($alert_dispatch_state.status // null),
+            updatedAt: ($alert_dispatch_state.updatedAt // null),
+            processedCount: ($alert_dispatch_state.processedCount // 0),
+            dispatchedCount: ($alert_dispatch_state.dispatchedCount // 0),
+            skippedCount: ($alert_dispatch_state.skippedCount // 0),
+            failedCount: ($alert_dispatch_state.failedCount // 0),
+            failureReasonCodes: ($alert_dispatch_state.failureReasonCodes // []),
+            escalationsLineOffset: ($alert_dispatch_state.escalationsLineOffset // 0),
+            escalationsLineCount: ($alert_dispatch_state.escalationsLineCount // 0)
+          } | with_entries(select(.value != null))
+          end
+        ),
+        lastDelivery: (
+          if $last_alert_delivery == null then null
+          else {
+            timestamp: ($last_alert_delivery.timestamp // null),
+            status: ($last_alert_delivery.status // null),
+            reasonCode: ($last_alert_delivery.reasonCode // null),
+            escalationCategory: ($last_alert_delivery.escalationCategory // null),
+            eventSeverity: ($last_alert_delivery.eventSeverity // null),
+            sinkCount: ($last_alert_delivery.sinkCount // null),
+            dispatchedSinkCount: ($last_alert_delivery.dispatchedSinkCount // null),
+            failedSinkCount: ($last_alert_delivery.failedSinkCount // null)
+          } | with_entries(select(.value != null))
+          end
+        )
+      } | with_entries(select(.value != null))
+      end
+    ),
     files: {
       stateFile: $state_file,
       cursorFile: $cursor_file,
@@ -284,6 +355,8 @@ status_json=$(jq -cn \
       intentsFile: $intents_file,
       driftStateFile: $drift_state_file,
       driftHistoryFile: $drift_history_file,
+      alertDispatchStateFile: $alert_dispatch_state_file,
+      alertDispatchTelemetryFile: $alert_dispatch_telemetry_file,
       reconcileTelemetryFile: $reconcile_telemetry_file,
       controlTelemetryFile: $control_telemetry_file
     }
