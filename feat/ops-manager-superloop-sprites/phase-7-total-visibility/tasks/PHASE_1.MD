@@ -11,9 +11,9 @@
 3. [x] Project heartbeat freshness into health/status with reason-coded degradation behavior.
 
 ## P1.2 Control Invocation Audit Log
-1. [ ] Add structured invocation log entries for manager-issued control actions.
-2. [ ] Capture transport, idempotency key, intent, execution result, and confirmation outcome.
-3. [ ] Ensure append-only audit trails under `.superloop/ops-manager/<loop>/telemetry/`.
+1. [x] Add structured invocation log entries for manager-issued control actions.
+2. [x] Capture transport, idempotency key, intent, execution result, and confirmation outcome.
+3. [x] Ensure append-only audit trails under `.superloop/ops-manager/<loop>/telemetry/`.
 
 ## P1.3 Envelope Sequence Diagnostics
 1. [ ] Add sequence identifiers for snapshot/event envelopes (local + sprite_service).
