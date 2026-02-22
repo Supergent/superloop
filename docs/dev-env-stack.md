@@ -37,7 +37,7 @@ Default URL:
 Use the helper to apply the same baseline to target repos:
 
 ```bash
-scripts/bootstrap-target-dev-env.sh --repo /path/to/repo --profile supergent
+scripts/bootstrap-target-dev-env.sh --repo /path/to/repo --profile <target-profile>
 ```
 
 `--repo` accepts both normal git checkouts and git worktree paths.

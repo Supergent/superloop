@@ -40,6 +40,12 @@ scripts/dev-env-doctor.sh
 This enables the default local stack (`devenv` + `direnv` + `portless`).
 Use `PORTLESS=0` to bypass proxy routing temporarily.
 
+Cross-repo env contract:
+
+- Canonical local execution env keys are documented in `docs/dev-env-contract-v1.md`.
+- New loop construction should prefer `SUPERLOOP_*` keys; target-repo aliases are fallback-only during migration.
+- Use `scripts/check-core-decoupling.sh` to ensure core paths stay target-agnostic.
+
 **1. Create a spec**:
 
 ```
@@ -134,13 +140,13 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
         {
           "id": "phase-3-complete",
           "type": "markdown_checklist_complete",
-          "path": "feat/lab-v0/initiation/tasks/PHASE_3.MD"
+          "path": "feat/my-feature/initiation/tasks/PHASE_3.MD"
         },
         {
-          "id": "jtbd-filled",
+          "id": "placeholder-cleanup",
           "type": "file_regex_absent",
-          "path": "feat/lab-v0/initiation/USER_SEGMENTS_AND_JTBD.MD",
-          "pattern": "\\\\| US-00[1-3] \\\\|\\\\s*\\\\|"
+          "path": "feat/my-feature/initiation/PLAN.MD",
+          "pattern": "<[^>]+>"
         }
       ]
     },

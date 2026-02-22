@@ -2,17 +2,35 @@
 set -euo pipefail
 
 usage() {
+  local profiles
+  profiles="$(available_profiles | paste -sd ', ' -)"
   cat <<'USAGE'
 Usage:
   scripts/bootstrap-target-dev-env.sh --repo <path> --profile <name> [--force]
 
 Profiles:
-  supergent
+USAGE
+  if [[ -n "$profiles" ]]; then
+    echo "  $profiles"
+  else
+    echo "  (none found under scripts/dev-env/profiles)"
+  fi
+  cat <<'USAGE'
 
 Description:
   Copies baseline devenv/direnv files into a target repo and ensures gitignore
   contains local environment cache entries.
 USAGE
+}
+
+available_profiles() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local profiles_dir="$script_dir/dev-env/profiles"
+  if [[ ! -d "$profiles_dir" ]]; then
+    return
+  fi
+  find "$profiles_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
 }
 
 repo=""
