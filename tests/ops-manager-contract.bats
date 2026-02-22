@@ -86,6 +86,14 @@ JSONL
   [ "$status" -eq 0 ]
   [ "$output" = "run-123" ]
 
+  run jq -r '.sequence.source' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cursor_event_line_offset" ]
+
+  run jq -r '.sequence.value' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
   run jq -r '.cursor.eventLineOffset' "$output_file"
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
@@ -129,6 +137,14 @@ JSON
   run jq -r 'select(.envelopeType == "loop_run_event") | .envelopeType' "$TEMP_DIR/events.ndjson"
   [ "$status" -eq 0 ]
 
+  run bash -lc "head -n 1 '$TEMP_DIR/events.ndjson' | jq -r '.sequence.source'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cursor_event_line_offset" ]
+
+  run bash -lc "head -n 1 '$TEMP_DIR/events.ndjson' | jq -r '.sequence.value'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
   run jq -r '.eventLineOffset' "$cursor_file"
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
@@ -158,6 +174,8 @@ JSONL
     and .envelopeType == "loop_run_snapshot"
     and (.source.repoPath | length) > 0
     and (.source.loopId | length) > 0
+    and (.sequence.source == "cursor_event_line_offset")
+    and (.sequence.value >= 0)
     and (.cursor.eventLineOffset >= 0)
     and (.health.eventCount >= 0)
   ' "$PROJECT_ROOT/tests/fixtures/ops-manager/snapshot.v1.json"
@@ -168,6 +186,8 @@ JSONL
     and .envelopeType == "loop_run_event"
     and (.source.repoPath | length) > 0
     and (.source.loopId | length) > 0
+    and (.sequence.source == "cursor_event_line_offset")
+    and (.sequence.value >= 0)
     and (.event.name | length) > 0
     and (.run.iteration >= 0)
   ' "$PROJECT_ROOT/tests/fixtures/ops-manager/event.v1.json"

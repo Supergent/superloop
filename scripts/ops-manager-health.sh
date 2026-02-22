@@ -9,6 +9,7 @@ Usage:
 Options:
   --state-file <path>                         Optional manager state JSON file.
   --heartbeat-state-file <path>               Optional heartbeat state JSON file.
+  --sequence-state-file <path>                Optional sequence diagnostics JSON file.
   --transport-health-file <path>              Optional transport health JSON file.
   --intents-file <path>                       Optional intents JSONL file.
   --transport <local|sprite_service>          Transport mode label (default: local)
@@ -45,6 +46,7 @@ timestamp() {
 
 state_file=""
 heartbeat_state_file=""
+sequence_state_file=""
 transport_health_file=""
 intents_file=""
 transport="local"
@@ -68,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --heartbeat-state-file)
       heartbeat_state_file="${2:-}"
+      shift 2
+      ;;
+    --sequence-state-file)
+      sequence_state_file="${2:-}"
       shift 2
       ;;
     --transport-health-file)
@@ -191,6 +197,11 @@ if [[ -n "$heartbeat_state_file" && -f "$heartbeat_state_file" ]]; then
   heartbeat_state_json=$(jq -c '.' "$heartbeat_state_file" 2>/dev/null) || die "invalid heartbeat state JSON: $heartbeat_state_file"
 fi
 
+sequence_state_json='{}'
+if [[ -n "$sequence_state_file" && -f "$sequence_state_file" ]]; then
+  sequence_state_json=$(jq -c '.' "$sequence_state_file" 2>/dev/null) || die "invalid sequence state JSON: $sequence_state_file"
+fi
+
 transport_json='{}'
 if [[ -n "$transport_health_file" && -f "$transport_health_file" ]]; then
   transport_json=$(jq -c '.' "$transport_health_file" 2>/dev/null) || die "invalid transport health JSON: $transport_health_file"
@@ -242,6 +253,14 @@ if [[ ! "$transport_failure_streak" =~ ^[0-9]+$ ]]; then
   transport_failure_streak="0"
 fi
 last_transport_failure_code=$(jq -r '.lastFailureCode // empty' <<<"$transport_json")
+
+sequence_status=$(jq -r '.status // empty' <<<"$sequence_state_json")
+sequence_reason_code=$(jq -r '.reasonCode // empty' <<<"$sequence_state_json")
+sequence_updated_at=$(jq -r '.updatedAt // empty' <<<"$sequence_state_json")
+sequence_drift_active=$(jq -r '.driftActive // false' <<<"$sequence_state_json")
+if [[ "$sequence_drift_active" != "true" ]]; then
+  sequence_drift_active="false"
+fi
 
 reasons_tmp="$(mktemp)"
 trap 'rm -f "$reasons_tmp"' EXIT
@@ -316,6 +335,16 @@ elif (( transport_failure_streak >= degraded_transport_failure_streak )); then
   add_reason "transport_unreachable" "degraded" "transportFailureStreak" "$transport_failure_streak" "$degraded_transport_failure_streak"
 fi
 
+if [[ "$sequence_drift_active" == "true" ]]; then
+  if [[ -z "$sequence_reason_code" ]]; then
+    sequence_reason_code="ordering_drift_detected"
+  fi
+  if [[ -z "$sequence_status" ]]; then
+    sequence_status="ordering_drift_detected"
+  fi
+  add_reason "$sequence_reason_code" "degraded" "sequence.status" "$sequence_status" "ok"
+fi
+
 if [[ "$ingest_status" == "failed" ]]; then
   case "$failure_code" in
     snapshot_unavailable|events_unavailable|service_request_failed)
@@ -361,6 +390,8 @@ health_json=$(jq -cn \
   --arg last_transport_failure_code "$last_transport_failure_code" \
   --arg lifecycle_state "$lifecycle_state" \
   --arg last_intent_status "$last_intent_status" \
+  --arg sequence_status "$sequence_status" \
+  --arg sequence_updated_at "$sequence_updated_at" \
   --arg last_event_at "$last_event_at" \
   --arg last_heartbeat_at "$last_heartbeat_at" \
   --arg ingest_lag "$ingest_lag_seconds" \
@@ -385,6 +416,7 @@ health_json=$(jq -cn \
       heartbeatLagSeconds: (if ($heartbeat_lag | length) > 0 then ($heartbeat_lag | tonumber) else null end),
       transportFailureStreak: $transport_failure_streak,
       lastControlStatus: (if ($last_intent_status | length) > 0 then $last_intent_status else null end),
+      sequenceStatus: (if ($sequence_status | length) > 0 then $sequence_status else null end),
       lifecycleState: $lifecycle_state
     },
     thresholds: {
@@ -404,7 +436,8 @@ health_json=$(jq -cn \
     },
     evidence: {
       lastEventAt: (if ($last_event_at | length) > 0 then $last_event_at else null end),
-      lastHeartbeatAt: (if ($last_heartbeat_at | length) > 0 then $last_heartbeat_at else null end)
+      lastHeartbeatAt: (if ($last_heartbeat_at | length) > 0 then $last_heartbeat_at else null end),
+      sequenceUpdatedAt: (if ($sequence_updated_at | length) > 0 then $sequence_updated_at else null end)
     }
   }')
 

@@ -29,6 +29,24 @@
         }
       }
     },
+    "sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "value"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "artifactRef": {
       "type": "object",
       "additionalProperties": false,
@@ -228,6 +246,7 @@
         "envelopeType",
         "emittedAt",
         "source",
+        "sequence",
         "run",
         "runtime",
         "artifacts",
@@ -249,6 +268,9 @@
         },
         "source": {
           "$ref": "#/$defs/source"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
         },
         "run": {
           "type": "object",
@@ -423,6 +445,7 @@
         "envelopeType",
         "emittedAt",
         "source",
+        "sequence",
         "cursor",
         "run",
         "event"
@@ -442,6 +465,9 @@
         },
         "source": {
           "$ref": "#/$defs/source"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
         },
         "cursor": {
           "$ref": "#/$defs/cursor"

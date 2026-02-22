@@ -153,6 +153,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     --arg loop_id "$loop_id" \
     --argjson line_offset "$line_no" \
     --argjson line_count "$total_lines" \
+    --argjson sequence_value "$line_no" \
     --arg run_id "$run_id" \
     --argjson iteration "$iteration" \
     --arg event_timestamp "$event_timestamp" \
@@ -169,6 +170,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       source: {
         repoPath: $repo_path,
         loopId: $loop_id
+      },
+      sequence: {
+        source: "cursor_event_line_offset",
+        value: $sequence_value
       },
       cursor: {
         eventLineOffset: $line_offset,

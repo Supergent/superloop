@@ -277,6 +277,7 @@ snapshot_json=$(jq -cn \
   --argjson approval_ref "$approval_ref" \
   --argjson heartbeat_ref "$heartbeat_ref" \
   --argjson event_count "$event_line_count" \
+  --argjson sequence_value "$event_line_count" \
   --argjson has_pending_approval "$has_pending_approval" \
   --argjson gates "$gates_json" \
   --argjson stuck "$stuck_json" \
@@ -307,6 +308,10 @@ snapshot_json=$(jq -cn \
       activeRun: $active_run_ref,
       approval: $approval_ref,
       heartbeat: $heartbeat_ref
+    },
+    sequence: {
+      source: "cursor_event_line_offset",
+      value: $sequence_value
     },
     cursor: {
       eventLineOffset: $event_count,

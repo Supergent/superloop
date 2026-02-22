@@ -16,9 +16,9 @@
 3. [x] Ensure append-only audit trails under `.superloop/ops-manager/<loop>/telemetry/`.
 
 ## P1.3 Envelope Sequence Diagnostics
-1. [ ] Add sequence identifiers for snapshot/event envelopes (local + sprite_service).
-2. [ ] Add monotonic sequence validation and reason-coded ordering drift signals.
-3. [ ] Persist ordering diagnostics for operator triage.
+1. [x] Add sequence identifiers for snapshot/event envelopes (local + sprite_service).
+2. [x] Add monotonic sequence validation and reason-coded ordering drift signals.
+3. [x] Persist ordering diagnostics for operator triage.
 
 ## P1.4 Trace ID Propagation
 1. [ ] Generate/propagate trace IDs across reconcile, control, runtime effects, and escalation/alert telemetry.

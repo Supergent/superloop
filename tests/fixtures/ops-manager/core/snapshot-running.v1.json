@@ -6,6 +6,10 @@
     "repoPath": "/tmp/demo",
     "loopId": "demo-loop"
   },
+  "sequence": {
+    "source": "cursor_event_line_offset",
+    "value": 2
+  },
   "run": {
     "runId": "run-123",
     "iteration": 2,

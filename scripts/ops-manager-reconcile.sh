@@ -23,6 +23,8 @@ Options:
   --drift-summary-window <n>                     Telemetry summary window for drift (default: 200)
   --drift-state-file <path>                      Drift state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
   --drift-history-file <path>                    Drift history JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
+  --sequence-state-file <path>                   Sequence diagnostics state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/sequence-state.json
+  --sequence-telemetry-file <path>               Sequence diagnostics telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/sequence.jsonl
   --alerts-enabled <true|false>                  Enable alert dispatch pass (default: true)
   --alert-config-file <path>                     Alert sink config JSON path
   --alert-dispatch-state-file <path>             Alert dispatch state path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
@@ -74,6 +76,8 @@ drift_required_streak="3"
 drift_summary_window="200"
 drift_state_file=""
 drift_history_file=""
+sequence_state_file=""
+sequence_telemetry_file=""
 alerts_enabled="true"
 alert_config_file=""
 alert_dispatch_state_file=""
@@ -171,6 +175,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --drift-history-file)
       drift_history_file="${2:-}"
+      shift 2
+      ;;
+    --sequence-state-file)
+      sequence_state_file="${2:-}"
+      shift 2
+      ;;
+    --sequence-telemetry-file)
+      sequence_telemetry_file="${2:-}"
       shift 2
       ;;
     --alerts-enabled)
@@ -403,9 +415,17 @@ fi
 if [[ -z "$drift_history_file" ]]; then
   drift_history_file="$telemetry_dir/profile-drift.jsonl"
 fi
+if [[ -z "$sequence_state_file" ]]; then
+  sequence_state_file="$ops_dir/sequence-state.json"
+fi
+if [[ -z "$sequence_telemetry_file" ]]; then
+  sequence_telemetry_file="$telemetry_dir/sequence.jsonl"
+fi
 mkdir -p "$telemetry_dir"
 mkdir -p "$(dirname "$heartbeat_state_file")"
 mkdir -p "$(dirname "$heartbeat_telemetry_file")"
+mkdir -p "$(dirname "$sequence_state_file")"
+mkdir -p "$(dirname "$sequence_telemetry_file")"
 
 previous_health_status="healthy"
 previous_health_reason_codes='[]'
@@ -435,6 +455,9 @@ transport_failure_streak="0"
 health_json='{}'
 health_status="healthy"
 health_reason_codes='[]'
+sequence_status="not_evaluated"
+sequence_reason_code=""
+sequence_json='null'
 tuning_summary_json='null'
 drift_json='null'
 alert_dispatch_json='null'
@@ -484,6 +507,8 @@ append_reconcile_telemetry() {
     --argjson duration_seconds "$duration_seconds" \
     --argjson transport_failure_streak "$transport_failure_streak" \
     --arg health_status "$health_status" \
+    --arg sequence_status "$sequence_status" \
+    --arg sequence_reason_code "$sequence_reason_code" \
     --argjson health_reason_codes "$health_reason_codes" \
     '{
       timestamp: $timestamp,
@@ -503,6 +528,8 @@ append_reconcile_telemetry() {
       thresholdProfile: (if ($threshold_profile | length) > 0 then $threshold_profile else null end),
       durationSeconds: $duration_seconds,
       transportFailureStreak: $transport_failure_streak,
+      sequenceStatus: $sequence_status,
+      sequenceReasonCode: (if ($sequence_reason_code | length) > 0 then $sequence_reason_code else null end),
       healthStatus: $health_status,
       healthReasonCodes: $health_reason_codes
     } | with_entries(select(.value != null))' >> "$reconcile_telemetry_file"
@@ -691,6 +718,206 @@ persist_heartbeat_observation() {
       heartbeatLagSeconds: $heartbeat_lag_seconds,
       heartbeat: $heartbeat
     } | with_entries(select(.value != null))' >> "$heartbeat_telemetry_file"
+}
+
+run_sequence_diagnostics() {
+  sequence_status="ok"
+  sequence_reason_code=""
+  sequence_json='null'
+
+  local previous_state_json="{}"
+  local previous_snapshot_sequence=""
+  local previous_event_sequence=""
+  local previous_drift_active="false"
+  if [[ -f "$sequence_state_file" ]]; then
+    previous_state_json=$(jq -c '.' "$sequence_state_file" 2>/dev/null || echo "{}")
+    previous_snapshot_sequence=$(jq -r '.snapshot.current // empty' <<<"$previous_state_json")
+    previous_event_sequence=$(jq -r '.events.last // empty' <<<"$previous_state_json")
+    previous_drift_active=$(jq -r '.driftActive // false' <<<"$previous_state_json")
+  fi
+  if [[ "$previous_drift_active" != "true" ]]; then
+    previous_drift_active="false"
+  fi
+
+  local snapshot_sequence_raw
+  snapshot_sequence_raw=$(jq -r '.sequence.value // empty' "$snapshot_file" 2>/dev/null || echo "")
+  local snapshot_sequence=""
+  local snapshot_monotonic="true"
+  local snapshot_regressed="false"
+  local snapshot_missing="false"
+  if [[ "$snapshot_sequence_raw" =~ ^[0-9]+$ ]]; then
+    snapshot_sequence="$snapshot_sequence_raw"
+  else
+    snapshot_missing="true"
+    snapshot_monotonic="false"
+  fi
+
+  if [[ -n "$snapshot_sequence" && "$previous_snapshot_sequence" =~ ^[0-9]+$ ]]; then
+    if (( snapshot_sequence < previous_snapshot_sequence )); then
+      snapshot_regressed="true"
+      snapshot_monotonic="false"
+    fi
+  fi
+
+  local event_count=0
+  local event_first=""
+  local event_last=""
+  local previous_in_batch=""
+  local events_monotonic_within="true"
+  local events_monotonic_across="true"
+  local events_regressed="false"
+  local events_missing="false"
+
+  while IFS= read -r event_line || [[ -n "$event_line" ]]; do
+    [[ -z "$event_line" ]] && continue
+    event_count=$(( event_count + 1 ))
+
+    local event_sequence_raw
+    event_sequence_raw=$(jq -r '.sequence.value // empty' <<<"$event_line" 2>/dev/null || echo "")
+    if [[ "$event_sequence_raw" =~ ^[0-9]+$ ]]; then
+      if [[ -z "$event_first" ]]; then
+        event_first="$event_sequence_raw"
+      fi
+      if [[ -n "$previous_in_batch" && "$previous_in_batch" =~ ^[0-9]+$ ]]; then
+        if (( event_sequence_raw < previous_in_batch )); then
+          events_monotonic_within="false"
+          events_regressed="true"
+        fi
+      fi
+      previous_in_batch="$event_sequence_raw"
+      event_last="$event_sequence_raw"
+    else
+      events_missing="true"
+    fi
+  done < "$events_file"
+
+  if [[ -n "$event_first" && "$previous_event_sequence" =~ ^[0-9]+$ ]]; then
+    if (( event_first < previous_event_sequence )); then
+      events_monotonic_across="false"
+      events_regressed="true"
+    fi
+  fi
+
+  local violations_tmp
+  violations_tmp="$(mktemp)"
+  if [[ "$snapshot_missing" == "true" ]]; then
+    printf '%s\n' "snapshot_sequence_missing" >> "$violations_tmp"
+  fi
+  if [[ "$snapshot_regressed" == "true" ]]; then
+    printf '%s\n' "snapshot_sequence_regression" >> "$violations_tmp"
+  fi
+  if [[ "$events_missing" == "true" ]]; then
+    printf '%s\n' "event_sequence_missing" >> "$violations_tmp"
+  fi
+  if [[ "$events_monotonic_within" != "true" ]]; then
+    printf '%s\n' "event_sequence_non_monotonic" >> "$violations_tmp"
+  fi
+  if [[ "$events_monotonic_across" != "true" ]]; then
+    printf '%s\n' "event_sequence_regression" >> "$violations_tmp"
+  fi
+
+  local violations_json='[]'
+  if [[ -s "$violations_tmp" ]]; then
+    violations_json=$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' < "$violations_tmp")
+  fi
+  rm -f "$violations_tmp"
+
+  local drift_active="false"
+  if [[ "$(jq -r 'if (length > 0) then "true" else "false" end' <<<"$violations_json")" == "true" ]]; then
+    drift_active="true"
+    sequence_status="ordering_drift_detected"
+    sequence_reason_code="ordering_drift_detected"
+  fi
+
+  local transitioned_to_drift="false"
+  local recovered_from_drift="false"
+  if [[ "$previous_drift_active" == "false" && "$drift_active" == "true" ]]; then
+    transitioned_to_drift="true"
+  fi
+  if [[ "$previous_drift_active" == "true" && "$drift_active" == "false" ]]; then
+    recovered_from_drift="true"
+  fi
+
+  sequence_json=$(jq -cn \
+    --arg schema_version "v1" \
+    --arg updated_at "$(timestamp)" \
+    --arg loop_id "$loop_id" \
+    --arg transport "$transport" \
+    --arg status "$sequence_status" \
+    --arg reason_code "$sequence_reason_code" \
+    --arg drift_active "$drift_active" \
+    --arg previous_drift_active "$previous_drift_active" \
+    --arg transitioned_to_drift "$transitioned_to_drift" \
+    --arg recovered_from_drift "$recovered_from_drift" \
+    --arg previous_snapshot "$previous_snapshot_sequence" \
+    --arg snapshot_current "$snapshot_sequence" \
+    --arg snapshot_monotonic "$snapshot_monotonic" \
+    --arg snapshot_regressed "$snapshot_regressed" \
+    --arg snapshot_missing "$snapshot_missing" \
+    --arg previous_event "$previous_event_sequence" \
+    --arg event_first "$event_first" \
+    --arg event_last "$event_last" \
+    --arg events_monotonic_within "$events_monotonic_within" \
+    --arg events_monotonic_across "$events_monotonic_across" \
+    --arg events_regressed "$events_regressed" \
+    --arg events_missing "$events_missing" \
+    --argjson event_count "$event_count" \
+    --argjson violations "$violations_json" \
+    '{
+      schemaVersion: $schema_version,
+      updatedAt: $updated_at,
+      loopId: $loop_id,
+      transport: $transport,
+      status: $status,
+      reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+      driftActive: ($drift_active == "true"),
+      violations: $violations,
+      snapshot: {
+        previous: (if ($previous_snapshot | length) > 0 then ($previous_snapshot | tonumber) else null end),
+        current: (if ($snapshot_current | length) > 0 then ($snapshot_current | tonumber) else null end),
+        monotonic: ($snapshot_monotonic == "true"),
+        regressed: ($snapshot_regressed == "true"),
+        missing: ($snapshot_missing == "true")
+      },
+      events: {
+        ingestedCount: $event_count,
+        previousLast: (if ($previous_event | length) > 0 then ($previous_event | tonumber) else null end),
+        first: (if ($event_first | length) > 0 then ($event_first | tonumber) else null end),
+        last: (if ($event_last | length) > 0 then ($event_last | tonumber) else null end),
+        monotonicWithinBatch: ($events_monotonic_within == "true"),
+        monotonicAcrossBatches: ($events_monotonic_across == "true"),
+        regressed: ($events_regressed == "true"),
+        missing: ($events_missing == "true")
+      },
+      transition: {
+        previousDriftActive: ($previous_drift_active == "true"),
+        transitionedToDrift: ($transitioned_to_drift == "true"),
+        recoveredFromDrift: ($recovered_from_drift == "true")
+      }
+    } | with_entries(select(.value != null))')
+
+  jq -c '.' <<<"$sequence_json" > "$sequence_state_file"
+
+  jq -cn \
+    --arg timestamp "$(timestamp)" \
+    --arg loop_id "$loop_id" \
+    --arg transport "$transport" \
+    --arg status "$sequence_status" \
+    --arg reason_code "$sequence_reason_code" \
+    --argjson sequence "$sequence_json" \
+    '{
+      timestamp: $timestamp,
+      loopId: $loop_id,
+      transport: $transport,
+      category: "envelope_sequence",
+      status: $status,
+      reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+      driftActive: ($sequence.driftActive // false),
+      violations: ($sequence.violations // []),
+      snapshot: ($sequence.snapshot // {}),
+      events: ($sequence.events // {}),
+      transition: ($sequence.transition // {})
+    } | with_entries(select(.value != null))' >> "$sequence_telemetry_file"
 }
 
 run_profile_drift_evaluation() {
@@ -941,12 +1168,17 @@ fi
 
 if [[ "$ingest_status" == "success" ]]; then
   persist_heartbeat_observation
+  run_sequence_diagnostics
+else
+  sequence_status="skipped_ingest_failed"
+  sequence_reason_code=""
 fi
 
 health_json=$(
   "$health_script" \
     --state-file "$state_file" \
     --heartbeat-state-file "$heartbeat_state_file" \
+    --sequence-state-file "$sequence_state_file" \
     --transport-health-file "$transport_health_file" \
     --intents-file "$intents_file" \
     --transport "$transport" \
@@ -967,7 +1199,11 @@ health_status=$(jq -r '.status // "healthy"' <<<"$health_json")
 health_reason_codes=$(jq -c '.reasonCodes // []' <<<"$health_json")
 
 if [[ "$ingest_status" == "success" ]]; then
-  state_json=$(jq -c --argjson health "$health_json" '. + {health: $health}' <<<"$state_json")
+  state_json=$(jq -c \
+    --argjson health "$health_json" \
+    --argjson sequence "$sequence_json" \
+    '. + {health: $health}
+     + (if $sequence == null then {} else {sequence: $sequence} end)' <<<"$state_json")
   jq -c '.' <<<"$state_json" > "$state_file"
 else
   if [[ -f "$state_file" ]]; then
@@ -1002,6 +1238,37 @@ if [[ "$ingest_status" == "success" ]]; then
           cursor: ($state.cursor // {})
         }
       }' >> "$escalations_file"
+  fi
+fi
+
+if [[ "$sequence_json" != "null" ]]; then
+  sequence_transitioned_to_drift=$(jq -r '.transition.transitionedToDrift // false' <<<"$sequence_json")
+  if [[ "$sequence_transitioned_to_drift" == "true" ]]; then
+    jq -cn \
+      --arg timestamp "$(timestamp)" \
+      --arg loop_id "$loop_id" \
+      --arg transport "$transport" \
+      --arg state_file "$state_file" \
+      --arg sequence_state_file "$sequence_state_file" \
+      --arg sequence_telemetry_file "$sequence_telemetry_file" \
+      --argjson sequence "$sequence_json" \
+      '{
+        timestamp: $timestamp,
+        loopId: $loop_id,
+        category: "ordering_drift_detected",
+        transport: $transport,
+        reasonCode: ($sequence.reasonCode // "ordering_drift_detected"),
+        stateFile: $state_file,
+        sequenceStateFile: $sequence_state_file,
+        sequenceTelemetryFile: $sequence_telemetry_file,
+        sequence: {
+          status: ($sequence.status // "unknown"),
+          driftActive: ($sequence.driftActive // false),
+          violations: ($sequence.violations // []),
+          snapshot: ($sequence.snapshot // {}),
+          events: ($sequence.events // {})
+        }
+      } | with_entries(select(.value != null))' >> "$escalations_file"
   fi
 fi
 
