@@ -32,9 +32,11 @@ Rationale:
 2. Service path (follow-on)
 - Sprite service wraps same adapter contract over HTTP.
 - Manager consumes the same envelopes with transport abstraction.
-- Suggested endpoints:
+- Implemented service endpoints:
   - `GET /ops/snapshot?loopId=<id>`
-  - `GET /ops/events?loopId=<id>&cursor=<offset>`
+  - `GET /ops/events?loopId=<id>&cursor=<offset>&maxEvents=<n>`
+  - `POST /ops/control`
+    - body: `{loopId, intent, by?, note?, idempotencyKey?, noConfirm?}`
 
 ## Control Surface
 Manager control intents should map to explicit runtime operations:
@@ -56,6 +58,18 @@ Manager control intents should map to explicit runtime operations:
 - Control commands are allowlisted; no arbitrary shell command pass-through.
 - Manager writes are intent-based and auditable.
 - Full authn/authz model is deferred beyond initiation.
+- Service transport requires a shared token (`Authorization: Bearer <token>` or `X-Ops-Token`).
+- Control requests should include idempotency keys to prevent duplicate side effects.
+
+## Transport Fallback
+- Primary mode: `sprite_service`
+- Fallback mode: `local`
+
+Operational rule:
+1. If service transport fails after retries, manager records failure and operators can switch to local mode:
+   - `scripts/ops-manager-reconcile.sh --transport local ...`
+   - `scripts/ops-manager-control.sh --transport local ...`
+2. After service recovery, replay from cursor start or last stable offset and reconcile before re-enabling automated interventions.
 
 ## Total Visibility Mode (Future)
 Minimum telemetry additions to approach full observability:

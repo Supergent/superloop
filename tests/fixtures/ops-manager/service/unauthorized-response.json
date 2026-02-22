@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "unauthorized",
+    "message": "missing or invalid token"
+  }
+}
