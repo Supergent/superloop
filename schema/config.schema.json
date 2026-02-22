@@ -163,6 +163,28 @@
         "reviewer": {"runner": "codex", "model": "gpt-5.2-codex", "thinking": "max"}
       }
     },
+    "dev_env_contract": {
+      "type": "object",
+      "description": "Optional enforcement settings for target adapter manifest contract.",
+      "properties": {
+        "require_target_adapter_manifest": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, static validation requires adapter manifest presence + schema validity."
+        },
+        "manifest_path": {
+          "type": "string",
+          "default": ".superloop/dev-env/adapter.manifest.json",
+          "description": "Path to target adapter manifest (relative to repo unless absolute)."
+        },
+        "schema_path": {
+          "type": "string",
+          "default": ".superloop/dev-env/schema/dev-env-target-adapter.schema.json",
+          "description": "Path to adapter schema (relative to repo unless absolute). Bootstrap workflows usually materialize it under .superloop/dev-env/schema."
+        }
+      },
+      "required": ["require_target_adapter_manifest"]
+    },
     "loops": {
       "type": "array",
       "minItems": 0,

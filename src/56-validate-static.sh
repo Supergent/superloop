@@ -11,6 +11,7 @@ STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
 STATIC_ERR_PREREQUISITES_CONFIG_INVALID="PREREQUISITES_CONFIG_INVALID"
+STATIC_ERR_DEV_ENV_CONTRACT_INVALID="DEV_ENV_CONTRACT_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -448,6 +449,69 @@ check_prerequisites_gate_config() {
   return 0
 }
 
+# Validate target adapter manifest contract when explicitly required by config.
+# Usage: check_dev_env_contract_manifest <repo> <config_json>
+check_dev_env_contract_manifest() {
+  local repo="$1"
+  local config_json="$2"
+
+  local require_manifest
+  require_manifest=$(jq -r '.dev_env_contract.require_target_adapter_manifest // false' <<<"$config_json" 2>/dev/null || echo "false")
+  if [[ "$require_manifest" != "true" ]]; then
+    return 0
+  fi
+
+  local manifest_path schema_path
+  manifest_path=$(jq -r '.dev_env_contract.manifest_path // ".superloop/dev-env/adapter.manifest.json"' <<<"$config_json" 2>/dev/null || echo ".superloop/dev-env/adapter.manifest.json")
+  schema_path=$(jq -r '.dev_env_contract.schema_path // ".superloop/dev-env/schema/dev-env-target-adapter.schema.json"' <<<"$config_json" 2>/dev/null || echo ".superloop/dev-env/schema/dev-env-target-adapter.schema.json")
+
+  local manifest_full_path="$manifest_path"
+  local schema_full_path="$schema_path"
+  if [[ "$manifest_full_path" != /* ]]; then
+    manifest_full_path="$repo/$manifest_full_path"
+  fi
+  if [[ "$schema_full_path" != /* ]]; then
+    schema_full_path="$repo/$schema_full_path"
+  fi
+
+  if [[ ! -f "$manifest_full_path" ]]; then
+    static_add_error "$STATIC_ERR_DEV_ENV_CONTRACT_INVALID" \
+      "dev_env_contract requires adapter manifest, but file is missing at '$manifest_path'" \
+      "dev_env_contract.manifest_path"
+    return 1
+  fi
+
+  if [[ ! -f "$schema_full_path" ]]; then
+    static_add_error "$STATIC_ERR_DEV_ENV_CONTRACT_INVALID" \
+      "dev_env_contract schema file is missing at '$schema_path'" \
+      "dev_env_contract.schema_path"
+    return 1
+  fi
+
+  if ! jq -e . "$manifest_full_path" >/dev/null 2>&1; then
+    static_add_error "$STATIC_ERR_DEV_ENV_CONTRACT_INVALID" \
+      "adapter manifest '$manifest_path' is not valid JSON" \
+      "dev_env_contract.manifest_path"
+    return 1
+  fi
+
+  if ! declare -f validate_schema_config >/dev/null 2>&1; then
+    static_add_error "$STATIC_ERR_DEV_ENV_CONTRACT_INVALID" \
+      "internal validator validate_schema_config is unavailable for dev_env_contract enforcement" \
+      "dev_env_contract"
+    return 1
+  fi
+
+  if ! validate_schema_config "$schema_full_path" "$manifest_full_path" >/dev/null 2>&1; then
+    static_add_error "$STATIC_ERR_DEV_ENV_CONTRACT_INVALID" \
+      "adapter manifest '$manifest_path' does not match schema '$schema_path'" \
+      "dev_env_contract.manifest_path"
+    return 1
+  fi
+
+  return 0
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -471,6 +535,9 @@ validate_static() {
 
   # Check for duplicate loop IDs
   check_duplicate_loop_ids "$config_path"
+
+  # Enforce target adapter manifest contract when configured.
+  check_dev_env_contract_manifest "$repo" "$config_json"
 
   # Check runners
   local runner_names
