@@ -11,6 +11,11 @@ Options:
   --cursor-file <path>    Manager cursor path. Default: <repo>/.superloop/ops-manager/<loop>/cursor.json
   --health-file <path>    Manager health path. Default: <repo>/.superloop/ops-manager/<loop>/health.json
   --intents-file <path>   Manager intents log. Default: <repo>/.superloop/ops-manager/<loop>/intents.jsonl
+  --heartbeat-state-file <path>      Manager heartbeat state path. Default: <repo>/.superloop/ops-manager/<loop>/heartbeat.json
+  --heartbeat-telemetry-file <path>  Manager heartbeat telemetry JSONL. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/heartbeat.jsonl
+  --sequence-state-file <path>       Manager sequence diagnostics path. Default: <repo>/.superloop/ops-manager/<loop>/sequence-state.json
+  --sequence-telemetry-file <path>   Manager sequence telemetry JSONL. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/sequence.jsonl
+  --control-invocations-file <path>  Manager control invocation audit log. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/control-invocations.jsonl
   --drift-state-file <path>   Profile drift state path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
   --drift-history-file <path> Profile drift history path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
   --alert-dispatch-state-file <path>      Alert dispatch state path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
@@ -43,6 +48,11 @@ state_file=""
 cursor_file=""
 health_file=""
 intents_file=""
+heartbeat_state_file=""
+heartbeat_telemetry_file=""
+sequence_state_file=""
+sequence_telemetry_file=""
+control_invocations_file=""
 drift_state_file=""
 drift_history_file=""
 alert_dispatch_state_file=""
@@ -74,6 +84,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --intents-file)
       intents_file="${2:-}"
+      shift 2
+      ;;
+    --heartbeat-state-file)
+      heartbeat_state_file="${2:-}"
+      shift 2
+      ;;
+    --heartbeat-telemetry-file)
+      heartbeat_telemetry_file="${2:-}"
+      shift 2
+      ;;
+    --sequence-state-file)
+      sequence_state_file="${2:-}"
+      shift 2
+      ;;
+    --sequence-telemetry-file)
+      sequence_telemetry_file="${2:-}"
+      shift 2
+      ;;
+    --control-invocations-file)
+      control_invocations_file="${2:-}"
       shift 2
       ;;
     --drift-state-file)
@@ -143,6 +173,21 @@ fi
 if [[ -z "$intents_file" ]]; then
   intents_file="$ops_dir/intents.jsonl"
 fi
+if [[ -z "$heartbeat_state_file" ]]; then
+  heartbeat_state_file="$ops_dir/heartbeat.json"
+fi
+if [[ -z "$heartbeat_telemetry_file" ]]; then
+  heartbeat_telemetry_file="$telemetry_dir/heartbeat.jsonl"
+fi
+if [[ -z "$sequence_state_file" ]]; then
+  sequence_state_file="$ops_dir/sequence-state.json"
+fi
+if [[ -z "$sequence_telemetry_file" ]]; then
+  sequence_telemetry_file="$telemetry_dir/sequence.jsonl"
+fi
+if [[ -z "$control_invocations_file" ]]; then
+  control_invocations_file="$telemetry_dir/control-invocations.jsonl"
+fi
 if [[ -z "$drift_state_file" ]]; then
   drift_state_file="$ops_dir/profile-drift.json"
 fi
@@ -202,6 +247,43 @@ if [[ -f "$control_telemetry_file" ]]; then
   fi
 fi
 
+heartbeat_state_json='null'
+if [[ -f "$heartbeat_state_file" ]]; then
+  heartbeat_state_json=$(jq -c '.' "$heartbeat_state_file" 2>/dev/null) || die "invalid heartbeat state JSON: $heartbeat_state_file"
+fi
+
+last_heartbeat_json='null'
+if [[ -f "$heartbeat_telemetry_file" ]]; then
+  if line=$(tail -n 1 "$heartbeat_telemetry_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      last_heartbeat_json=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
+sequence_state_json='null'
+if [[ -f "$sequence_state_file" ]]; then
+  sequence_state_json=$(jq -c '.' "$sequence_state_file" 2>/dev/null) || die "invalid sequence state JSON: $sequence_state_file"
+fi
+
+last_sequence_json='null'
+if [[ -f "$sequence_telemetry_file" ]]; then
+  if line=$(tail -n 1 "$sequence_telemetry_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      last_sequence_json=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
+last_control_invocation_json='null'
+if [[ -f "$control_invocations_file" ]]; then
+  if line=$(tail -n 1 "$control_invocations_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      last_control_invocation_json=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
 tuning_summary_json='null'
 if [[ -f "$reconcile_telemetry_file" ]]; then
   if summary_output=$(
@@ -246,6 +328,11 @@ status_json=$(jq -cn \
   --arg cursor_file "$cursor_file" \
   --arg health_file "$health_file" \
   --arg intents_file "$intents_file" \
+  --arg heartbeat_state_file "$heartbeat_state_file" \
+  --arg heartbeat_telemetry_file "$heartbeat_telemetry_file" \
+  --arg sequence_state_file "$sequence_state_file" \
+  --arg sequence_telemetry_file "$sequence_telemetry_file" \
+  --arg control_invocations_file "$control_invocations_file" \
   --arg drift_state_file "$drift_state_file" \
   --arg drift_history_file "$drift_history_file" \
   --arg alert_dispatch_state_file "$alert_dispatch_state_file" \
@@ -258,6 +345,11 @@ status_json=$(jq -cn \
   --argjson last_intent "$last_intent_json" \
   --argjson last_reconcile "$last_reconcile_json" \
   --argjson last_control "$last_control_json" \
+  --argjson heartbeat_state "$heartbeat_state_json" \
+  --argjson last_heartbeat "$last_heartbeat_json" \
+  --argjson sequence_state "$sequence_state_json" \
+  --argjson last_sequence "$last_sequence_json" \
+  --argjson last_control_invocation "$last_control_invocation_json" \
   --argjson tuning_summary "$tuning_summary_json" \
   --argjson drift "$drift_json" \
   --argjson alert_dispatch_state "$alert_dispatch_state_json" \
@@ -304,6 +396,99 @@ status_json=$(jq -cn \
       lastDurationSeconds: ($last_reconcile.durationSeconds // null),
       lastTraceId: ($last_reconcile.traceId // null)
     },
+    visibility: (
+      ({
+        heartbeat: (
+          if $heartbeat_state == null and $last_heartbeat == null and ($health_file_json.details.lastHeartbeatAt // null) == null and ($health_file_json.details.heartbeatLagSeconds // null) == null and ($health_file_json.details.heartbeatFreshnessStatus // null) == null then null
+          else {
+            freshnessStatus: ($heartbeat_state.freshnessStatus // $health_file_json.details.heartbeatFreshnessStatus // null),
+            reasonCode: ($heartbeat_state.reasonCode // $last_heartbeat.reasonCode // null),
+            lastHeartbeatAt: ($heartbeat_state.lastHeartbeatAt // $health_file_json.details.lastHeartbeatAt // $last_heartbeat.heartbeatAt // null),
+            heartbeatLagSeconds: ($heartbeat_state.heartbeatLagSeconds // $health_file_json.details.heartbeatLagSeconds // $last_heartbeat.heartbeatLagSeconds // null),
+            updatedAt: ($heartbeat_state.updatedAt // $last_heartbeat.timestamp // null),
+            transport: ($heartbeat_state.transport // $last_heartbeat.transport // null),
+            traceId: ($heartbeat_state.traceId // $last_heartbeat.traceId // null)
+          } | with_entries(select(.value != null))
+          end
+        ),
+        sequence: (
+          if $sequence_state == null and $last_sequence == null and ($health_file_json.details.sequenceStatus // null) == null then null
+          else {
+            status: ($sequence_state.status // $health_file_json.details.sequenceStatus // $last_sequence.status // null),
+            reasonCode: ($sequence_state.reasonCode // $last_sequence.reasonCode // null),
+            driftActive: (
+              if ($sequence_state.driftActive // null) != null then $sequence_state.driftActive
+              elif ($last_sequence.driftActive // null) != null then $last_sequence.driftActive
+              else null
+              end
+            ),
+            violations: (
+              if ($sequence_state.violations // null) != null then $sequence_state.violations
+              elif ($last_sequence.violations // null) != null then $last_sequence.violations
+              else null
+              end
+            ),
+            snapshotCurrent: ($sequence_state.snapshot.current // $last_sequence.snapshot.current // null),
+            eventsLast: ($sequence_state.events.last // $last_sequence.events.last // null),
+            updatedAt: ($sequence_state.updatedAt // $health_file_json.details.sequenceUpdatedAt // $last_sequence.timestamp // null),
+            transport: ($sequence_state.transport // $last_sequence.transport // null),
+            traceId: ($sequence_state.traceId // $last_sequence.traceId // null)
+          } | with_entries(select(.value != null))
+          end
+        ),
+        invocationAudit: (
+          if $last_control_invocation == null then null
+          else {
+            timestamp: ($last_control_invocation.timestamp // null),
+            intent: ($last_control_invocation.intent // null),
+            transport: ($last_control_invocation.transport // null),
+            idempotencyKey: ($last_control_invocation.idempotencyKey // null),
+            executionStatus: ($last_control_invocation.execution.status // null),
+            confirmationStatus: ($last_control_invocation.confirmation.status // null),
+            outcomeStatus: ($last_control_invocation.outcome.status // null),
+            replayed: ($last_control_invocation.execution.replayed // null),
+            traceId: ($last_control_invocation.traceId // null)
+          } | with_entries(select(.value != null))
+          end
+        ),
+        trace: (
+          {
+            controlTraceId: (
+              if ($last_intent.traceId // null) != null then $last_intent.traceId
+              else ($last_control.traceId // null)
+              end
+            ),
+            controlInvocationTraceId: ($last_control_invocation.traceId // null),
+            reconcileTraceId: ($last_reconcile.traceId // null),
+            heartbeatTraceId: ($heartbeat_state.traceId // $last_heartbeat.traceId // null),
+            sequenceTraceId: ($sequence_state.traceId // $last_sequence.traceId // null),
+            alertTraceId: ($last_alert_delivery.traceId // $alert_dispatch_state.traceId // null),
+            sharedTraceId: (
+              (
+                if ($last_intent.traceId // null) != null then $last_intent.traceId
+                else ($last_control.traceId // null)
+                end
+              ) as $control_trace
+              | ($last_reconcile.traceId // null) as $reconcile_trace
+              | ($last_alert_delivery.traceId // $alert_dispatch_state.traceId // null) as $alert_trace
+              | ($heartbeat_state.traceId // $last_heartbeat.traceId // null) as $heartbeat_trace
+              | ($sequence_state.traceId // $last_sequence.traceId // null) as $sequence_trace
+              | [
+                  $control_trace,
+                  $reconcile_trace,
+                  $alert_trace,
+                  $heartbeat_trace,
+                  $sequence_trace
+                ]
+                | map(select(. != null))
+                | unique as $trace_set
+              | if ($trace_set | length) == 1 and ($trace_set[0] // null) != null then $trace_set[0] else null end
+            )
+          } | with_entries(select(.value != null))
+        )
+      } | with_entries(select(.value != null))) as $visibility
+      | if ($visibility | length) == 0 then null else $visibility end
+    ),
     tuning: {
       summaryWindow: $summary_window,
       appliedProfile: (
@@ -373,7 +558,10 @@ status_json=$(jq -cn \
         else ($last_control.traceId // null)
         end
       ),
+      controlInvocationTraceId: ($last_control_invocation.traceId // null),
       reconcileTraceId: ($last_reconcile.traceId // null),
+      heartbeatTraceId: ($heartbeat_state.traceId // $last_heartbeat.traceId // null),
+      sequenceTraceId: ($sequence_state.traceId // $last_sequence.traceId // null),
       alertTraceId: ($last_alert_delivery.traceId // $alert_dispatch_state.traceId // null),
       sharedTraceId: (
         (
@@ -391,6 +579,11 @@ status_json=$(jq -cn \
       cursorFile: $cursor_file,
       healthFile: $health_file,
       intentsFile: $intents_file,
+      heartbeatStateFile: $heartbeat_state_file,
+      heartbeatTelemetryFile: $heartbeat_telemetry_file,
+      sequenceStateFile: $sequence_state_file,
+      sequenceTelemetryFile: $sequence_telemetry_file,
+      controlInvocationsFile: $control_invocations_file,
       driftStateFile: $drift_state_file,
       driftHistoryFile: $drift_history_file,
       alertDispatchStateFile: $alert_dispatch_state_file,

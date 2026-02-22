@@ -12,11 +12,16 @@ Operational procedures for manager core behavior across local and sprite-service
 - manager state: `.superloop/ops-manager/<loop>/state.json`
 - manager cursor: `.superloop/ops-manager/<loop>/cursor.json`
 - manager health: `.superloop/ops-manager/<loop>/health.json`
+- heartbeat state: `.superloop/ops-manager/<loop>/heartbeat.json`
+- sequence state: `.superloop/ops-manager/<loop>/sequence-state.json`
 - intent log: `.superloop/ops-manager/<loop>/intents.jsonl`
 - profile drift state: `.superloop/ops-manager/<loop>/profile-drift.json`
 - alert dispatch state: `.superloop/ops-manager/<loop>/alert-dispatch-state.json`
 - reconcile telemetry: `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl`
 - control telemetry: `.superloop/ops-manager/<loop>/telemetry/control.jsonl`
+- control invocation audit: `.superloop/ops-manager/<loop>/telemetry/control-invocations.jsonl`
+- heartbeat telemetry: `.superloop/ops-manager/<loop>/telemetry/heartbeat.jsonl`
+- sequence telemetry: `.superloop/ops-manager/<loop>/telemetry/sequence.jsonl`
 - profile drift telemetry: `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl`
 - alert dispatch telemetry: `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
@@ -42,6 +47,37 @@ scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-wi
 
 Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, latest control/reconcile outcomes, and tuning guidance (`recommendedProfile`, `confidence`).
 Alert delivery fields are included under `alerts.dispatch` and `alerts.lastDelivery`.
+Total visibility fields are surfaced under `visibility.heartbeat`, `visibility.sequence`, `visibility.invocationAudit`, and `visibility.trace`.
+
+## Total Visibility Triage
+Use this flow when the operator needs end-to-end visibility from runtime heartbeat to escalation delivery.
+
+1. Pull status visibility summary:
+```bash
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
+
+2. Verify heartbeat freshness surface:
+- `visibility.heartbeat.freshnessStatus`: `fresh|degraded|critical`
+- `visibility.heartbeat.reasonCode`: expected `runtime_heartbeat_stale` when degraded/critical
+- `visibility.heartbeat.lastHeartbeatAt` and `heartbeatLagSeconds`
+
+3. Verify sequence integrity surface:
+- `visibility.sequence.status`: expected `ok` or `ordering_drift_detected`
+- `visibility.sequence.violations`: inspect for `snapshot_sequence_regression`, `event_sequence_regression`, or missing sequence fields
+- `visibility.sequence.traceId`: correlate with reconcile/escalation traces
+
+4. Verify control invocation audit when control operations were issued:
+```bash
+tail -n 5 .superloop/ops-manager/<loop>/telemetry/control-invocations.jsonl
+```
+- compare `visibility.invocationAudit.traceId` against `visibility.trace.controlInvocationTraceId`
+- confirm execution/confirmation/outcome status before retrying actions
+
+5. Verify trace linkage across visibility and alert surfaces:
+- `visibility.trace.reconcileTraceId`
+- `visibility.trace.alertTraceId`
+- `visibility.trace.sharedTraceId` (non-null means the latest trace surfaces are aligned)
 
 ## Profile Drift Triage
 Use when policy profile and telemetry recommendation may be diverging.
@@ -171,6 +207,29 @@ Operational reason codes expected in this flow:
 - `transport_unreachable`
 - `invalid_transport_payload`
 - `ingest_stale` (if outage delays event freshness long enough)
+
+## Partial Visibility Fallback
+Use when status shows incomplete visibility (for example, missing `visibility.heartbeat` or `visibility.sequence`) due runtime/service gaps.
+
+1. Confirm raw runtime artifacts exist:
+```bash
+ls -l .superloop/loops/<loop>/heartbeat.v1.json .superloop/loops/<loop>/events.jsonl
+```
+
+2. Force a full replay to repopulate sequence + heartbeat projections:
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --from-start --pretty
+```
+
+3. If service mode is unstable, run fallback reconcile locally until transport recovers:
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --transport local --from-start
+```
+
+4. Re-run status and ensure visibility surfaces are restored:
+```bash
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+```
 
 ## Alert Sink Config Baseline
 Resolve config and route behavior before enabling external dispatch:

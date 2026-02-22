@@ -150,6 +150,13 @@ Purpose:
 - Includes tuning guidance fields from telemetry summaries (`recommendedProfile`, `confidence`, `rationale`).
 - Includes profile-drift state/action fields when drift artifacts are present.
 - Includes alert delivery summary fields from dispatch artifacts (`alerts.dispatch`, `alerts.lastDelivery`).
+- Includes visibility summaries for heartbeat, sequence diagnostics, invocation audit, and trace linkage (`visibility.*`).
+
+Visibility summary fields:
+- `visibility.heartbeat`: `freshnessStatus`, `reasonCode`, `lastHeartbeatAt`, `heartbeatLagSeconds`, `updatedAt`, `transport`, `traceId`.
+- `visibility.sequence`: `status`, `reasonCode`, `driftActive`, `violations`, `snapshotCurrent`, `eventsLast`, `updatedAt`, `transport`, `traceId`.
+- `visibility.invocationAudit`: latest control invocation audit record summary (`intent`, `transport`, `idempotencyKey`, execution/confirmation/outcome status, `traceId`).
+- `visibility.trace`: latest trace surface across control/reconcile/heartbeat/sequence/alert artifacts and `sharedTraceId` when all present traces agree.
 
 ### Threshold Profile Resolver
 ```bash
@@ -245,12 +252,17 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/state.json` - projected lifecycle state.
 - `.superloop/ops-manager/<loop>/cursor.json` - incremental event cursor.
 - `.superloop/ops-manager/<loop>/health.json` - latest health status + reason codes.
+- `.superloop/ops-manager/<loop>/heartbeat.json` - latest runtime heartbeat freshness projection.
+- `.superloop/ops-manager/<loop>/sequence-state.json` - latest envelope sequence diagnostics state.
 - `.superloop/ops-manager/<loop>/intents.jsonl` - control intent execution log.
 - `.superloop/ops-manager/<loop>/escalations.jsonl` - divergence/escalation records.
 - `.superloop/ops-manager/<loop>/profile-drift.json` - current profile drift state.
 - `.superloop/ops-manager/<loop>/alert-dispatch-state.json` - latest alert dispatch summary and cursor offsets.
 - `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl` - reconcile attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/control.jsonl` - control attempt telemetry.
+- `.superloop/ops-manager/<loop>/telemetry/control-invocations.jsonl` - detailed control invocation audit trail.
+- `.superloop/ops-manager/<loop>/telemetry/heartbeat.jsonl` - heartbeat ingestion/freshness telemetry history.
+- `.superloop/ops-manager/<loop>/telemetry/sequence.jsonl` - sequence diagnostic telemetry history.
 - `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl` - profile drift history.
 - `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl` - alert delivery attempts/outcomes and reason codes.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
