@@ -664,6 +664,47 @@ lifecycle_branch_merged_to_main() {
   fi
 }
 
+resolve_lifecycle_main_ref() {
+  local repo="$1"
+  local requested_ref="$2"
+  local no_fetch="${3:-0}"
+
+  if git -C "$repo" rev-parse --verify "${requested_ref}^{commit}" >/dev/null 2>&1; then
+    echo "$requested_ref"
+    return 0
+  fi
+
+  if [[ "$no_fetch" != "1" && "$no_fetch" != "true" ]]; then
+    git -C "$repo" fetch origin --prune >/dev/null 2>&1 || true
+    if git -C "$repo" rev-parse --verify "${requested_ref}^{commit}" >/dev/null 2>&1; then
+      echo "$requested_ref"
+      return 0
+    fi
+  fi
+
+  local fallback_ref
+  for fallback_ref in main master origin/main origin/master; do
+    if git -C "$repo" rev-parse --verify "${fallback_ref}^{commit}" >/dev/null 2>&1; then
+      echo "$fallback_ref"
+      return 0
+    fi
+  done
+
+  local current_branch_ref
+  current_branch_ref=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [[ -n "$current_branch_ref" && "$current_branch_ref" != "HEAD" ]] && git -C "$repo" rev-parse --verify "${current_branch_ref}^{commit}" >/dev/null 2>&1; then
+    echo "$current_branch_ref"
+    return 0
+  fi
+
+  if git -C "$repo" rev-parse --verify "HEAD^{commit}" >/dev/null 2>&1; then
+    echo "HEAD"
+    return 0
+  fi
+
+  return 1
+}
+
 lifecycle_audit_cmd() {
   local repo="$1"
   local feature_prefix="${2:-feat/}"
@@ -674,12 +715,9 @@ lifecycle_audit_cmd() {
 
   need_cmd jq
 
-  if [[ "$no_fetch" != "1" ]]; then
-    git -C "$repo" fetch origin --prune >/dev/null 2>&1 || true
-  fi
-
-  if ! git -C "$repo" rev-parse --verify "${main_ref}^{commit}" >/dev/null 2>&1; then
-    die "main ref is not a valid commit: $main_ref"
+  local requested_main_ref="$main_ref"
+  if ! main_ref="$(resolve_lifecycle_main_ref "$repo" "$main_ref" "$no_fetch")"; then
+    die "main ref is not a valid commit: $requested_main_ref"
   fi
 
   local gh_available=0
@@ -1861,24 +1899,9 @@ run_cmd() {
       die "loop '$loop_id': lifecycle.strict must be true. Deterministic lifecycle gating requires strict mode."
     fi
 
-    if ! git -C "$repo" rev-parse --verify "${lifecycle_main_ref}^{commit}" >/dev/null 2>&1; then
-      if git -C "$repo" rev-parse --verify "main^{commit}" >/dev/null 2>&1; then
-        lifecycle_main_ref="main"
-      elif git -C "$repo" rev-parse --verify "master^{commit}" >/dev/null 2>&1; then
-        lifecycle_main_ref="master"
-      elif git -C "$repo" rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then
-        lifecycle_main_ref="origin/main"
-      elif git -C "$repo" rev-parse --verify "origin/master^{commit}" >/dev/null 2>&1; then
-        lifecycle_main_ref="origin/master"
-      else
-        local current_branch_ref
-        current_branch_ref=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-        if [[ -n "$current_branch_ref" && "$current_branch_ref" != "HEAD" ]] && git -C "$repo" rev-parse --verify "${current_branch_ref}^{commit}" >/dev/null 2>&1; then
-          lifecycle_main_ref="$current_branch_ref"
-        else
-          die "loop '$loop_id': lifecycle.main_ref '$lifecycle_main_ref' is not a valid commit, and no fallback main ref was found."
-        fi
-      fi
+    local requested_lifecycle_main_ref="$lifecycle_main_ref"
+    if ! lifecycle_main_ref="$(resolve_lifecycle_main_ref "$repo" "$lifecycle_main_ref" "$lifecycle_no_fetch")"; then
+      die "loop '$loop_id': lifecycle.main_ref '$requested_lifecycle_main_ref' is not a valid commit, and no fallback main ref was found."
     fi
 
     local approval_enabled
