@@ -68,6 +68,34 @@ Wave sequencing, entry/exit criteria, failure handling, and alias-removal policy
 
 - `docs/dev-env-rollout-v1.md`
 
+## Core Decoupling Guard
+
+Superloop core target-agnostic enforcement uses:
+
+- `scripts/check-core-decoupling.sh`
+- Denylist source: `scripts/decoupling-core-denylist.txt`
+
+The denylist path can be overridden for experiments with:
+
+- `SUPERLOOP_DECOUPLING_DENYLIST_FILE`
+
+## Runtime Validation Hook
+
+Superloop runtime can hard-enforce adapter manifest contract during static validation via config:
+
+```json
+{
+  "dev_env_contract": {
+    "require_target_adapter_manifest": true,
+    "manifest_path": ".superloop/dev-env/adapter.manifest.json",
+    "schema_path": ".superloop/dev-env/schema/dev-env-target-adapter.schema.json"
+  }
+}
+```
+
+When enabled, `superloop.sh validate --static` fails if manifest file is missing or schema-invalid.
+If your target repo vendors schema at another location, override `schema_path` explicitly.
+
 ## Allowed Localhost Exceptions
 
 Hardcoded localhost fallbacks are allowed only for scripts that intentionally validate raw-port local runtime behavior.

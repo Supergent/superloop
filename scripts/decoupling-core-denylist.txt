@@ -1,0 +1,11 @@
+# Regex patterns disallowed in Superloop core paths.
+# Override via SUPERLOOP_DECOUPLING_DENYLIST_FILE when needed.
+
+# Product-specific env aliases.
+SUPERGENT_
+SUPERLOOP_LAB_BASE_URL
+
+# Product-specific host/token drift.
+([[:alnum:]_-]+\.)?supergent\.localhost
+lab\.supergent(\.localhost)?
+https?://[^[:space:]\"']*supergent

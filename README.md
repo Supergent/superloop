@@ -46,6 +46,7 @@ Cross-repo env contract:
 - Target adoption contract (manifest + evidence) is documented in `docs/dev-env-target-adapter.md`.
 - Rollout/deprecation policy is documented in `docs/dev-env-rollout-v1.md`.
 - New loop construction should prefer `SUPERLOOP_*` keys; target-repo aliases are fallback-only during migration.
+- Superloop UI canonical key is `SUPERLOOP_UI_BASE_URL`; `SUPERLOOP_UI_URL` is compatibility-only alias.
 - Use `scripts/check-core-decoupling.sh` to ensure core paths stay target-agnostic.
 
 **1. Create a spec**:

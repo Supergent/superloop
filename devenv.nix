@@ -5,6 +5,7 @@
     USE_DEVENV = "1";
     PORTLESS = "1";
     SUPERLOOP_UI_BASE_URL = "http://superloop-ui.localhost:1355";
+    SUPERLOOP_UI_URL = "http://superloop-ui.localhost:1355";
   };
 
   packages = with pkgs; [

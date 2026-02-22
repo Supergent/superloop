@@ -26,6 +26,11 @@ Default URL:
 
 - `http://superloop-ui.localhost:1355/liquid`
 
+UI URL env vars:
+
+- Canonical: `SUPERLOOP_UI_BASE_URL`
+- Compatibility alias: `SUPERLOOP_UI_URL`
+
 ## Escape Hatches
 
 - `USE_DEVENV=0` disables devenv activation in `.envrc`.

@@ -81,6 +81,22 @@ if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+if command -v rg >/dev/null 2>&1; then
+  SEARCH_TOOL="rg"
+else
+  SEARCH_TOOL="grep"
+fi
+
+file_has_exact_line() {
+  local line="$1"
+  local file="$2"
+  if [[ "$SEARCH_TOOL" == "rg" ]]; then
+    rg -Fqx "$line" "$file"
+  else
+    grep -Fqx "$line" "$file"
+  fi
+}
+
 copy_file() {
   local src="$1"
   local dst="$2"
@@ -100,7 +116,7 @@ copy_file "$profile_dir/.envrc.example" "$repo/.envrc.example"
 gitignore_file="$repo/.gitignore"
 touch "$gitignore_file"
 for entry in ".direnv/" ".devenv/" "devenv.lock"; do
-  if ! rg -Fqx "$entry" "$gitignore_file"; then
+  if ! file_has_exact_line "$entry" "$gitignore_file"; then
     printf '%s\n' "$entry" >> "$gitignore_file"
     echo "append .gitignore: $entry"
   fi

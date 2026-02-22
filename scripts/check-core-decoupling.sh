@@ -13,8 +13,24 @@ CORE_PATHS=(
   "src"
 )
 
-# Product-specific env names or lab-specific canonical keys are not allowed in core paths.
-PATTERN='SUPERGENT_|SUPERLOOP_LAB_BASE_URL|supergent\.localhost|lab\.supergent'
+DENYLIST_FILE="${SUPERLOOP_DECOUPLING_DENYLIST_FILE:-scripts/decoupling-core-denylist.txt}"
+
+if [[ ! -f "$DENYLIST_FILE" ]]; then
+  echo "error: decoupling denylist file not found: $DENYLIST_FILE" >&2
+  exit 2
+fi
+
+mapfile -t DENYLIST_PATTERNS < <(
+  sed -E 's/[[:space:]]*#.*$//' "$DENYLIST_FILE" | sed -E '/^[[:space:]]*$/d'
+)
+
+if [[ ${#DENYLIST_PATTERNS[@]} -eq 0 ]]; then
+  echo "error: decoupling denylist file has no patterns: $DENYLIST_FILE" >&2
+  exit 2
+fi
+
+# Product-specific names/hosts must not appear in core paths.
+PATTERN="$(IFS='|'; echo "${DENYLIST_PATTERNS[*]}")"
 
 if command -v rg >/dev/null 2>&1; then
   SEARCH_TOOL="rg"
@@ -27,9 +43,9 @@ cd "$ROOT_DIR"
 search_path_for_pattern() {
   local path="$1"
   if [[ "$SEARCH_TOOL" == "rg" ]]; then
-    rg -n -S -e "$PATTERN" "$path" || true
+    rg -n -S -i -e "$PATTERN" "$path" || true
   else
-    grep -n -R -E "$PATTERN" "$path" 2>/dev/null || true
+    grep -n -R -E -i "$PATTERN" "$path" 2>/dev/null || true
   fi
 }
 
@@ -48,6 +64,7 @@ done
 if [[ "$FOUND" -ne 0 ]]; then
   echo >&2
   echo "FAIL: product-specific coupling found in Superloop core paths." >&2
+  echo "Denylist source: $DENYLIST_FILE" >&2
   echo "Move target-specific names to adapter profiles/docs outside core paths." >&2
   exit 1
 fi

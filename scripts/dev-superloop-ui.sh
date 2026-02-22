@@ -19,7 +19,8 @@ if ! command -v portless >/dev/null 2>&1; then
   exit 0
 fi
 
-export SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-http://superloop-ui.localhost:1355}"
+export SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}}"
+export SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-${SUPERLOOP_UI_BASE_URL}}"
 echo "[dev-superloop-ui] Starting at ${SUPERLOOP_UI_BASE_URL}/liquid"
 
 portless superloop-ui bash -lc 'cd "$1" && bun run --cwd packages/superloop-ui dev -- --port "${PORT:-5173}"' _ "$ROOT_DIR"

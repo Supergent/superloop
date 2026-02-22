@@ -188,9 +188,9 @@ src/
 POST custom UITrees to replace the default view:
 
 ```bash
-SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}}"
 
-curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/override" \
+curl -X POST "${SUPERLOOP_UI_BASE_URL}/api/liquid/override" \
   -H "Content-Type: application/json" \
   -d '{"root":"main","elements":{...}}'
 ```
@@ -198,9 +198,9 @@ curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/override" \
 ### Save Versioned View
 
 ```bash
-SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}}"
 
-curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/views/my-view" \
+curl -X POST "${SUPERLOOP_UI_BASE_URL}/api/liquid/views/my-view" \
   -H "Content-Type: application/json" \
   -d '{
     "tree": {"root":"main","elements":{...}},
@@ -211,9 +211,9 @@ curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/views/my-view" \
 ### Clear Override
 
 ```bash
-SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}}"
 
-curl -X DELETE "${SUPERLOOP_UI_URL}/api/liquid/override"
+curl -X DELETE "${SUPERLOOP_UI_BASE_URL}/api/liquid/override"
 ```
 
 ## Exports
