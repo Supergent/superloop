@@ -262,6 +262,26 @@ EOF
   [ "$output" = "false" ]
 }
 
+@test "rlms role override false skips reviewer execution" {
+  write_loop_config "auto" "warn_and_continue" "false" 1 1 "NOT_PRESENT"
+  jq '.loops[0].rlms.roles.reviewer = false' \
+    "$TEMP_DIR/.superloop/config.json" > "$TEMP_DIR/.superloop/config.tmp.json"
+  mv "$TEMP_DIR/.superloop/config.tmp.json" "$TEMP_DIR/.superloop/config.json"
+
+  run env SUPERLOOP_RLMS_SCRIPT="$MARKER_RLMS" RLMS_MARKER_FILE="$TEMP_DIR/rlms-called" \
+    "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop rlms-loop
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEMP_DIR/rlms-called" ]
+
+  run jq -r '.should_run' "$TEMP_DIR/.superloop/loops/rlms-loop/rlms/latest/reviewer.status.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+
+  run jq -r '.reason' "$TEMP_DIR/.superloop/loops/rlms-loop/rlms/latest/reviewer.status.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "role_disabled" ]
+}
+
 @test "rlms hybrid mode auto-triggers on large context" {
   write_loop_config "hybrid" "warn_and_continue" "false" 1 999999 "NOT_PRESENT"
   run env SUPERLOOP_RLMS_SCRIPT="$MARKER_RLMS" RLMS_MARKER_FILE="$TEMP_DIR/rlms-called" \

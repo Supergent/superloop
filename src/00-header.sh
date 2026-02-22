@@ -149,6 +149,24 @@ json_or_default() {
   echo "$fallback"
 }
 
+bool_or_default() {
+  local raw="${1:-}"
+  local fallback="${2:-false}"
+
+  if [[ "$fallback" != "true" && "$fallback" != "false" ]]; then
+    fallback="false"
+  fi
+
+  case "$raw" in
+    true|false)
+      echo "$raw"
+      ;;
+    *)
+      echo "$fallback"
+      ;;
+  esac
+}
+
 file_mtime() {
   local file="$1"
   if [[ ! -e "$file" ]]; then

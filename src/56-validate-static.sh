@@ -458,11 +458,11 @@ check_lifecycle_gate_config() {
   local location_prefix="$2"
 
   local enabled
-  enabled=$(jq -r '.lifecycle.enabled // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  enabled=$(bool_or_default "$(jq -r '.lifecycle.enabled' <<<"$loop_json" 2>/dev/null || true)" "true")
   local require_on_completion
-  require_on_completion=$(jq -r '.lifecycle.require_on_completion // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  require_on_completion=$(bool_or_default "$(jq -r '.lifecycle.require_on_completion' <<<"$loop_json" 2>/dev/null || true)" "true")
   local strict
-  strict=$(jq -r '.lifecycle.strict // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  strict=$(bool_or_default "$(jq -r '.lifecycle.strict' <<<"$loop_json" 2>/dev/null || true)" "true")
   local feature_prefix
   feature_prefix=$(jq -r '.lifecycle.feature_prefix // "feat/"' <<<"$loop_json" 2>/dev/null || echo "feat/")
   local main_ref

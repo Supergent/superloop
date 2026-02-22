@@ -1541,7 +1541,7 @@ run_cmd() {
     loop_index=$(jq -r '.loop_index // 0' "$state_file")
     iteration=$(jq -r '.iteration // 1' "$state_file")
     local active
-    active=$(jq -r '.active // true' "$state_file")
+    active=$(bool_or_default "$(jq -r '.active' "$state_file" 2>/dev/null || true)" "true")
     if [[ "$active" == "true" ]]; then
       was_active="true"
       active_loop_id=$(jq -r '.current_loop_id // ""' "$state_file")
@@ -1875,13 +1875,13 @@ run_cmd() {
     evidence_require=$(jq -r '.evidence.require_on_completion // false' <<<"$loop_json")
 
     local lifecycle_enabled
-    lifecycle_enabled=$(jq -r '.lifecycle.enabled // true' <<<"$loop_json")
+    lifecycle_enabled=$(bool_or_default "$(jq -r '.lifecycle.enabled' <<<"$loop_json" 2>/dev/null || true)" "true")
     local lifecycle_require
-    lifecycle_require=$(jq -r '.lifecycle.require_on_completion // true' <<<"$loop_json")
+    lifecycle_require=$(bool_or_default "$(jq -r '.lifecycle.require_on_completion' <<<"$loop_json" 2>/dev/null || true)" "true")
     local lifecycle_strict
-    lifecycle_strict=$(jq -r '.lifecycle.strict // true' <<<"$loop_json")
+    lifecycle_strict=$(bool_or_default "$(jq -r '.lifecycle.strict' <<<"$loop_json" 2>/dev/null || true)" "true")
     local lifecycle_block_on_failure
-    lifecycle_block_on_failure=$(jq -r '.lifecycle.block_on_failure // true' <<<"$loop_json")
+    lifecycle_block_on_failure=$(bool_or_default "$(jq -r '.lifecycle.block_on_failure' <<<"$loop_json" 2>/dev/null || true)" "true")
     local lifecycle_feature_prefix
     lifecycle_feature_prefix=$(jq -r '.lifecycle.feature_prefix // "feat/"' <<<"$loop_json")
     local lifecycle_main_ref
@@ -1926,7 +1926,7 @@ run_cmd() {
 
     # Usage check settings (enabled by default - gracefully degrades if no credentials)
     local usage_check_enabled
-    usage_check_enabled=$(jq -r '.usage_check.enabled // true' <<<"$loop_json")
+    usage_check_enabled=$(bool_or_default "$(jq -r '.usage_check.enabled' <<<"$loop_json" 2>/dev/null || true)" "true")
     local usage_warn_threshold
     usage_warn_threshold=$(jq -r '.usage_check.warn_threshold // 70' <<<"$loop_json")
     local usage_block_threshold
@@ -2035,7 +2035,7 @@ run_cmd() {
     local rlms_output_format
     rlms_output_format=$(jq -r '.rlms.output.format // "json"' <<<"$loop_json")
     local rlms_output_require_citations
-    rlms_output_require_citations=$(jq -r '.rlms.output.require_citations // true' <<<"$loop_json")
+    rlms_output_require_citations=$(bool_or_default "$(jq -r '.rlms.output.require_citations' <<<"$loop_json" 2>/dev/null || true)" "true")
     local rlms_policy_force_on
     rlms_policy_force_on=$(jq -r '.rlms.policy.force_on // false' <<<"$loop_json")
     local rlms_policy_force_off
@@ -4776,8 +4776,7 @@ EOF
 
         if [[ "$rlms_enabled" == "true" ]]; then
           local role_rlms_enabled
-          role_rlms_enabled=$(jq -r --arg role "$role" '.rlms.roles[$role] // true' <<<"$loop_json")
-          role_rlms_enabled="${role_rlms_enabled:-true}"
+          role_rlms_enabled=$(bool_or_default "$(jq -r --arg role "$role" '.rlms.roles[$role]' <<<"$loop_json" 2>/dev/null || true)" "true")
 
           local role_rlms_dir="$rlms_root_dir/iter-$iteration/$role"
           local role_rlms_context_file="$role_rlms_dir/context-files.txt"
