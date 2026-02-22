@@ -1,0 +1,448 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superloop.sh/schemas/ops-manager-contract-v1.json",
+  "title": "OpsManagerContractV1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/loopRunSnapshotEnvelope"
+    },
+    {
+      "$ref": "#/$defs/loopRunEventEnvelope"
+    }
+  ],
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repoPath",
+        "loopId"
+      ],
+      "properties": {
+        "repoPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "loopId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "exists",
+        "sizeBytes",
+        "lineCount",
+        "sha256",
+        "mtimeEpoch"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lineCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mtimeEpoch": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventLineOffset",
+        "eventLineCount"
+      ],
+      "properties": {
+        "eventLineOffset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eventLineCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tests",
+        "validation",
+        "prerequisites",
+        "checklist",
+        "evidence",
+        "approval"
+      ],
+      "properties": {
+        "tests": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        },
+        "prerequisites": {
+          "type": "string"
+        },
+        "checklist": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "approval": {
+          "type": "string"
+        }
+      }
+    },
+    "stuck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "streak",
+        "threshold"
+      ],
+      "properties": {
+        "streak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "threshold": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runStatus": {
+      "type": "string",
+      "enum": [
+        "running",
+        "awaiting_approval",
+        "complete",
+        "stopped",
+        "failed",
+        "idle",
+        "unknown"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "iteration"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestamp",
+        "name",
+        "role",
+        "status",
+        "message",
+        "payload",
+        "raw"
+      ],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "raw": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "loopRunSnapshotEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "envelopeType",
+        "emittedAt",
+        "source",
+        "run",
+        "runtime",
+        "artifacts",
+        "cursor",
+        "health"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "v1"
+        },
+        "envelopeType": {
+          "type": "string",
+          "const": "loop_run_snapshot"
+        },
+        "emittedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "run": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runId",
+            "iteration",
+            "status",
+            "summary"
+          ],
+          "properties": {
+            "runId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "iteration": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "status": {
+              "$ref": "#/$defs/runStatus"
+            },
+            "summary": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "superloopState",
+            "activeRun",
+            "approval"
+          ],
+          "properties": {
+            "superloopState": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": true
+            },
+            "activeRun": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": true
+            },
+            "approval": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "events",
+            "runSummary",
+            "state",
+            "activeRun",
+            "approval"
+          ],
+          "properties": {
+            "events": {
+              "$ref": "#/$defs/artifactRef"
+            },
+            "runSummary": {
+              "$ref": "#/$defs/artifactRef"
+            },
+            "state": {
+              "$ref": "#/$defs/artifactRef"
+            },
+            "activeRun": {
+              "$ref": "#/$defs/artifactRef"
+            },
+            "approval": {
+              "$ref": "#/$defs/artifactRef"
+            }
+          }
+        },
+        "cursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "eventCount",
+            "lastEventAt",
+            "lastEventName",
+            "lastSummaryAt",
+            "hasPendingApproval",
+            "gates",
+            "stuck"
+          ],
+          "properties": {
+            "eventCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lastEventAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastEventName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastSummaryAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hasPendingApproval": {
+              "type": "boolean"
+            },
+            "gates": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/gates"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stuck": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/stuck"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "loopRunEventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "envelopeType",
+        "emittedAt",
+        "source",
+        "cursor",
+        "run",
+        "event"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "v1"
+        },
+        "envelopeType": {
+          "type": "string",
+          "const": "loop_run_event"
+        },
+        "emittedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "cursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "run": {
+          "$ref": "#/$defs/run"
+        },
+        "event": {
+          "$ref": "#/$defs/event"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "v1",
+  "envelopeType": "loop_run_event",
+  "emittedAt": "2026-02-22T03:45:05Z",
+  "source": {
+    "repoPath": "/tmp/repo",
+    "loopId": "demo-loop"
+  },
+  "cursor": {
+    "eventLineOffset": 43,
+    "eventLineCount": 128
+  },
+  "run": {
+    "runId": "20260222T034500Z",
+    "iteration": 3
+  },
+  "event": {
+    "timestamp": "2026-02-22T03:45:05Z",
+    "name": "role_end",
+    "role": "planner",
+    "status": "ok",
+    "message": null,
+    "payload": {
+      "duration_ms": 1320,
+      "result": "success"
+    },
+    "raw": {
+      "timestamp": "2026-02-22T03:45:05Z",
+      "event": "role_end",
+      "loop_id": "demo-loop",
+      "run_id": "20260222T034500Z",
+      "iteration": 3,
+      "role": "planner",
+      "status": "ok",
+      "data": {
+        "duration_ms": 1320,
+        "result": "success"
+      }
+    }
+  }
+}
