@@ -19,6 +19,7 @@ Operational procedures for manager core behavior across local and sprite-service
 - profile drift telemetry: `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
+- alert sinks config: `config/ops-manager-alert-sinks.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
 
 ## Standard Reconcile
@@ -167,6 +168,24 @@ Operational reason codes expected in this flow:
 - `transport_unreachable`
 - `invalid_transport_payload`
 - `ingest_stale` (if outage delays event freshness long enough)
+
+## Alert Sink Config Baseline
+Resolve config and route behavior before enabling external dispatch:
+
+```bash
+scripts/ops-manager-alert-sink-config.sh --pretty
+scripts/ops-manager-alert-sink-config.sh --category health_critical --severity critical --pretty
+```
+
+Secret env checks:
+- Enabled sinks require configured env-secret references to be set.
+- Resolver is fail-closed by default when enabled sink secrets are missing.
+- Use `--no-env-check` only for dry-run catalog inspection.
+
+Config precedence:
+1. `--config-file`
+2. `OPS_MANAGER_ALERT_SINKS_FILE`
+3. `config/ops-manager-alert-sinks.v1.json`
 
 ## Threshold Tuning
 Default profile catalog (`config/ops-manager-threshold-profiles.v1.json`):

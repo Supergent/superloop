@@ -6,9 +6,9 @@
 3. [x] Link this phase packet from the issue and include prior PR context (`#40`, `#42`, `#44`, `#46`, `#48`, `#50`, `#53`).
 
 ## P1.1 Alert Sink Config Contract
-1. [ ] Add versioned alert sink config file and schema (enabled sinks, routing policy, severity/category mapping).
-2. [ ] Add config resolver script with fail-closed validation and env-secret references.
-3. [ ] Document defaults and override precedence.
+1. [x] Add versioned alert sink config file and schema (enabled sinks, routing policy, severity/category mapping).
+2. [x] Add config resolver script with fail-closed validation and env-secret references.
+3. [x] Document defaults and override precedence.
 
 ## P1.2 Dispatch Pipeline Integration
 1. [ ] Add alert dispatch script that consumes newly emitted escalation entries.

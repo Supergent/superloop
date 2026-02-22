@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "v1",
+  "defaultMinSeverity": "warning",
+  "sinks": {
+    "webhook-default": {
+      "enabled": false,
+      "type": "webhook",
+      "urlEnv": "OPS_MANAGER_ALERT_WEBHOOK_URL",
+      "authTokenEnv": "OPS_MANAGER_ALERT_WEBHOOK_TOKEN",
+      "timeoutSeconds": 5,
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    "slack-default": {
+      "enabled": false,
+      "type": "slack",
+      "webhookUrlEnv": "OPS_MANAGER_ALERT_SLACK_WEBHOOK_URL",
+      "channel": "#ops-alerts",
+      "username": "ops-manager",
+      "iconEmoji": ":rotating_light:",
+      "timeoutSeconds": 5
+    },
+    "pagerduty-default": {
+      "enabled": false,
+      "type": "pagerduty_events",
+      "routingKeyEnv": "OPS_MANAGER_ALERT_PAGERDUTY_ROUTING_KEY",
+      "source": "superloop-ops-manager",
+      "component": "ops-manager",
+      "group": "loop-run",
+      "class": "escalation",
+      "timeoutSeconds": 5
+    }
+  },
+  "routing": {
+    "defaultSinks": [
+      "webhook-default"
+    ],
+    "categorySeverity": {
+      "divergence_detected": "warning",
+      "health_degraded": "warning",
+      "health_critical": "critical",
+      "profile_drift_detected": "warning"
+    },
+    "routes": [
+      {
+        "category": "health_critical",
+        "sinks": [
+          "pagerduty-default",
+          "slack-default"
+        ],
+        "minSeverity": "critical",
+        "enabled": true
+      },
+      {
+        "category": "health_degraded",
+        "sinks": [
+          "slack-default"
+        ],
+        "minSeverity": "warning",
+        "enabled": true
+      },
+      {
+        "category": "divergence_detected",
+        "sinks": [
+          "slack-default"
+        ],
+        "minSeverity": "warning",
+        "enabled": true
+      },
+      {
+        "category": "profile_drift_detected",
+        "sinks": [
+          "slack-default"
+        ],
+        "minSeverity": "warning",
+        "enabled": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superloop.sh/schemas/ops-manager-alert-sinks-config-v1.json",
+  "title": "OpsManagerAlertSinksConfigV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "defaultMinSeverity",
+    "sinks",
+    "routing"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "v1"
+    },
+    "defaultMinSeverity": {
+      "$ref": "#/$defs/severity"
+    },
+    "sinks": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/sink"
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defaultSinks",
+        "categorySeverity",
+        "routes"
+      ],
+      "properties": {
+        "defaultSinks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "categorySeverity": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/severity"
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ]
+    },
+    "envVarName": {
+      "type": "string",
+      "pattern": "^[A-Z_][A-Z0-9_]*$"
+    },
+    "sinkCommon": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "enabled",
+        "type"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "webhook",
+            "slack",
+            "pagerduty_events"
+          ]
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        }
+      }
+    },
+    "sinkWebhook": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sinkCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "urlEnv"
+          ],
+          "properties": {
+            "type": {
+              "const": "webhook"
+            },
+            "urlEnv": {
+              "$ref": "#/$defs/envVarName"
+            },
+            "authTokenEnv": {
+              "$ref": "#/$defs/envVarName"
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "sinkSlack": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sinkCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "webhookUrlEnv"
+          ],
+          "properties": {
+            "type": {
+              "const": "slack"
+            },
+            "webhookUrlEnv": {
+              "$ref": "#/$defs/envVarName"
+            },
+            "channel": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "iconEmoji": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "sinkPagerDuty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sinkCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "routingKeyEnv"
+          ],
+          "properties": {
+            "type": {
+              "const": "pagerduty_events"
+            },
+            "routingKeyEnv": {
+              "$ref": "#/$defs/envVarName"
+            },
+            "source": {
+              "type": "string"
+            },
+            "component": {
+              "type": "string"
+            },
+            "group": {
+              "type": "string"
+            },
+            "class": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "sink": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sinkWebhook"
+        },
+        {
+          "$ref": "#/$defs/sinkSlack"
+        },
+        {
+          "$ref": "#/$defs/sinkPagerDuty"
+        }
+      ]
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "minSeverity": {
+          "$ref": "#/$defs/severity"
+        },
+        "sinks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
