@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superloop.sh/schemas/dev-env-target-adapter-v1.json",
+  "title": "DevEnvTargetAdapterV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "target",
+    "contract",
+    "mappings",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "v1"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "repoPath"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repoPath": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "devBaseUrl",
+        "verifyBaseUrl",
+        "devPort"
+      ],
+      "properties": {
+        "devBaseUrl": {
+          "type": "string",
+          "const": "SUPERLOOP_DEV_BASE_URL"
+        },
+        "verifyBaseUrl": {
+          "type": "string",
+          "const": "SUPERLOOP_VERIFY_BASE_URL"
+        },
+        "devPort": {
+          "type": "string",
+          "const": "SUPERLOOP_DEV_PORT"
+        }
+      }
+    },
+    "mappings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "fallbackAliases"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "canonical_only",
+            "canonical_with_aliases"
+          ]
+        },
+        "fallbackAliases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "canonical",
+              "alias"
+            ],
+            "properties": {
+              "canonical": {
+                "type": "string",
+                "enum": [
+                  "SUPERLOOP_DEV_BASE_URL",
+                  "SUPERLOOP_VERIFY_BASE_URL",
+                  "SUPERLOOP_DEV_PORT"
+                ]
+              },
+              "alias": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredArtifacts"
+      ],
+      "properties": {
+        "requiredArtifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "script_resolution_proof",
+              "runbook_alignment_proof",
+              "guardrail_check_proof"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "v1",
+  "target": {
+    "id": "target-repo",
+    "repoPath": "/path/to/target-repo"
+  },
+  "contract": {
+    "devBaseUrl": "SUPERLOOP_DEV_BASE_URL",
+    "verifyBaseUrl": "SUPERLOOP_VERIFY_BASE_URL",
+    "devPort": "SUPERLOOP_DEV_PORT"
+  },
+  "mappings": {
+    "mode": "canonical_only",
+    "fallbackAliases": []
+  },
+  "evidence": {
+    "requiredArtifacts": [
+      "script_resolution_proof",
+      "runbook_alignment_proof",
+      "guardrail_check_proof"
+    ]
+  }
+}

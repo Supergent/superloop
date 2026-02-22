@@ -43,6 +43,8 @@ Use `PORTLESS=0` to bypass proxy routing temporarily.
 Cross-repo env contract:
 
 - Canonical local execution env keys are documented in `docs/dev-env-contract-v1.md`.
+- Target adoption contract (manifest + evidence) is documented in `docs/dev-env-target-adapter.md`.
+- Rollout/deprecation policy is documented in `docs/dev-env-rollout-v1.md`.
 - New loop construction should prefer `SUPERLOOP_*` keys; target-repo aliases are fallback-only during migration.
 - Use `scripts/check-core-decoupling.sh` to ensure core paths stay target-agnostic.
 
