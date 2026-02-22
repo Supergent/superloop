@@ -78,6 +78,8 @@ jobs:
         run: ./superloop.sh runner-smoke --repo .
       - name: Validate static config checks
         run: ./superloop.sh validate --repo . --static
+      - name: Validate core decoupling
+        run: scripts/check-core-decoupling.sh
       - name: List loops
         run: ./superloop.sh list --repo .
 

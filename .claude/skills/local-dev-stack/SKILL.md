@@ -68,6 +68,19 @@ Resolution order should be:
 
 See `docs/dev-env-contract-v1.md` for the full contract.
 
+## Target Adapter Readiness
+
+For target repos adopting the contract, require:
+
+1. Target adapter manifest at `.superloop/dev-env/adapter.manifest.json`.
+2. Manifest mode declaration: `canonical_only` or `canonical_with_aliases`.
+3. Evidence coverage for:
+   - `script_resolution_proof`
+   - `runbook_alignment_proof`
+   - `guardrail_check_proof`
+
+If a target has no active alias usage, set mode to `canonical_only` and keep this explicit in the manifest and runbook packet.
+
 ## Escape Hatches
 
 The baseline must remain optional for compatibility and incident response.
