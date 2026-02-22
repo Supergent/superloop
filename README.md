@@ -45,7 +45,7 @@ In Codex, restart after install so new skills are discovered.
 ./superloop.sh run --repo /path/to/repo
 ```
 
-The loop runs until all gates pass: promise emitted, tests pass, checklists complete, evidence exists.
+The loop runs until all gates pass: promise emitted, tests pass, prerequisites pass (when enabled), checklists complete, evidence exists.
 
 ## Feature Initiation (Repository Workflow)
 
@@ -115,6 +115,23 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
         "enabled": true,
         "mapping_file": ".superloop/validation/my-feature-checklist.json"
       }
+    },
+    "prerequisites": {
+      "enabled": true,
+      "require_on_completion": true,
+      "checks": [
+        {
+          "id": "phase-3-complete",
+          "type": "markdown_checklist_complete",
+          "path": "feat/lab-v0/initiation/tasks/PHASE_3.MD"
+        },
+        {
+          "id": "jtbd-filled",
+          "type": "file_regex_absent",
+          "path": "feat/lab-v0/initiation/USER_SEGMENTS_AND_JTBD.MD",
+          "pattern": "\\\\| US-00[1-3] \\\\|\\\\s*\\\\|"
+        }
+      ]
     },
     "evidence": {
       "enabled": false,
@@ -508,6 +525,7 @@ The loop only completes when ALL gates pass:
 
 - **Promise**: Reviewer outputs exact `completion_promise` tag
 - **Tests**: All test commands exit 0
+- **Prerequisites**: Configured readiness checks pass (if enabled)
 - **Checklists**: All `[ ]` items checked `[x]`
 - **Evidence**: All artifact files exist (with hash verification)
 - **Approval**: Human approval recorded (if enabled)
@@ -522,6 +540,8 @@ implementer.md       # Implementation summary
 test-report.md       # Test analysis
 review.md            # Reviewer assessment
 test-status.json     # Pass/fail status
+prerequisites-status.json # Prerequisites gate status (if enabled)
+prerequisites-results.json # Prerequisite check details (if enabled)
 evidence.json        # Artifact hashes
 gate-summary.txt     # Gate statuses
 events.jsonl         # Event stream

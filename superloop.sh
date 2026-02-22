@@ -47,7 +47,7 @@ Options:
 Notes:
 - This wrapper runs the configured runner in a multi-role loop (planner, implementer, tester, reviewer).
 - The loop stops only when the reviewer outputs a matching promise AND gates pass.
-- Gates: checklists, tests, validation, evidence, and optional approval (per config).
+- Gates: tests, validation, prerequisites, checklists, evidence, and optional approval (per config).
 USAGE
 }
 
@@ -968,6 +968,82 @@ run_validation_script() {
   fi
 
   return $status
+}
+
+write_prerequisites_status() {
+  local status_file="$1"
+  local status="$2"
+  local ok="$3"
+  local results_file="$4"
+
+  local ok_json="false"
+  if [[ "$ok" == "true" || "$ok" == "1" ]]; then
+    ok_json="true"
+  fi
+
+  jq -n \
+    --argjson ok "$ok_json" \
+    --arg status "$status" \
+    --arg generated_at "$(timestamp)" \
+    --arg results_file "$results_file" \
+    '{ok: $ok, status: $status, generated_at: $generated_at, results_file: (if ($results_file | length) > 0 then $results_file else null end)}' \
+    > "$status_file"
+}
+
+run_prerequisites() {
+  local repo="$1"
+  local loop_dir="$2"
+  local loop_id="$3"
+  local iteration="$4"
+  local loop_json="$5"
+
+  local prereq_results_file="$loop_dir/prerequisites-results.json"
+  local prereq_status_file="$loop_dir/prerequisites-status.json"
+
+  local prereq_enabled
+  prereq_enabled=$(jq -r '.prerequisites.enabled // false' <<<"$loop_json")
+  local prereq_config
+  prereq_config=$(jq -c '.prerequisites // {}' <<<"$loop_json")
+
+  if [[ "$prereq_enabled" != "true" ]]; then
+    write_prerequisites_status "$prereq_status_file" "skipped" "true" ""
+    return 0
+  fi
+
+  local prereq_config_runtime
+  prereq_config_runtime=$(jq -c \
+    --arg repo "$repo" \
+    --arg loop_id "$loop_id" \
+    --arg iteration "$iteration" \
+    '. + {
+      checks: ((.checks // []) | map(
+        . + {
+          path: (
+            if (.path // "" | type) == "string" then
+              ((.path // "")
+                | gsub("\\{repo\\}"; $repo)
+                | gsub("\\{loop_id\\}"; $loop_id)
+                | gsub("\\{iteration\\}"; $iteration))
+            else
+              .path
+            end
+          )
+        }
+      ))
+    }' <<<"$prereq_config")
+
+  if run_validation_script \
+    "$SCRIPT_DIR/scripts/prerequisite-verifier.js" \
+    "$repo" \
+    "$prereq_config_runtime" \
+    "$prereq_results_file" \
+    "prerequisites"; then
+    write_prerequisites_status "$prereq_status_file" "ok" "true" "${prereq_results_file#$repo/}"
+    return 0
+  fi
+
+  write_prerequisites_status "$prereq_status_file" "failed" "false" "${prereq_results_file#$repo/}"
+  return 1
 }
 
 write_validation_status() {
@@ -4644,12 +4720,13 @@ write_iteration_notes() {
   local promise_matched="$4"
   local tests_status="$5"
   local validation_status="$6"
-  local checklist_status="$7"
-  local tests_mode="$8"
-  local evidence_status="${9:-}"
-  local stuck_streak="${10:-}"
-  local stuck_threshold="${11:-}"
-  local approval_status="${12:-}"
+  local prerequisites_status="$7"
+  local checklist_status="$8"
+  local tests_mode="$9"
+  local evidence_status="${10:-}"
+  local stuck_streak="${11:-}"
+  local stuck_threshold="${12:-}"
+  local approval_status="${13:-}"
 
   cat <<EOF > "$notes_file"
 Iteration: $iteration
@@ -4657,6 +4734,7 @@ Loop: $loop_id
 Promise matched: $promise_matched
 Tests: $tests_status (mode: $tests_mode)
 Validation: ${validation_status:-skipped}
+Prerequisites: ${prerequisites_status:-skipped}
 Checklist: $checklist_status
 Evidence: ${evidence_status:-skipped}
 Approval: ${approval_status:-skipped}
@@ -4674,13 +4752,14 @@ write_gate_summary() {
   local promise_matched="$2"
   local tests_status="$3"
   local validation_status="$4"
-  local checklist_status="$5"
-  local evidence_status="$6"
-  local stuck_status="$7"
-  local approval_status="${8:-skipped}"
+  local prerequisites_status="$5"
+  local checklist_status="$6"
+  local evidence_status="$7"
+  local stuck_status="$8"
+  local approval_status="${9:-skipped}"
 
-  printf 'promise=%s tests=%s validation=%s checklist=%s evidence=%s stuck=%s approval=%s\n' \
-    "$promise_matched" "$tests_status" "$validation_status" "$checklist_status" "$evidence_status" "$stuck_status" "$approval_status" \
+  printf 'promise=%s tests=%s validation=%s prerequisites=%s checklist=%s evidence=%s stuck=%s approval=%s\n' \
+    "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status" "$evidence_status" "$stuck_status" "$approval_status" \
     > "$summary_file"
 }
 
@@ -4712,14 +4791,15 @@ write_approval_request() {
   local promise_matched="$9"
   local tests_status="${10}"
   local validation_status="${11}"
-  local checklist_status="${12}"
-  local evidence_status="${13}"
-  local gate_summary_file="${14}"
-  local evidence_file="${15}"
-  local reviewer_report="${16}"
-  local test_report="${17}"
-  local plan_file="${18}"
-  local notes_file="${19}"
+  local prerequisites_status="${12}"
+  local checklist_status="${13}"
+  local evidence_status="${14}"
+  local gate_summary_file="${15}"
+  local evidence_file="${16}"
+  local reviewer_report="${17}"
+  local test_report="${18}"
+  local plan_file="${19}"
+  local notes_file="${20}"
 
   local promise_matched_json="false"
   if [[ "$promise_matched" == "true" ]]; then
@@ -4739,6 +4819,7 @@ write_approval_request() {
     --argjson promise_matched "$promise_matched_json" \
     --arg tests_status "$tests_status" \
     --arg validation_status "$validation_status" \
+    --arg prerequisites_status "$prerequisites_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
     --arg gate_summary_file "$gate_summary_file" \
@@ -4764,6 +4845,7 @@ write_approval_request() {
         gates: {
           tests: $tests_status,
           validation: $validation_status,
+          prerequisites: $prerequisites_status,
           checklist: $checklist_status,
           evidence: $evidence_status
         }
@@ -5113,14 +5195,15 @@ append_run_summary() {
   local tests_mode="${11}"
   local tests_status="${12}"
   local validation_status="${13}"
-  local checklist_status="${14}"
-  local evidence_status="${15}"
-  local approval_status="${16}"
-  local stuck_streak="${17}"
-  local stuck_threshold="${18}"
-  local completion_ok="${19}"
-  local loop_dir="${20}"
-  local events_file="${21}"
+  local prerequisites_status="${14}"
+  local checklist_status="${15}"
+  local evidence_status="${16}"
+  local approval_status="${17}"
+  local stuck_streak="${18}"
+  local stuck_threshold="${19}"
+  local completion_ok="${20}"
+  local loop_dir="${21}"
+  local events_file="${22}"
 
   local plan_file="$loop_dir/plan.md"
   local implementer_report="$loop_dir/implementer.md"
@@ -5128,6 +5211,8 @@ append_run_summary() {
   local reviewer_report="$loop_dir/review.md"
   local test_output="$loop_dir/test-output.txt"
   local test_status="$loop_dir/test-status.json"
+  local prerequisites_status_file="$loop_dir/prerequisites-status.json"
+  local prerequisites_results_file="$loop_dir/prerequisites-results.json"
   local checklist_status_file="$loop_dir/checklist-status.json"
   local checklist_remaining="$loop_dir/checklist-remaining.md"
   local evidence_file="$loop_dir/evidence.json"
@@ -5143,7 +5228,7 @@ append_run_summary() {
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
-  local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
+  local test_output_meta test_status_meta prerequisites_status_meta prerequisites_results_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
   local rlms_index_meta delegation_index_meta
   local validation_status_meta validation_results_meta
@@ -5161,6 +5246,10 @@ append_run_summary() {
   test_output_meta=$(json_or_default "$test_output_meta" "{}")
   test_status_meta=$(file_meta_json "${test_status#$repo/}" "$test_status")
   test_status_meta=$(json_or_default "$test_status_meta" "{}")
+  prerequisites_status_meta=$(file_meta_json "${prerequisites_status_file#$repo/}" "$prerequisites_status_file")
+  prerequisites_status_meta=$(json_or_default "$prerequisites_status_meta" "{}")
+  prerequisites_results_meta=$(file_meta_json "${prerequisites_results_file#$repo/}" "$prerequisites_results_file")
+  prerequisites_results_meta=$(json_or_default "$prerequisites_results_meta" "{}")
   checklist_status_meta=$(file_meta_json "${checklist_status_file#$repo/}" "$checklist_status_file")
   checklist_status_meta=$(json_or_default "$checklist_status_meta" "{}")
   checklist_remaining_meta=$(file_meta_json "${checklist_remaining#$repo/}" "$checklist_remaining")
@@ -5200,6 +5289,8 @@ append_run_summary() {
     --argjson reviewer "$reviewer_meta" \
     --argjson test_output "$test_output_meta" \
     --argjson test_status "$test_status_meta" \
+    --argjson prerequisites_status "$prerequisites_status_meta" \
+    --argjson prerequisites_results "$prerequisites_results_meta" \
     --argjson checklist_status "$checklist_status_meta" \
     --argjson checklist_remaining "$checklist_remaining_meta" \
     --argjson evidence "$evidence_meta" \
@@ -5221,6 +5312,8 @@ append_run_summary() {
       reviewer: $reviewer,
       test_output: $test_output,
       test_status: $test_status,
+      prerequisites_status: $prerequisites_status,
+      prerequisites_results: $prerequisites_results,
       checklist_status: $checklist_status,
       checklist_remaining: $checklist_remaining,
       evidence: $evidence,
@@ -5259,6 +5352,7 @@ append_run_summary() {
     --arg tests_mode "$tests_mode" \
     --arg tests_status "$tests_status" \
     --arg validation_status "$validation_status" \
+    --arg prerequisites_status "$prerequisites_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
     --arg approval_status "$approval_status" \
@@ -5280,6 +5374,7 @@ append_run_summary() {
       gates: {
         tests: $tests_status,
         validation: $validation_status,
+        prerequisites: $prerequisites_status,
         checklist: $checklist_status,
         evidence: $evidence_status,
         approval: $approval_status
@@ -5333,7 +5428,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") prerequisites=\(.gates.prerequisites // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
@@ -5368,6 +5463,34 @@ read_test_status_summary() {
 }
 
 read_validation_status_summary() {
+  local status_file="$1"
+
+  if [[ ! -f "$status_file" ]]; then
+    echo "unknown"
+    return 0
+  fi
+
+  local status
+  status=$(jq -r '.status // empty' "$status_file" 2>/dev/null || true)
+  if [[ -n "$status" && "$status" != "null" ]]; then
+    echo "$status"
+    return 0
+  fi
+
+  local ok
+  ok=$(jq -r '.ok // empty' "$status_file" 2>/dev/null || true)
+  if [[ "$ok" == "true" ]]; then
+    echo "ok"
+    return 0
+  fi
+  if [[ "$ok" == "false" ]]; then
+    echo "failed"
+    return 0
+  fi
+  echo "unknown"
+}
+
+read_prerequisites_status_summary() {
   local status_file="$1"
 
   if [[ ! -f "$status_file" ]]; then
@@ -5797,6 +5920,7 @@ STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
+STATIC_ERR_PREREQUISITES_CONFIG_INVALID="PREREQUISITES_CONFIG_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -6142,6 +6266,98 @@ check_tests_gate_config() {
   return 0
 }
 
+# Ensure prerequisites gate configuration is internally consistent.
+# Usage: check_prerequisites_gate_config <repo> <loop_json> <location_prefix>
+check_prerequisites_gate_config() {
+  local repo="$1"
+  local loop_json="$2"
+  local location_prefix="$3"
+
+  local enabled
+  enabled=$(jq -r '.prerequisites.enabled // false' <<<"$loop_json" 2>/dev/null || echo "false")
+  local require_on_completion
+  require_on_completion=$(jq -r '.prerequisites.require_on_completion // false' <<<"$loop_json" 2>/dev/null || echo "false")
+  local checks_count
+  checks_count=$(jq -r '(.prerequisites.checks // []) | length' <<<"$loop_json" 2>/dev/null || echo "0")
+  local loop_id
+  loop_id=$(jq -r '.id // ""' <<<"$loop_json" 2>/dev/null || echo "")
+
+  if [[ "$enabled" == "true" && "$require_on_completion" == "true" && "$checks_count" == "0" ]]; then
+    static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+      "prerequisites is enabled and required_on_completion, but no checks are configured." \
+      "$location_prefix.prerequisites.checks"
+    return 1
+  fi
+
+  if [[ "$checks_count" == "0" ]]; then
+    return 0
+  fi
+
+  local i
+  for ((i = 0; i < checks_count; i++)); do
+    local check_json
+    check_json=$(jq -c ".prerequisites.checks[$i]" <<<"$loop_json")
+    local check_type
+    check_type=$(jq -r '.type // ""' <<<"$check_json")
+    local check_path
+    check_path=$(jq -r '.path // ""' <<<"$check_json")
+
+    if [[ -z "$check_type" || "$check_type" == "null" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] is missing required field 'type'." \
+        "$location_prefix.prerequisites.checks[$i].type"
+      continue
+    fi
+
+    if [[ -z "$check_path" || "$check_path" == "null" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] is missing required field 'path'." \
+        "$location_prefix.prerequisites.checks[$i].path"
+      continue
+    fi
+
+    if [[ "$check_type" == "file_regex_present" || "$check_type" == "file_regex_absent" ]]; then
+      local pattern
+      pattern=$(jq -r '.pattern // ""' <<<"$check_json")
+      if [[ -z "$pattern" || "$pattern" == "null" ]]; then
+        static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+          "prerequisites.checks[$i] type '$check_type' requires a non-empty 'pattern'." \
+          "$location_prefix.prerequisites.checks[$i].pattern"
+      fi
+    fi
+
+    if [[ "$check_type" == "file_contains_all" || "$check_type" == "file_not_contains_any" ]]; then
+      local needles_count
+      needles_count=$(jq -r '(.needles // []) | length' <<<"$check_json" 2>/dev/null || echo "0")
+      if [[ "$needles_count" == "0" ]]; then
+        static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+          "prerequisites.checks[$i] type '$check_type' requires non-empty 'needles'." \
+          "$location_prefix.prerequisites.checks[$i].needles"
+      fi
+    fi
+
+    local resolved_path="$check_path"
+    resolved_path="${resolved_path//\{repo\}/$repo}"
+    resolved_path="${resolved_path//\{loop_id\}/$loop_id}"
+    if [[ "$resolved_path" != /* ]]; then
+      resolved_path="$repo/$resolved_path"
+    fi
+
+    # Skip existence checks for dynamic iteration paths.
+    if [[ "$resolved_path" == *"{iteration}"* ]]; then
+      continue
+    fi
+
+    if [[ ! -e "$resolved_path" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] path '$check_path' does not exist." \
+        "$location_prefix.prerequisites.checks[$i].path"
+    fi
+  done
+
+  return 0
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -6199,6 +6415,7 @@ validate_static() {
 
     # Check tests gate policy
     check_tests_gate_config "$loop_json" "loops[$i]"
+    check_prerequisites_gate_config "$repo" "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands
@@ -6956,6 +7173,11 @@ init_cmd() {
         "mode": "disabled",
         "commands": []
       },
+      "prerequisites": {
+        "enabled": false,
+        "require_on_completion": false,
+        "checks": []
+      },
       "evidence": {
         "enabled": true,
         "require_on_completion": true,
@@ -7289,7 +7511,7 @@ Responsibilities:
 
 Rules:
 - Do not modify code.
-- Only output <promise>...</promise> if the tests gate is satisfied (test-status.json.ok == true, including intentional skipped status when tests mode is disabled), checklists are complete, and the spec is satisfied.
+- Only output <promise>...</promise> if the tests gate is satisfied (test-status.json.ok == true, including intentional skipped status when tests mode is disabled), prerequisites are satisfied when enabled, checklists are complete, and the spec is satisfied.
 - Minimize report churn: if the review report already reflects the current state and no gates changed, do not edit it.
 - If updates are required, change only the minimum necessary (avoid rephrasing or reordering unchanged text).
 - Write your review to the reviewer report file path listed in context.
@@ -8499,6 +8721,8 @@ run_cmd() {
     local test_report="$loop_dir/test-report.md"
     local validation_status_file="$loop_dir/validation-status.json"
     local validation_results_file="$loop_dir/validation-results.json"
+    local prerequisites_status_file="$loop_dir/prerequisites-status.json"
+    local prerequisites_results_file="$loop_dir/prerequisites-results.json"
     local checklist_status="$loop_dir/checklist-status.json"
     local checklist_remaining="$loop_dir/checklist-remaining.md"
     local evidence_file="$loop_dir/evidence.json"
@@ -8724,6 +8948,11 @@ run_cmd() {
     local validation_require
     validation_require=$(jq -r '.validation.require_on_completion // false' <<<"$loop_json")
 
+    local prerequisites_enabled
+    prerequisites_enabled=$(jq -r '.prerequisites.enabled // false' <<<"$loop_json")
+    local prerequisites_require
+    prerequisites_require=$(jq -r '.prerequisites.require_on_completion // false' <<<"$loop_json")
+
     local evidence_enabled
     evidence_enabled=$(jq -r '.evidence.enabled // false' <<<"$loop_json")
     local evidence_require
@@ -8948,9 +9177,10 @@ run_cmd() {
         fi
       fi
 
-      local tests_status validation_status checklist_status_text evidence_status stuck_value
+      local tests_status validation_status prerequisites_status checklist_status_text evidence_status stuck_value
       tests_status=$(read_test_status_summary "$test_status")
       validation_status=$(read_validation_status_summary "$validation_status_file")
+      prerequisites_status=$(read_prerequisites_status_summary "$prerequisites_status_file")
       checklist_status_text=$(read_checklist_status_summary "$checklist_status")
       if [[ "$evidence_enabled" == "true" ]]; then
         if [[ -f "$evidence_file" ]]; then
@@ -8973,7 +9203,7 @@ run_cmd() {
         approval_status=$(read_approval_status "$approval_file")
       fi
 
-      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status validation=$validation_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
+      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status validation=$validation_status prerequisites=$prerequisites_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
       if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
         return 0
       fi
@@ -8989,6 +9219,8 @@ run_cmd() {
       --arg tests_mode "$tests_mode" \
       --argjson test_commands "$test_commands_json" \
       --argjson checklists "$checklist_patterns_json" \
+      --arg prerequisites_enabled "$prerequisites_enabled" \
+      --arg prerequisites_require "$prerequisites_require" \
       --argjson delegation_enabled "$(if [[ "$delegation_enabled" == "true" ]]; then echo true; else echo false; fi)" \
       --arg delegation_dispatch_mode "$delegation_dispatch_mode" \
       --arg delegation_wake_policy "$delegation_wake_policy" \
@@ -9008,6 +9240,10 @@ run_cmd() {
         tests_mode: $tests_mode,
         test_commands: $test_commands,
         checklists: $checklists,
+        prerequisites: {
+          enabled: $prerequisites_enabled,
+          require_on_completion: $prerequisites_require
+        },
         delegation: {
           enabled: $delegation_enabled,
           dispatch_mode: $delegation_dispatch_mode,
@@ -9047,7 +9283,7 @@ run_cmd() {
         return 0
       elif [[ "$approval_state" == "approved" ]]; then
         local approval_run_id approval_iteration approval_promise_text approval_promise_matched
-        local approval_tests approval_validation approval_checklist approval_evidence approval_started_at approval_ended_at
+        local approval_tests approval_validation approval_prerequisites approval_checklist approval_evidence approval_started_at approval_ended_at
         local approval_decision_by approval_decision_note approval_decision_at
         approval_run_id=$(jq -r '.run_id // ""' "$approval_file")
         approval_iteration=$(jq -r '.iteration // 0' "$approval_file")
@@ -9055,6 +9291,7 @@ run_cmd() {
         approval_promise_matched=$(jq -r '.candidate.promise.matched // false' "$approval_file")
         approval_tests=$(jq -r '.candidate.gates.tests // "unknown"' "$approval_file")
         approval_validation=$(jq -r '.candidate.gates.validation // "unknown"' "$approval_file")
+        approval_prerequisites=$(jq -r '.candidate.gates.prerequisites // "unknown"' "$approval_file")
         approval_checklist=$(jq -r '.candidate.gates.checklist // "unknown"' "$approval_file")
         approval_evidence=$(jq -r '.candidate.gates.evidence // "unknown"' "$approval_file")
         approval_started_at=$(jq -r '.iteration_started_at // ""' "$approval_file")
@@ -9082,6 +9319,7 @@ run_cmd() {
         fi
         local tests_status="$approval_tests"
         local validation_status="$approval_validation"
+        local prerequisites_status="$approval_prerequisites"
         local checklist_status_text="$approval_checklist"
         local evidence_status="$approval_evidence"
         local approval_status="approved"
@@ -9095,8 +9333,8 @@ run_cmd() {
           stuck_value="${stuck_streak}/${stuck_threshold}"
         fi
 
-        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
-        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
 
         local approval_consume_data
         approval_consume_data=$(jq -n \
@@ -9108,7 +9346,7 @@ run_cmd() {
         log_event "$events_file" "$loop_id" "$approval_iteration" "$approval_run_id" "approval_consumed" "$approval_consume_data"
 
         local completion_ok=1
-        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
         write_timeline "$run_summary_file" "$timeline_file"
 
         local loop_complete_data
@@ -12304,6 +12542,43 @@ EOF
         validation_gate_ok=$validation_ok
       fi
 
+      local prerequisites_status="skipped"
+      local prerequisites_ok=1
+      local prerequisites_gate_ok=1
+      local prerequisites_start_data
+      prerequisites_start_data=$(jq -n \
+        --arg enabled "$prerequisites_enabled" \
+        --arg require_on_completion "$prerequisites_require" \
+        '{enabled: $enabled, require_on_completion: $require_on_completion}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "prerequisites_start" "$prerequisites_start_data"
+
+      if [[ "$prerequisites_enabled" == "true" ]]; then
+        if run_prerequisites "$repo" "$loop_dir" "$loop_id" "$iteration" "$loop_json"; then
+          prerequisites_status="ok"
+          prerequisites_ok=1
+        else
+          prerequisites_status="failed"
+          prerequisites_ok=0
+        fi
+      else
+        write_prerequisites_status "$prerequisites_status_file" "skipped" "true" ""
+      fi
+
+      local prerequisites_end_data
+      local prerequisites_results_rel=""
+      if [[ -f "$prerequisites_results_file" ]]; then
+        prerequisites_results_rel="${prerequisites_results_file#$repo/}"
+      fi
+      prerequisites_end_data=$(jq -n \
+        --arg status "$prerequisites_status" \
+        --arg results_file "$prerequisites_results_rel" \
+        '{status: $status, results_file: $results_file}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "prerequisites_end" "$prerequisites_end_data"
+
+      if [[ "$prerequisites_enabled" == "true" && "$prerequisites_require" == "true" ]]; then
+        prerequisites_gate_ok=$prerequisites_ok
+      fi
+
       local evidence_status="skipped"
       local evidence_ok=1
       local evidence_gate_ok=1
@@ -12368,7 +12643,7 @@ EOF
       fi
 
       local candidate_ok=0
-      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $validation_gate_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
+      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $validation_gate_ok -eq 1 && $prerequisites_gate_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
         candidate_ok=1
       fi
 
@@ -12396,12 +12671,12 @@ EOF
         if [[ $stuck_rc -eq 0 ]]; then
           stuck_streak="$stuck_result"
           if [[ "$no_progress" == "true" ]]; then
-            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
             local stuck_value="n/a"
             if [[ "$stuck_enabled" == "true" ]]; then
               stuck_value="${stuck_streak}/${stuck_threshold}"
             fi
-            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
             local no_progress_data
             no_progress_data=$(jq -n \
               --arg reason "checklist_remaining_no_change" \
@@ -12422,12 +12697,12 @@ EOF
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
           stuck_triggered="true"
-          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
           local stuck_value="n/a"
           if [[ "$stuck_enabled" == "true" ]]; then
             stuck_value="${stuck_streak}/${stuck_threshold}"
           fi
-          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
           local stuck_data
           stuck_data=$(jq -n \
             --argjson streak "$stuck_streak" \
@@ -12460,22 +12735,23 @@ EOF
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
       fi
 
-      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
       local stuck_value="n/a"
       if [[ "$stuck_enabled" == "true" ]]; then
         stuck_value="${stuck_streak}/${stuck_threshold}"
       fi
-      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
       local gates_data
       gates_data=$(jq -n \
         --argjson promise "$promise_matched_json" \
         --arg tests "$tests_status" \
         --arg validation "$validation_status" \
+        --arg prerequisites "$prerequisites_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
         --arg approval "$approval_status" \
         --arg stuck "$stuck_value" \
-        '{promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
+        '{promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "gates_evaluated" "$gates_data"
 
       local iteration_ended_at
@@ -12492,10 +12768,11 @@ EOF
         --argjson promise "$promise_matched_json" \
         --arg tests "$tests_status" \
         --arg validation "$validation_status" \
+        --arg prerequisites "$prerequisites_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
         --arg approval "$approval_status" \
-        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence, approval: $approval}')
+        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, approval: $approval}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
 
       # Auto-commit iteration changes if configured
@@ -12503,7 +12780,7 @@ EOF
         auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" "$pre_commit_commands" || true
       fi
 
-      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
       write_timeline "$run_summary_file" "$timeline_file"
 
       if [[ $approval_required -eq 1 && $candidate_ok -eq 1 ]]; then
@@ -12519,6 +12796,7 @@ EOF
           "$promise_matched" \
           "$tests_status" \
           "$validation_status" \
+          "$prerequisites_status" \
           "$checklist_status_text" \
           "$evidence_status" \
           "${summary_file#$repo/}" \
@@ -12534,9 +12812,10 @@ EOF
           --argjson promise "$promise_matched_json" \
           --arg tests "$tests_status" \
           --arg validation "$validation_status" \
+          --arg prerequisites "$prerequisites_status" \
           --arg checklist "$checklist_status_text" \
           --arg evidence "$evidence_status" \
-          '{approval_file: $approval_file, promise: $promise, tests: $tests, validation: $validation, checklist: $checklist, evidence: $evidence}')
+          '{approval_file: $approval_file, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
 
         echo "Approval required for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"
@@ -12612,6 +12891,7 @@ status_cmd() {
           "promise=" + (($e.promise.matched // false) | tostring),
           "tests=" + ($e.gates.tests // "unknown"),
           "validation=" + ($e.gates.validation // "unknown"),
+          "prerequisites=" + ($e.gates.prerequisites // "unknown"),
           "checklist=" + ($e.gates.checklist // "unknown"),
           "evidence=" + ($e.gates.evidence // "unknown"),
           "approval=" + ($e.gates.approval // "unknown"),

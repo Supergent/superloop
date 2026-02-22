@@ -160,6 +160,106 @@ EOF
   [[ "$output" =~ "TESTS_CONFIG_INVALID" ]]
 }
 
+@test "validate --static fails when prerequisites are required but checks are empty" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "prereq-empty",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "prerequisites": {"enabled": true, "require_on_completion": true, "checks": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "PREREQUISITES_CONFIG_INVALID" ]]
+}
+
+@test "validate --static accepts prerequisites when checks are valid" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "prereq-valid",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "prerequisites": {
+      "enabled": true,
+      "require_on_completion": true,
+      "checks": [
+        {"type": "file_exists", "path": ".superloop/specs/test.md"},
+        {"type": "file_nonempty", "path": ".superloop/specs/test.md", "min_chars": 3}
+      ]
+    },
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "ok: static analysis passed" ]]
+}
+
+@test "prerequisite-verifier fails on unchecked markdown checklist items" {
+  cat > "$TEMP_DIR/phase.md" << 'EOF'
+# Phase
+- [ ] unresolved item
+EOF
+
+  local cfg='{"checks":[{"id":"phase","type":"markdown_checklist_complete","path":"phase.md"}]}'
+  run "$PROJECT_ROOT/scripts/prerequisite-verifier.js" --repo "$TEMP_DIR" --config "$cfg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "\"reason\":\"unchecked_items_remaining\"" ]]
+}
+
+@test "prerequisite-verifier passes when placeholders are absent and content is present" {
+  cat > "$TEMP_DIR/jtbd.md" << 'EOF'
+| Segment ID | Segment Name |
+| --- | --- |
+| US-001 | Core builder |
+EOF
+
+  local cfg='{"checks":[{"id":"no-placeholders","type":"file_regex_absent","path":"jtbd.md","pattern":"\\| US-00[1-3] \\|\\s*\\|"},{"id":"has-segment","type":"file_contains_all","path":"jtbd.md","needles":["Core builder"]}]}'
+  run "$PROJECT_ROOT/scripts/prerequisite-verifier.js" --repo "$TEMP_DIR" --config "$cfg"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "\"ok\":true" ]]
+}
+
 @test "validate --static accepts valid rlms configuration" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {

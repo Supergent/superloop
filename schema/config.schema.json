@@ -333,6 +333,73 @@
             },
             "required": ["enabled", "require_on_completion"]
           },
+          "prerequisites": {
+            "type": "object",
+            "description": "Artifact/readiness checks that must pass before a loop can complete.",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "require_on_completion": {"type": "boolean"},
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {"type": "string"},
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "markdown_checklist_complete",
+                        "file_regex_present",
+                        "file_regex_absent",
+                        "file_contains_all",
+                        "file_not_contains_any",
+                        "file_exists",
+                        "file_nonempty"
+                      ]
+                    },
+                    "path": {"type": "string"},
+                    "pattern": {"type": "string"},
+                    "flags": {"type": "string"},
+                    "needles": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                    },
+                    "min_chars": {"type": "integer", "minimum": 0}
+                  },
+                  "required": ["type", "path"],
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {"enum": ["file_regex_present", "file_regex_absent"]}
+                        }
+                      },
+                      "then": {
+                        "required": ["pattern"]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {"enum": ["file_contains_all", "file_not_contains_any"]}
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "needles": {
+                            "type": "array",
+                            "minItems": 1
+                          }
+                        },
+                        "required": ["needles"]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "required": ["enabled", "require_on_completion", "checks"]
+          },
           "evidence": {
             "type": "object",
             "properties": {
