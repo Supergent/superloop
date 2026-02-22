@@ -21,16 +21,16 @@
 3. [x] Record reason-coded delivery failures for operator triage.
 
 ## P1.4 Operator Surface + Runbook
-1. [ ] Extend `scripts/ops-manager-status.sh` with last alert delivery summary fields.
-2. [ ] Update `docs/ops-manager-v0.md` with alert sink contract and telemetry artifacts.
-3. [ ] Update `docs/ops-manager-runbook.md` with alert failure/outage triage and fallback guidance.
+1. [x] Extend `scripts/ops-manager-status.sh` with last alert delivery summary fields.
+2. [x] Update `docs/ops-manager-v0.md` with alert sink contract and telemetry artifacts.
+3. [x] Update `docs/ops-manager-runbook.md` with alert failure/outage triage and fallback guidance.
 
 ## P1.5 Test Coverage
 1. [x] Add `tests/ops-manager-alert-sinks.bats` for config validation, dispatch success/failure, and idempotency.
-2. [ ] Add/extend tests proving status includes alert delivery summaries.
-3. [ ] Verify transport parity for alert dispatch (`local` vs `sprite_service`) where applicable.
+2. [x] Add/extend tests proving status includes alert delivery summaries.
+3. [x] Verify transport parity for alert dispatch (`local` vs `sprite_service`) where applicable.
 
 ## P1.V Validation
 1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats` passes.
 2. [x] All new/changed scripts pass `bash -n` syntax checks.
-3. [ ] Updated docs match implemented alert sink artifacts, fields, and operator flow.
+3. [x] Updated docs match implemented alert sink artifacts, fields, and operator flow.
