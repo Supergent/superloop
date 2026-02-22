@@ -23,6 +23,10 @@ Options:
   --drift-summary-window <n>                     Telemetry summary window for drift (default: 200)
   --drift-state-file <path>                      Drift state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
   --drift-history-file <path>                    Drift history JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
+  --alerts-enabled <true|false>                  Enable alert dispatch pass (default: true)
+  --alert-config-file <path>                     Alert sink config JSON path
+  --alert-dispatch-state-file <path>             Alert dispatch state path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
+  --alert-dispatch-telemetry-file <path>         Alert dispatch telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/alerts.jsonl
   --degraded-ingest-lag-seconds <n>              Degraded ingest staleness threshold (default: 300)
   --critical-ingest-lag-seconds <n>              Critical ingest staleness threshold (default: 900)
   --degraded-transport-failure-streak <n>        Degraded transport failure streak threshold (default: 2)
@@ -66,6 +70,10 @@ drift_required_streak="3"
 drift_summary_window="200"
 drift_state_file=""
 drift_history_file=""
+alerts_enabled="true"
+alert_config_file=""
+alert_dispatch_state_file=""
+alert_dispatch_telemetry_file=""
 degraded_ingest_lag_seconds="300"
 critical_ingest_lag_seconds="900"
 degraded_transport_failure_streak="2"
@@ -78,6 +86,7 @@ flag_critical_transport_failure_streak="0"
 flag_drift_min_confidence="0"
 flag_drift_required_streak="0"
 flag_drift_summary_window="0"
+flag_alerts_enabled="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -156,6 +165,23 @@ while [[ $# -gt 0 ]]; do
       drift_history_file="${2:-}"
       shift 2
       ;;
+    --alerts-enabled)
+      alerts_enabled="${2:-}"
+      flag_alerts_enabled="1"
+      shift 2
+      ;;
+    --alert-config-file)
+      alert_config_file="${2:-}"
+      shift 2
+      ;;
+    --alert-dispatch-state-file)
+      alert_dispatch_state_file="${2:-}"
+      shift 2
+      ;;
+    --alert-dispatch-telemetry-file)
+      alert_dispatch_telemetry_file="${2:-}"
+      shift 2
+      ;;
     --degraded-ingest-lag-seconds)
       degraded_ingest_lag_seconds="${2:-}"
       flag_degraded_ingest_lag_seconds="1"
@@ -214,6 +240,13 @@ fi
 if [[ ! "$drift_summary_window" =~ ^[0-9]+$ || "$drift_summary_window" -lt 1 ]]; then
   die "--drift-summary-window must be an integer >= 1"
 fi
+case "$alerts_enabled" in
+  true|false)
+    ;;
+  *)
+    die "--alerts-enabled must be true or false"
+    ;;
+esac
 
 case "$transport" in
   local|sprite_service)
@@ -240,6 +273,7 @@ health_script="${OPS_MANAGER_HEALTH_SCRIPT:-$script_dir/ops-manager-health.sh}"
 threshold_profile_script="${OPS_MANAGER_THRESHOLD_PROFILE_SCRIPT:-$script_dir/ops-manager-threshold-profile.sh}"
 telemetry_summary_script="${OPS_MANAGER_TELEMETRY_SUMMARY_SCRIPT:-$script_dir/ops-manager-telemetry-summary.sh}"
 profile_drift_script="${OPS_MANAGER_PROFILE_DRIFT_SCRIPT:-$script_dir/ops-manager-profile-drift.sh}"
+alert_dispatch_script="${OPS_MANAGER_ALERT_DISPATCH_SCRIPT:-$script_dir/ops-manager-alert-dispatch.sh}"
 root_dir="$(cd "$script_dir/.." && pwd)"
 
 if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
@@ -250,6 +284,12 @@ if [[ -z "$threshold_profile" && -n "${OPS_MANAGER_THRESHOLD_PROFILE:-}" ]]; the
 fi
 if [[ -z "$thresholds_file" && -n "${OPS_MANAGER_THRESHOLD_PROFILES_FILE:-}" ]]; then
   thresholds_file="$OPS_MANAGER_THRESHOLD_PROFILES_FILE"
+fi
+if [[ "$flag_alerts_enabled" != "1" && -n "${OPS_MANAGER_ALERTS_ENABLED:-}" ]]; then
+  alerts_enabled="$OPS_MANAGER_ALERTS_ENABLED"
+fi
+if [[ -z "$alert_config_file" && -n "${OPS_MANAGER_ALERT_SINKS_FILE:-}" ]]; then
+  alert_config_file="$OPS_MANAGER_ALERT_SINKS_FILE"
 fi
 if [[ "$flag_drift_min_confidence" != "1" && -n "${OPS_MANAGER_DRIFT_MIN_CONFIDENCE:-}" ]]; then
   drift_min_confidence="$OPS_MANAGER_DRIFT_MIN_CONFIDENCE"
@@ -312,11 +352,18 @@ if (( critical_transport_failure_streak < degraded_transport_failure_streak )); 
 fi
 
 telemetry_dir="$ops_dir/telemetry"
+escalations_file="$ops_dir/escalations.jsonl"
 reconcile_telemetry_file="$telemetry_dir/reconcile.jsonl"
 control_telemetry_file="$telemetry_dir/control.jsonl"
 transport_health_file="$telemetry_dir/transport-health.json"
 health_file="$ops_dir/health.json"
 intents_file="$ops_dir/intents.jsonl"
+if [[ -z "$alert_dispatch_state_file" ]]; then
+  alert_dispatch_state_file="$ops_dir/alert-dispatch-state.json"
+fi
+if [[ -z "$alert_dispatch_telemetry_file" ]]; then
+  alert_dispatch_telemetry_file="$telemetry_dir/alerts.jsonl"
+fi
 if [[ -z "$drift_state_file" ]]; then
   drift_state_file="$ops_dir/profile-drift.json"
 fi
@@ -355,6 +402,7 @@ health_status="healthy"
 health_reason_codes='[]'
 tuning_summary_json='null'
 drift_json='null'
+alert_dispatch_json='null'
 
 append_reconcile_telemetry() {
   local end_offset="0"
@@ -530,6 +578,52 @@ run_profile_drift_evaluation() {
   local drift_output
   drift_output=$("$profile_drift_script" "${drift_args[@]}")
   drift_json=$(jq -c '.' <<<"$drift_output")
+}
+
+run_alert_dispatch() {
+  alert_dispatch_json='null'
+  if [[ "$alerts_enabled" != "true" ]]; then
+    return 0
+  fi
+
+  local dispatch_args=(
+    --repo "$repo"
+    --loop "$loop_id"
+    --escalations-file "$escalations_file"
+    --dispatch-state-file "$alert_dispatch_state_file"
+    --dispatch-telemetry-file "$alert_dispatch_telemetry_file"
+  )
+  if [[ -n "$alert_config_file" ]]; then
+    dispatch_args+=(--alert-config-file "$alert_config_file")
+  fi
+
+  local dispatch_output=""
+  if dispatch_output=$("$alert_dispatch_script" "${dispatch_args[@]}" 2>&1); then
+    alert_dispatch_json=$(jq -c '.' <<<"$dispatch_output" 2>/dev/null || echo 'null')
+    return 0
+  fi
+
+  local dispatch_error
+  dispatch_error=$(printf '%s\n' "$dispatch_output" | tail -n 40 | sed 's/\r$//' || true)
+  alert_dispatch_json=$(jq -cn \
+    --arg status "failed_command" \
+    --arg message "$dispatch_error" \
+    '{status: $status, message: (if ($message | length) > 0 then $message else null end)} | with_entries(select(.value != null))')
+
+  jq -cn \
+    --arg timestamp "$(timestamp)" \
+    --arg loop_id "$loop_id" \
+    --arg status "failed_command" \
+    --arg reason_code "alert_dispatch_failed" \
+    --arg message "$dispatch_error" \
+    '{
+      timestamp: $timestamp,
+      loopId: $loop_id,
+      category: "alert_dispatch",
+      status: $status,
+      reasonCode: $reason_code,
+      message: (if ($message | length) > 0 then $message else null end)
+    } | with_entries(select(.value != null))' >> "$alert_dispatch_telemetry_file"
 }
 
 tmp_dir="$(mktemp -d)"
@@ -709,8 +803,6 @@ else
   fi
 fi
 
-escalations_file="$ops_dir/escalations.jsonl"
-
 if [[ "$ingest_status" == "success" ]]; then
   divergence_any=$(jq -r '.divergence.any // false' <<<"$state_json")
   if [[ "$divergence_any" == "true" ]]; then
@@ -834,6 +926,8 @@ if [[ "$drift_json" != "null" ]]; then
       } | with_entries(select(.value != null))' >> "$escalations_file"
   fi
 fi
+
+run_alert_dispatch
 
 if [[ "$ingest_status" == "success" ]]; then
   if [[ "$pretty" == "1" ]]; then

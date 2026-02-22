@@ -4,10 +4,130 @@ setup() {
   TEST_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)"
   PROJECT_ROOT="$(dirname "$TEST_DIR")"
   TEMP_DIR="$(mktemp -d)"
+  RECEIVER_PID=""
+  RECEIVER_PORT=""
+  RECEIVER_URL=""
+  RECEIVER_LOG="$TEMP_DIR/alert-receiver.jsonl"
 }
 
 teardown() {
+  if [[ -n "$RECEIVER_PID" ]] && kill -0 "$RECEIVER_PID" 2>/dev/null; then
+    kill "$RECEIVER_PID" 2>/dev/null || true
+    wait "$RECEIVER_PID" 2>/dev/null || true
+  fi
   rm -rf "$TEMP_DIR"
+}
+
+get_free_port() {
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+start_alert_receiver() {
+  RECEIVER_PORT="$(get_free_port)"
+  RECEIVER_URL="http://127.0.0.1:$RECEIVER_PORT"
+  : > "$RECEIVER_LOG"
+
+  python3 - "$RECEIVER_PORT" "$RECEIVER_LOG" <<'PY' >"$TEMP_DIR/alert-receiver.log" 2>&1 &
+import http.server
+import json
+import sys
+
+port = int(sys.argv[1])
+log_path = sys.argv[2]
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        entry = {
+            "path": self.path,
+            "headers": dict(self.headers),
+            "body": body
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"ok":true}')
+
+    def log_message(self, *_):
+        pass
+
+http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+
+  RECEIVER_PID=$!
+
+  local ready=0
+  for _ in $(seq 1 60); do
+    if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
+      break
+    fi
+    if python3 - "$RECEIVER_PORT" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+port = int(sys.argv[1])
+s = socket.socket()
+s.settimeout(0.2)
+try:
+    s.connect(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+    then
+      ready=1
+      break
+    fi
+    sleep 0.1
+  done
+
+  [ "$ready" -eq 1 ]
+}
+
+wait_for_log_lines() {
+  local expected="$1"
+  local attempts="${2:-60}"
+
+  for _ in $(seq 1 "$attempts"); do
+    local count
+    count=$(wc -l < "$RECEIVER_LOG" | tr -d ' ')
+    if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge "$expected" ]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  return 1
+}
+
+write_runtime_artifacts() {
+  local repo="$1"
+  local loop_id="$2"
+  local event_ts="$3"
+
+  mkdir -p "$repo/.superloop/loops/$loop_id"
+
+  cat > "$repo/.superloop/state.json" <<JSON
+{"active":true,"loop_index":0,"iteration":2,"current_loop_id":"$loop_id","updated_at":"$event_ts"}
+JSON
+
+  cat > "$repo/.superloop/loops/$loop_id/run-summary.json" <<JSON
+{"version":1,"loop_id":"$loop_id","updated_at":"$event_ts","entries":[{"run_id":"run-123","iteration":1,"gates":{"tests":"ok","validation":"ok","prerequisites":"ok","checklist":"ok","evidence":"skipped","approval":"none"},"stuck":{"streak":0,"threshold":3},"completion_ok":false,"ended_at":"$event_ts"}]}
+JSON
+
+  cat > "$repo/.superloop/loops/$loop_id/events.jsonl" <<JSONL
+{"timestamp":"$event_ts","event":"loop_start","loop_id":"$loop_id","run_id":"run-123","iteration":1,"data":{"max_iterations":5}}
+{"timestamp":"$event_ts","event":"iteration_start","loop_id":"$loop_id","run_id":"run-123","iteration":2,"data":{"started_at":"$event_ts"}}
+JSONL
 }
 
 write_enabled_webhook_config() {
@@ -164,4 +284,118 @@ JSON
   run jq -r '.defaultMinSeverity' <<<"$resolver_json"
   [ "$status" -eq 0 ]
   [ "$output" = "critical" ]
+}
+
+@test "alert dispatch processes new escalation rows once and is idempotent on repeat runs" {
+  local loop_id="demo-loop"
+  local repo="$TEMP_DIR/repo"
+  local ops_dir="$repo/.superloop/ops-manager/$loop_id"
+  mkdir -p "$ops_dir"
+
+  local config_file="$PROJECT_ROOT/config/ops-manager-alert-sinks.v1.json"
+
+  cat > "$ops_dir/escalations.jsonl" <<'JSONL'
+{"timestamp":"2026-02-22T11:00:00Z","loopId":"demo-loop","category":"health_degraded","reasonCodes":["ingest_stale"]}
+{"timestamp":"2026-02-22T11:01:00Z","loopId":"demo-loop","category":"divergence_detected","reasonCodes":["divergence_detected"]}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-alert-dispatch.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --alert-config-file "$config_file"
+  [ "$status" -eq 0 ]
+  local first_json="$output"
+
+  run jq -r '.processedCount' <<<"$first_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.dispatchedCount' <<<"$first_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.skippedCount' <<<"$first_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-alert-dispatch.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --alert-config-file "$config_file"
+  [ "$status" -eq 0 ]
+  local second_json="$output"
+
+  run jq -r '.status' <<<"$second_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "no_new_escalations" ]
+
+  run jq -r '.processedCount' <<<"$second_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  local telemetry_file="$ops_dir/telemetry/alerts.jsonl"
+  [ -f "$telemetry_file" ]
+
+  run bash -lc "wc -l < '$telemetry_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  local dispatch_state_file="$ops_dir/alert-dispatch-state.json"
+  [ -f "$dispatch_state_file" ]
+  run jq -r '.escalationsLineOffset' "$dispatch_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+}
+
+@test "reconcile invokes alert dispatch without changing reconcile success semantics" {
+  local loop_id="demo-loop"
+  local repo="$TEMP_DIR/repo-reconcile"
+  local stale_ts="2020-01-01T00:00:00Z"
+  write_runtime_artifacts "$repo" "$loop_id" "$stale_ts"
+
+  local config_file="$PROJECT_ROOT/config/ops-manager-alert-sinks.v1.json"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --alerts-enabled true \
+    --alert-config-file "$config_file" \
+    --degraded-ingest-lag-seconds 1 \
+    --critical-ingest-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+  local state_json="$output"
+
+  run jq -r '.health.status' <<<"$state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  local dispatch_state_file="$repo/.superloop/ops-manager/$loop_id/alert-dispatch-state.json"
+  local dispatch_telemetry_file="$repo/.superloop/ops-manager/$loop_id/telemetry/alerts.jsonl"
+  [ -f "$dispatch_state_file" ]
+  [ -f "$dispatch_telemetry_file" ]
+
+  run jq -r '.processedCount' "$dispatch_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run jq -r '.skippedCount' "$dispatch_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --alerts-enabled true \
+    --alert-config-file "$config_file" \
+    --degraded-ingest-lag-seconds 1 \
+    --critical-ingest-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+
+  run jq -r '.status' "$dispatch_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "no_new_escalations" ]
+
+  run jq -r '.processedCount' "$dispatch_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
 }
