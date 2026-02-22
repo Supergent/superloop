@@ -10,6 +10,7 @@ STATIC_ERR_TIMEOUT_SUSPICIOUS="TIMEOUT_SUSPICIOUS"
 STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
+STATIC_ERR_PREREQUISITES_CONFIG_INVALID="PREREQUISITES_CONFIG_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
 STATIC_ERRORS=""
@@ -355,6 +356,98 @@ check_tests_gate_config() {
   return 0
 }
 
+# Ensure prerequisites gate configuration is internally consistent.
+# Usage: check_prerequisites_gate_config <repo> <loop_json> <location_prefix>
+check_prerequisites_gate_config() {
+  local repo="$1"
+  local loop_json="$2"
+  local location_prefix="$3"
+
+  local enabled
+  enabled=$(jq -r '.prerequisites.enabled // false' <<<"$loop_json" 2>/dev/null || echo "false")
+  local require_on_completion
+  require_on_completion=$(jq -r '.prerequisites.require_on_completion // false' <<<"$loop_json" 2>/dev/null || echo "false")
+  local checks_count
+  checks_count=$(jq -r '(.prerequisites.checks // []) | length' <<<"$loop_json" 2>/dev/null || echo "0")
+  local loop_id
+  loop_id=$(jq -r '.id // ""' <<<"$loop_json" 2>/dev/null || echo "")
+
+  if [[ "$enabled" == "true" && "$require_on_completion" == "true" && "$checks_count" == "0" ]]; then
+    static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+      "prerequisites is enabled and required_on_completion, but no checks are configured." \
+      "$location_prefix.prerequisites.checks"
+    return 1
+  fi
+
+  if [[ "$checks_count" == "0" ]]; then
+    return 0
+  fi
+
+  local i
+  for ((i = 0; i < checks_count; i++)); do
+    local check_json
+    check_json=$(jq -c ".prerequisites.checks[$i]" <<<"$loop_json")
+    local check_type
+    check_type=$(jq -r '.type // ""' <<<"$check_json")
+    local check_path
+    check_path=$(jq -r '.path // ""' <<<"$check_json")
+
+    if [[ -z "$check_type" || "$check_type" == "null" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] is missing required field 'type'." \
+        "$location_prefix.prerequisites.checks[$i].type"
+      continue
+    fi
+
+    if [[ -z "$check_path" || "$check_path" == "null" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] is missing required field 'path'." \
+        "$location_prefix.prerequisites.checks[$i].path"
+      continue
+    fi
+
+    if [[ "$check_type" == "file_regex_present" || "$check_type" == "file_regex_absent" ]]; then
+      local pattern
+      pattern=$(jq -r '.pattern // ""' <<<"$check_json")
+      if [[ -z "$pattern" || "$pattern" == "null" ]]; then
+        static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+          "prerequisites.checks[$i] type '$check_type' requires a non-empty 'pattern'." \
+          "$location_prefix.prerequisites.checks[$i].pattern"
+      fi
+    fi
+
+    if [[ "$check_type" == "file_contains_all" || "$check_type" == "file_not_contains_any" ]]; then
+      local needles_count
+      needles_count=$(jq -r '(.needles // []) | length' <<<"$check_json" 2>/dev/null || echo "0")
+      if [[ "$needles_count" == "0" ]]; then
+        static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+          "prerequisites.checks[$i] type '$check_type' requires non-empty 'needles'." \
+          "$location_prefix.prerequisites.checks[$i].needles"
+      fi
+    fi
+
+    local resolved_path="$check_path"
+    resolved_path="${resolved_path//\{repo\}/$repo}"
+    resolved_path="${resolved_path//\{loop_id\}/$loop_id}"
+    if [[ "$resolved_path" != /* ]]; then
+      resolved_path="$repo/$resolved_path"
+    fi
+
+    # Skip existence checks for dynamic iteration paths.
+    if [[ "$resolved_path" == *"{iteration}"* ]]; then
+      continue
+    fi
+
+    if [[ ! -e "$resolved_path" ]]; then
+      static_add_error "$STATIC_ERR_PREREQUISITES_CONFIG_INVALID" \
+        "prerequisites.checks[$i] path '$check_path' does not exist." \
+        "$location_prefix.prerequisites.checks[$i].path"
+    fi
+  done
+
+  return 0
+}
+
 # Main static validation function
 # Usage: validate_static <repo> <config_path>
 # Returns: 0 if valid, 1 if errors found
@@ -412,6 +505,7 @@ validate_static() {
 
     # Check tests gate policy
     check_tests_gate_config "$loop_json" "loops[$i]"
+    check_prerequisites_gate_config "$repo" "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands

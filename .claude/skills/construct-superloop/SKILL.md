@@ -268,7 +268,7 @@ The Reviewer decides if the feature is complete:
 Responsibilities:
 1. Read reviewer packet (summary of current state)
 2. Verify requirements are met
-3. Check all gates are green (tests pass, checklists done)
+3. Check all gates are green (tests pass, prerequisites pass when enabled, checklists done)
 4. Write review report
 5. If complete: output <promise>SUPERLOOP_COMPLETE</promise>
 6. If not complete: explain what's missing (triggers next iteration)
@@ -981,6 +981,8 @@ Hard requirements when constructing loops:
 - If `tests.mode` is `every` or `on_promise`, `tests.commands` must include at least one real command.
 - Set `validation.enabled: true` and `validation.require_on_completion: true` unless the user explicitly chooses a looser policy.
 - Include an `automated_checklist.mapping_file` path when validation is enabled, and ensure the file exists.
+- If delivery is phase-gated (PLAN/PHASE artifacts), configure `prerequisites.enabled: true` with concrete checks so execution cannot skip readiness artifacts.
+  - Prefer check types: `markdown_checklist_complete`, `file_regex_absent` (placeholder detection), and `file_contains_all` (required content anchors).
 
 ```json
 {
@@ -1021,6 +1023,11 @@ Hard requirements when constructing loops:
           "enabled": true,
           "mapping_file": ".superloop/validation/<loop-id>-checklist.json"
         }
+      },
+      "prerequisites": {
+        "enabled": false,
+        "require_on_completion": false,
+        "checks": []
       },
       "evidence": {
         "enabled": false,

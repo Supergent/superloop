@@ -167,14 +167,15 @@ append_run_summary() {
   local tests_mode="${11}"
   local tests_status="${12}"
   local validation_status="${13}"
-  local checklist_status="${14}"
-  local evidence_status="${15}"
-  local approval_status="${16}"
-  local stuck_streak="${17}"
-  local stuck_threshold="${18}"
-  local completion_ok="${19}"
-  local loop_dir="${20}"
-  local events_file="${21}"
+  local prerequisites_status="${14}"
+  local checklist_status="${15}"
+  local evidence_status="${16}"
+  local approval_status="${17}"
+  local stuck_streak="${18}"
+  local stuck_threshold="${19}"
+  local completion_ok="${20}"
+  local loop_dir="${21}"
+  local events_file="${22}"
 
   local plan_file="$loop_dir/plan.md"
   local implementer_report="$loop_dir/implementer.md"
@@ -182,6 +183,8 @@ append_run_summary() {
   local reviewer_report="$loop_dir/review.md"
   local test_output="$loop_dir/test-output.txt"
   local test_status="$loop_dir/test-status.json"
+  local prerequisites_status_file="$loop_dir/prerequisites-status.json"
+  local prerequisites_results_file="$loop_dir/prerequisites-results.json"
   local checklist_status_file="$loop_dir/checklist-status.json"
   local checklist_remaining="$loop_dir/checklist-remaining.md"
   local evidence_file="$loop_dir/evidence.json"
@@ -197,7 +200,7 @@ append_run_summary() {
   local validation_results_file="$loop_dir/validation-results.json"
 
   local plan_meta implementer_meta test_report_meta reviewer_meta
-  local test_output_meta test_status_meta checklist_status_meta checklist_remaining_meta
+  local test_output_meta test_status_meta prerequisites_status_meta prerequisites_results_meta checklist_status_meta checklist_remaining_meta
   local evidence_meta summary_meta notes_meta events_meta reviewer_packet_meta approval_meta decisions_meta decisions_md_meta
   local rlms_index_meta delegation_index_meta
   local validation_status_meta validation_results_meta
@@ -215,6 +218,10 @@ append_run_summary() {
   test_output_meta=$(json_or_default "$test_output_meta" "{}")
   test_status_meta=$(file_meta_json "${test_status#$repo/}" "$test_status")
   test_status_meta=$(json_or_default "$test_status_meta" "{}")
+  prerequisites_status_meta=$(file_meta_json "${prerequisites_status_file#$repo/}" "$prerequisites_status_file")
+  prerequisites_status_meta=$(json_or_default "$prerequisites_status_meta" "{}")
+  prerequisites_results_meta=$(file_meta_json "${prerequisites_results_file#$repo/}" "$prerequisites_results_file")
+  prerequisites_results_meta=$(json_or_default "$prerequisites_results_meta" "{}")
   checklist_status_meta=$(file_meta_json "${checklist_status_file#$repo/}" "$checklist_status_file")
   checklist_status_meta=$(json_or_default "$checklist_status_meta" "{}")
   checklist_remaining_meta=$(file_meta_json "${checklist_remaining#$repo/}" "$checklist_remaining")
@@ -254,6 +261,8 @@ append_run_summary() {
     --argjson reviewer "$reviewer_meta" \
     --argjson test_output "$test_output_meta" \
     --argjson test_status "$test_status_meta" \
+    --argjson prerequisites_status "$prerequisites_status_meta" \
+    --argjson prerequisites_results "$prerequisites_results_meta" \
     --argjson checklist_status "$checklist_status_meta" \
     --argjson checklist_remaining "$checklist_remaining_meta" \
     --argjson evidence "$evidence_meta" \
@@ -275,6 +284,8 @@ append_run_summary() {
       reviewer: $reviewer,
       test_output: $test_output,
       test_status: $test_status,
+      prerequisites_status: $prerequisites_status,
+      prerequisites_results: $prerequisites_results,
       checklist_status: $checklist_status,
       checklist_remaining: $checklist_remaining,
       evidence: $evidence,
@@ -313,6 +324,7 @@ append_run_summary() {
     --arg tests_mode "$tests_mode" \
     --arg tests_status "$tests_status" \
     --arg validation_status "$validation_status" \
+    --arg prerequisites_status "$prerequisites_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
     --arg approval_status "$approval_status" \
@@ -334,6 +346,7 @@ append_run_summary() {
       gates: {
         tests: $tests_status,
         validation: $validation_status,
+        prerequisites: $prerequisites_status,
         checklist: $checklist_status,
         evidence: $evidence_status,
         approval: $approval_status
@@ -387,7 +400,7 @@ write_timeline() {
     fi
     echo ""
     jq -r '.entries[]? |
-      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
+      "- \(.ended_at // .started_at) run=\(.run_id // "unknown") iter=\(.iteration) promise=\(.promise.matched // "unknown") tests=\(.gates.tests // "unknown") validation=\(.gates.validation // "unknown") prerequisites=\(.gates.prerequisites // "unknown") checklist=\(.gates.checklist // "unknown") evidence=\(.gates.evidence // "unknown") approval=\(.gates.approval // "unknown") stuck=\(.stuck.streak // 0)/\(.stuck.threshold // 0) delegation_roles=\(.delegation.role_entries // 0) delegation_enabled=\(.delegation.enabled_roles // 0) delegation_children=\(.delegation.executed_children // 0) delegation_failed=\(.delegation.failed_children // 0) delegation_recon_violations=\(.delegation.recon_violations // 0) completion=\(.completion_ok // false)"' \
       "$summary_file"
   } > "$timeline_file"
 }
@@ -422,6 +435,34 @@ read_test_status_summary() {
 }
 
 read_validation_status_summary() {
+  local status_file="$1"
+
+  if [[ ! -f "$status_file" ]]; then
+    echo "unknown"
+    return 0
+  fi
+
+  local status
+  status=$(jq -r '.status // empty' "$status_file" 2>/dev/null || true)
+  if [[ -n "$status" && "$status" != "null" ]]; then
+    echo "$status"
+    return 0
+  fi
+
+  local ok
+  ok=$(jq -r '.ok // empty' "$status_file" 2>/dev/null || true)
+  if [[ "$ok" == "true" ]]; then
+    echo "ok"
+    return 0
+  fi
+  if [[ "$ok" == "false" ]]; then
+    echo "failed"
+    return 0
+  fi
+  echo "unknown"
+}
+
+read_prerequisites_status_summary() {
   local status_file="$1"
 
   if [[ ! -f "$status_file" ]]; then

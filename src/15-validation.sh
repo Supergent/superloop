@@ -62,6 +62,82 @@ run_validation_script() {
   return $status
 }
 
+write_prerequisites_status() {
+  local status_file="$1"
+  local status="$2"
+  local ok="$3"
+  local results_file="$4"
+
+  local ok_json="false"
+  if [[ "$ok" == "true" || "$ok" == "1" ]]; then
+    ok_json="true"
+  fi
+
+  jq -n \
+    --argjson ok "$ok_json" \
+    --arg status "$status" \
+    --arg generated_at "$(timestamp)" \
+    --arg results_file "$results_file" \
+    '{ok: $ok, status: $status, generated_at: $generated_at, results_file: (if ($results_file | length) > 0 then $results_file else null end)}' \
+    > "$status_file"
+}
+
+run_prerequisites() {
+  local repo="$1"
+  local loop_dir="$2"
+  local loop_id="$3"
+  local iteration="$4"
+  local loop_json="$5"
+
+  local prereq_results_file="$loop_dir/prerequisites-results.json"
+  local prereq_status_file="$loop_dir/prerequisites-status.json"
+
+  local prereq_enabled
+  prereq_enabled=$(jq -r '.prerequisites.enabled // false' <<<"$loop_json")
+  local prereq_config
+  prereq_config=$(jq -c '.prerequisites // {}' <<<"$loop_json")
+
+  if [[ "$prereq_enabled" != "true" ]]; then
+    write_prerequisites_status "$prereq_status_file" "skipped" "true" ""
+    return 0
+  fi
+
+  local prereq_config_runtime
+  prereq_config_runtime=$(jq -c \
+    --arg repo "$repo" \
+    --arg loop_id "$loop_id" \
+    --arg iteration "$iteration" \
+    '. + {
+      checks: ((.checks // []) | map(
+        . + {
+          path: (
+            if (.path // "" | type) == "string" then
+              ((.path // "")
+                | gsub("\\{repo\\}"; $repo)
+                | gsub("\\{loop_id\\}"; $loop_id)
+                | gsub("\\{iteration\\}"; $iteration))
+            else
+              .path
+            end
+          )
+        }
+      ))
+    }' <<<"$prereq_config")
+
+  if run_validation_script \
+    "$SCRIPT_DIR/scripts/prerequisite-verifier.js" \
+    "$repo" \
+    "$prereq_config_runtime" \
+    "$prereq_results_file" \
+    "prerequisites"; then
+    write_prerequisites_status "$prereq_status_file" "ok" "true" "${prereq_results_file#$repo/}"
+    return 0
+  fi
+
+  write_prerequisites_status "$prereq_status_file" "failed" "false" "${prereq_results_file#$repo/}"
+  return 1
+}
+
 write_validation_status() {
   local status_file="$1"
   local status="$2"
