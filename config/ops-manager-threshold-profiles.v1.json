@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "v1",
+  "defaultProfile": "balanced",
+  "profiles": {
+    "strict": {
+      "degradedIngestLagSeconds": 120,
+      "criticalIngestLagSeconds": 300,
+      "degradedTransportFailureStreak": 1,
+      "criticalTransportFailureStreak": 2,
+      "description": "Fast detection for short-feedback loops with high signal confidence"
+    },
+    "balanced": {
+      "degradedIngestLagSeconds": 300,
+      "criticalIngestLagSeconds": 900,
+      "degradedTransportFailureStreak": 2,
+      "criticalTransportFailureStreak": 4,
+      "description": "Default dogfood profile balancing alert timeliness and noise"
+    },
+    "relaxed": {
+      "degradedIngestLagSeconds": 600,
+      "criticalIngestLagSeconds": 1800,
+      "degradedTransportFailureStreak": 3,
+      "criticalTransportFailureStreak": 6,
+      "description": "Noise-reduction profile for unstable environments or heavy churn"
+    }
+  }
+}

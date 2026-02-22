@@ -11,6 +11,7 @@ Options:
   --transport-health-file <path>              Optional transport health JSON file.
   --intents-file <path>                       Optional intents JSONL file.
   --transport <local|sprite_service>          Transport mode label (default: local)
+  --threshold-profile <name>                  Optional applied threshold profile label.
   --ingest-status <success|failed>            Reconcile ingest result (default: success)
   --failure-code <code>                       Optional reconcile failure code.
   --degraded-ingest-lag-seconds <n>           Degraded threshold (default: 300)
@@ -43,6 +44,7 @@ state_file=""
 transport_health_file=""
 intents_file=""
 transport="local"
+threshold_profile=""
 ingest_status="success"
 failure_code=""
 degraded_ingest_lag_seconds="300"
@@ -68,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --transport)
       transport="${2:-}"
+      shift 2
+      ;;
+    --threshold-profile)
+      threshold_profile="${2:-}"
       shift 2
       ;;
     --ingest-status)
@@ -299,6 +305,7 @@ health_json=$(jq -cn \
   --arg updated_at "$now_iso" \
   --arg status "$health_status" \
   --arg transport "$transport" \
+  --arg threshold_profile "$threshold_profile" \
   --arg ingest_status "$ingest_status" \
   --arg failure_code "$failure_code" \
   --arg last_transport_failure_code "$last_transport_failure_code" \
@@ -326,6 +333,7 @@ health_json=$(jq -cn \
       lifecycleState: $lifecycle_state
     },
     thresholds: {
+      profile: (if ($threshold_profile | length) > 0 then $threshold_profile else null end),
       degradedIngestLagSeconds: $degraded_ingest,
       criticalIngestLagSeconds: $critical_ingest,
       degradedTransportFailureStreak: $degraded_streak,

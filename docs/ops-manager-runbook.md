@@ -16,6 +16,7 @@ Operational procedures for manager core behavior across local and sprite-service
 - reconcile telemetry: `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl`
 - control telemetry: `.superloop/ops-manager/<loop>/telemetry/control.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
+- threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
 
 ## Standard Reconcile
@@ -31,10 +32,10 @@ Expected outputs:
 
 ## Operator Status Snapshot
 ```bash
-scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --pretty
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-window 200 --pretty
 ```
 
-Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, and latest control/reconcile outcomes.
+Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, latest control/reconcile outcomes, and tuning guidance (`recommendedProfile`, `confidence`).
 
 ## Divergence Triage
 1. Inspect current manager projection:
@@ -143,19 +144,37 @@ Operational reason codes expected in this flow:
 - `ingest_stale` (if outage delays event freshness long enough)
 
 ## Threshold Tuning
-Default reconcile thresholds:
-- degraded ingest lag: `300s`
-- critical ingest lag: `900s`
-- degraded transport failure streak: `2`
-- critical transport failure streak: `4`
+Default profile catalog (`config/ops-manager-threshold-profiles.v1.json`):
+- `strict`: `120/300` ingest-lag seconds, `1/2` failure streak
+- `balanced` (default): `300/900` ingest-lag seconds, `2/4` failure streak
+- `relaxed`: `600/1800` ingest-lag seconds, `3/6` failure streak
 
-Override example:
+Telemetry-first tuning workflow:
+1. Summarize recent telemetry and inspect recommendation:
+```bash
+scripts/ops-manager-telemetry-summary.sh \
+  --repo /path/to/repo \
+  --loop <loop-id> \
+  --window 200 \
+  --pretty
+```
+2. Apply profile on reconcile:
 ```bash
 scripts/ops-manager-reconcile.sh \
   --repo /path/to/repo \
   --loop <loop-id> \
-  --degraded-ingest-lag-seconds 120 \
-  --critical-ingest-lag-seconds 300 \
-  --degraded-transport-failure-streak 1 \
-  --critical-transport-failure-streak 3
+  --threshold-profile balanced
 ```
+3. If needed, override specific values explicitly (highest precedence):
+```bash
+scripts/ops-manager-reconcile.sh \
+  --repo /path/to/repo \
+  --loop <loop-id> \
+  --threshold-profile strict \
+  --critical-ingest-lag-seconds 480
+```
+
+Precedence rules:
+1. explicit threshold flags
+2. selected profile (`--threshold-profile` or `OPS_MANAGER_THRESHOLD_PROFILE`)
+3. catalog default profile

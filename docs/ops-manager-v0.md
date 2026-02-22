@@ -86,10 +86,20 @@ Purpose:
 - Computes reason-coded manager health (`healthy|degraded|critical`) and writes `.superloop/ops-manager/<loop>/health.json`.
 
 Observability thresholds:
+- `--threshold-profile <strict|balanced|relaxed>`
+- `--thresholds-file <path>`
 - `--degraded-ingest-lag-seconds <n>`
 - `--critical-ingest-lag-seconds <n>`
 - `--degraded-transport-failure-streak <n>`
 - `--critical-transport-failure-streak <n>`
+
+Threshold precedence:
+1. Explicit threshold flags (`--degraded-*`, `--critical-*`)
+2. Selected threshold profile (`--threshold-profile` or `OPS_MANAGER_THRESHOLD_PROFILE`)
+3. Profile catalog default (`defaultProfile` in thresholds file)
+
+Profile catalog default path:
+- `config/ops-manager-threshold-profiles.v1.json`
 
 ### Control Intent
 ```bash
@@ -132,6 +142,30 @@ scripts/ops-manager-status.sh \
 Purpose:
 - Provides operator-facing lifecycle + health summary for one loop run.
 - Normalizes state, health, cursor, latest control, and latest reconcile telemetry.
+- Includes tuning guidance fields from telemetry summaries (`recommendedProfile`, `confidence`, `rationale`).
+
+### Threshold Profile Resolver
+```bash
+scripts/ops-manager-threshold-profile.sh --profile strict --pretty
+```
+
+Purpose:
+- Resolves profile values from a versioned profile catalog.
+- Enforces fail-closed behavior for unknown/invalid profiles.
+- Lists available profiles via `--list`.
+
+### Telemetry Summary
+```bash
+scripts/ops-manager-telemetry-summary.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --window 200 \
+  --pretty
+```
+
+Purpose:
+- Summarizes reconcile/control telemetry over a bounded recent window.
+- Emits profile recommendation + confidence for dogfood threshold tuning.
 
 ## Sprite Service Transport
 Service implementation entrypoint:
@@ -160,6 +194,7 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl` - reconcile attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/control.jsonl` - control attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
+- `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 
 ## Health Reason Codes
 Current reason-code surface used in health and escalation artifacts:

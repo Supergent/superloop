@@ -16,6 +16,8 @@ Options:
   --state-file <path>                            Output state path. Default: <repo>/.superloop/ops-manager/<loop>/state.json
   --max-events <n>                               Max incremental events to ingest (default: 0 = all available)
   --from-start                                   Replay events from line 1 (ignores existing cursor)
+  --threshold-profile <name>                     Threshold profile name from catalog (default: catalog default)
+  --thresholds-file <path>                       Threshold profile catalog JSON path
   --degraded-ingest-lag-seconds <n>              Degraded ingest staleness threshold (default: 300)
   --critical-ingest-lag-seconds <n>              Critical ingest staleness threshold (default: 900)
   --degraded-transport-failure-streak <n>        Degraded transport failure streak threshold (default: 2)
@@ -52,11 +54,17 @@ cursor_file=""
 state_file=""
 max_events="0"
 from_start="0"
+threshold_profile=""
+thresholds_file=""
 degraded_ingest_lag_seconds="300"
 critical_ingest_lag_seconds="900"
 degraded_transport_failure_streak="2"
 critical_transport_failure_streak="4"
 pretty="0"
+flag_degraded_ingest_lag_seconds="0"
+flag_critical_ingest_lag_seconds="0"
+flag_degraded_transport_failure_streak="0"
+flag_critical_transport_failure_streak="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -104,20 +112,32 @@ while [[ $# -gt 0 ]]; do
       from_start="1"
       shift
       ;;
+    --threshold-profile)
+      threshold_profile="${2:-}"
+      shift 2
+      ;;
+    --thresholds-file)
+      thresholds_file="${2:-}"
+      shift 2
+      ;;
     --degraded-ingest-lag-seconds)
       degraded_ingest_lag_seconds="${2:-}"
+      flag_degraded_ingest_lag_seconds="1"
       shift 2
       ;;
     --critical-ingest-lag-seconds)
       critical_ingest_lag_seconds="${2:-}"
+      flag_critical_ingest_lag_seconds="1"
       shift 2
       ;;
     --degraded-transport-failure-streak)
       degraded_transport_failure_streak="${2:-}"
+      flag_degraded_transport_failure_streak="1"
       shift 2
       ;;
     --critical-transport-failure-streak)
       critical_transport_failure_streak="${2:-}"
+      flag_critical_transport_failure_streak="1"
       shift 2
       ;;
     --pretty)
@@ -152,18 +172,6 @@ fi
 if [[ ! "$retry_backoff_seconds" =~ ^[0-9]+$ ]]; then
   die "--retry-backoff-seconds must be a non-negative integer"
 fi
-for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
-  threshold_value="${!threshold_name}"
-  if [[ ! "$threshold_value" =~ ^[0-9]+$ ]]; then
-    die "${threshold_name//_/\-} must be a non-negative integer"
-  fi
-done
-if (( critical_ingest_lag_seconds < degraded_ingest_lag_seconds )); then
-  die "critical ingest lag threshold must be >= degraded threshold"
-fi
-if (( critical_transport_failure_streak < degraded_transport_failure_streak )); then
-  die "critical transport failure threshold must be >= degraded threshold"
-fi
 
 case "$transport" in
   local|sprite_service)
@@ -187,9 +195,53 @@ mkdir -p "$ops_dir"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-service-client.sh}"
 health_script="${OPS_MANAGER_HEALTH_SCRIPT:-$script_dir/ops-manager-health.sh}"
+threshold_profile_script="${OPS_MANAGER_THRESHOLD_PROFILE_SCRIPT:-$script_dir/ops-manager-threshold-profile.sh}"
+root_dir="$(cd "$script_dir/.." && pwd)"
 
 if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
   service_header="$OPS_MANAGER_SERVICE_TOKEN"
+fi
+if [[ -z "$threshold_profile" && -n "${OPS_MANAGER_THRESHOLD_PROFILE:-}" ]]; then
+  threshold_profile="$OPS_MANAGER_THRESHOLD_PROFILE"
+fi
+if [[ -z "$thresholds_file" && -n "${OPS_MANAGER_THRESHOLD_PROFILES_FILE:-}" ]]; then
+  thresholds_file="$OPS_MANAGER_THRESHOLD_PROFILES_FILE"
+fi
+if [[ -z "$thresholds_file" ]]; then
+  thresholds_file="$root_dir/config/ops-manager-threshold-profiles.v1.json"
+fi
+
+profile_args=(--profiles-file "$thresholds_file")
+if [[ -n "$threshold_profile" ]]; then
+  profile_args+=(--profile "$threshold_profile")
+fi
+profile_resolved_json=$("$threshold_profile_script" "${profile_args[@]}")
+threshold_profile=$(jq -r '.profile // empty' <<<"$profile_resolved_json")
+
+if [[ "$flag_degraded_ingest_lag_seconds" != "1" ]]; then
+  degraded_ingest_lag_seconds=$(jq -r '.values.degradedIngestLagSeconds' <<<"$profile_resolved_json")
+fi
+if [[ "$flag_critical_ingest_lag_seconds" != "1" ]]; then
+  critical_ingest_lag_seconds=$(jq -r '.values.criticalIngestLagSeconds' <<<"$profile_resolved_json")
+fi
+if [[ "$flag_degraded_transport_failure_streak" != "1" ]]; then
+  degraded_transport_failure_streak=$(jq -r '.values.degradedTransportFailureStreak' <<<"$profile_resolved_json")
+fi
+if [[ "$flag_critical_transport_failure_streak" != "1" ]]; then
+  critical_transport_failure_streak=$(jq -r '.values.criticalTransportFailureStreak' <<<"$profile_resolved_json")
+fi
+
+for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
+  threshold_value="${!threshold_name}"
+  if [[ ! "$threshold_value" =~ ^[0-9]+$ ]]; then
+    die "${threshold_name//_/\-} must be a non-negative integer"
+  fi
+done
+if (( critical_ingest_lag_seconds < degraded_ingest_lag_seconds )); then
+  die "critical ingest lag threshold must be >= degraded threshold"
+fi
+if (( critical_transport_failure_streak < degraded_transport_failure_streak )); then
+  die "critical transport failure threshold must be >= degraded threshold"
 fi
 
 telemetry_dir="$ops_dir/telemetry"
@@ -269,6 +321,7 @@ append_reconcile_telemetry() {
     --argjson from_start "$from_start" \
     --argjson retry_attempts "$retry_attempts" \
     --argjson retry_backoff_seconds "$retry_backoff_seconds" \
+    --arg threshold_profile "$threshold_profile" \
     --argjson duration_seconds "$duration_seconds" \
     --argjson transport_failure_streak "$transport_failure_streak" \
     --arg health_status "$health_status" \
@@ -288,6 +341,7 @@ append_reconcile_telemetry() {
       fromStart: ($from_start == 1),
       retryAttempts: $retry_attempts,
       retryBackoffSeconds: $retry_backoff_seconds,
+      thresholdProfile: (if ($threshold_profile | length) > 0 then $threshold_profile else null end),
       durationSeconds: $duration_seconds,
       transportFailureStreak: $transport_failure_streak,
       healthStatus: $health_status,
@@ -500,6 +554,7 @@ health_json=$(
     --transport-health-file "$transport_health_file" \
     --intents-file "$intents_file" \
     --transport "$transport" \
+    --threshold-profile "$threshold_profile" \
     --ingest-status "$ingest_status" \
     --failure-code "$failure_code" \
     --degraded-ingest-lag-seconds "$degraded_ingest_lag_seconds" \
