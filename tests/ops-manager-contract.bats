@@ -89,6 +89,18 @@ JSONL
   run jq -r '.cursor.eventLineOffset' "$output_file"
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
+
+  run jq -r '.runtime.heartbeat' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
+
+  run jq -r '.artifacts.heartbeat.path' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = ".superloop/loops/demo-loop/heartbeat.v1.json" ]
+
+  run jq -r '.artifacts.heartbeat.exists' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
 }
 
 @test "ops manager snapshot fails closed when events artifact is missing" {

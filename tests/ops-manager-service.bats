@@ -48,6 +48,16 @@ JSON
 JSONL
 }
 
+write_runtime_heartbeat() {
+  local repo="$1"
+  local loop_id="$2"
+  local heartbeat_ts="$3"
+
+  cat > "$repo/.superloop/loops/$loop_id/heartbeat.v1.json" <<JSON
+{"schemaVersion":"v1","timestamp":"$heartbeat_ts","source":"runtime","status":"running","stage":"iteration"}
+JSON
+}
+
 write_stub_superloop() {
   local path="$1"
   cat > "$path" <<'STUB'
@@ -189,6 +199,7 @@ start_service() {
 
 @test "sprite service snapshot and events return expected shapes" {
   write_runtime_artifacts "$TEMP_DIR" "demo-loop"
+  write_runtime_heartbeat "$TEMP_DIR" "demo-loop" "2026-02-22T11:00:04Z"
   start_service "$TEMP_DIR" "$SERVICE_TOKEN"
 
   run "$PROJECT_ROOT/scripts/ops-manager-service-client.sh" \
@@ -197,10 +208,19 @@ start_service() {
     --path "/ops/snapshot?loopId=demo-loop" \
     --token "$SERVICE_TOKEN"
   [ "$status" -eq 0 ]
+  local snapshot_response="$output"
 
-  run jq -r '.envelopeType' <<<"$output"
+  run jq -r '.envelopeType' <<<"$snapshot_response"
   [ "$status" -eq 0 ]
   [ "$output" = "loop_run_snapshot" ]
+
+  run jq -r '.runtime.heartbeat.timestamp' <<<"$snapshot_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2026-02-22T11:00:04Z" ]
+
+  run jq -r '.artifacts.heartbeat.exists' <<<"$snapshot_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 
   run "$PROJECT_ROOT/scripts/ops-manager-service-client.sh" \
     --method GET \

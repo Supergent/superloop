@@ -170,6 +170,7 @@ active_run_file="$superloop_dir/active-run.json"
 approval_file="$loop_dir/approval.json"
 events_file="$loop_dir/events.jsonl"
 summary_file="$loop_dir/run-summary.json"
+heartbeat_file="$loop_dir/heartbeat.v1.json"
 
 if [[ ! -d "$loop_dir" ]]; then
   die "required artifact root missing: $loop_dir"
@@ -192,6 +193,7 @@ state_json=$(json_or_null_file "$state_file")
 active_run_json=$(json_or_null_file "$active_run_file")
 approval_json=$(json_or_null_file "$approval_file")
 summary_json=$(json_or_null_file "$summary_file")
+heartbeat_json=$(json_or_null_file "$heartbeat_file")
 latest_summary_entry=$(jq -cn --argjson s "$summary_json" '$s.entries[-1] // null')
 
 resolved_run_id="$requested_run_id"
@@ -250,6 +252,7 @@ summary_ref=$(file_ref_json "$repo" "$summary_file")
 state_ref=$(file_ref_json "$repo" "$state_file")
 active_run_ref=$(file_ref_json "$repo" "$active_run_file")
 approval_ref=$(file_ref_json "$repo" "$approval_file")
+heartbeat_ref=$(file_ref_json "$repo" "$heartbeat_file")
 
 snapshot_json=$(jq -cn \
   --arg schema_version "v1" \
@@ -265,12 +268,14 @@ snapshot_json=$(jq -cn \
   --argjson state "$state_json" \
   --argjson active_run "$active_run_json" \
   --argjson approval "$approval_json" \
+  --argjson heartbeat "$heartbeat_json" \
   --argjson latest_summary "$latest_summary_entry" \
   --argjson events_ref "$events_ref" \
   --argjson summary_ref "$summary_ref" \
   --argjson state_ref "$state_ref" \
   --argjson active_run_ref "$active_run_ref" \
   --argjson approval_ref "$approval_ref" \
+  --argjson heartbeat_ref "$heartbeat_ref" \
   --argjson event_count "$event_line_count" \
   --argjson has_pending_approval "$has_pending_approval" \
   --argjson gates "$gates_json" \
@@ -292,14 +297,16 @@ snapshot_json=$(jq -cn \
     runtime: {
       superloopState: $state,
       activeRun: $active_run,
-      approval: $approval
+      approval: $approval,
+      heartbeat: $heartbeat
     },
     artifacts: {
       events: $events_ref,
       runSummary: $summary_ref,
       state: $state_ref,
       activeRun: $active_run_ref,
-      approval: $approval_ref
+      approval: $approval_ref,
+      heartbeat: $heartbeat_ref
     },
     cursor: {
       eventLineOffset: $event_count,

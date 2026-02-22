@@ -8,6 +8,7 @@ Usage:
 
 Options:
   --state-file <path>                         Optional manager state JSON file.
+  --heartbeat-state-file <path>               Optional heartbeat state JSON file.
   --transport-health-file <path>              Optional transport health JSON file.
   --intents-file <path>                       Optional intents JSONL file.
   --transport <local|sprite_service>          Transport mode label (default: local)
@@ -16,6 +17,8 @@ Options:
   --failure-code <code>                       Optional reconcile failure code.
   --degraded-ingest-lag-seconds <n>           Degraded threshold (default: 300)
   --critical-ingest-lag-seconds <n>           Critical threshold (default: 900)
+  --degraded-heartbeat-lag-seconds <n>        Degraded heartbeat threshold (default: 120)
+  --critical-heartbeat-lag-seconds <n>        Critical heartbeat threshold (default: 300)
   --degraded-transport-failure-streak <n>     Degraded threshold (default: 2)
   --critical-transport-failure-streak <n>     Critical threshold (default: 4)
   --now <timestamp>                           Override current UTC time (ISO-8601)
@@ -41,6 +44,7 @@ timestamp() {
 }
 
 state_file=""
+heartbeat_state_file=""
 transport_health_file=""
 intents_file=""
 transport="local"
@@ -49,6 +53,8 @@ ingest_status="success"
 failure_code=""
 degraded_ingest_lag_seconds="300"
 critical_ingest_lag_seconds="900"
+degraded_heartbeat_lag_seconds="120"
+critical_heartbeat_lag_seconds="300"
 degraded_transport_failure_streak="2"
 critical_transport_failure_streak="4"
 now_value=""
@@ -58,6 +64,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --state-file)
       state_file="${2:-}"
+      shift 2
+      ;;
+    --heartbeat-state-file)
+      heartbeat_state_file="${2:-}"
       shift 2
       ;;
     --transport-health-file)
@@ -90,6 +100,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --critical-ingest-lag-seconds)
       critical_ingest_lag_seconds="${2:-}"
+      shift 2
+      ;;
+    --degraded-heartbeat-lag-seconds)
+      degraded_heartbeat_lag_seconds="${2:-}"
+      shift 2
+      ;;
+    --critical-heartbeat-lag-seconds)
+      critical_heartbeat_lag_seconds="${2:-}"
       shift 2
       ;;
     --degraded-transport-failure-streak)
@@ -136,7 +154,7 @@ case "$ingest_status" in
     ;;
 esac
 
-for value_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
+for value_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_heartbeat_lag_seconds critical_heartbeat_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
   value="${!value_name}"
   if [[ ! "$value" =~ ^[0-9]+$ ]]; then
     die "${value_name//_/\-} must be a non-negative integer"
@@ -145,6 +163,9 @@ done
 
 if (( critical_ingest_lag_seconds < degraded_ingest_lag_seconds )); then
   die "critical ingest lag threshold must be >= degraded threshold"
+fi
+if (( critical_heartbeat_lag_seconds < degraded_heartbeat_lag_seconds )); then
+  die "critical heartbeat lag threshold must be >= degraded threshold"
 fi
 if (( critical_transport_failure_streak < degraded_transport_failure_streak )); then
   die "critical transport failure threshold must be >= degraded threshold"
@@ -163,6 +184,11 @@ fi
 state_json='{}'
 if [[ -n "$state_file" && -f "$state_file" ]]; then
   state_json=$(jq -c '.' "$state_file" 2>/dev/null) || die "invalid state JSON: $state_file"
+fi
+
+heartbeat_state_json='{}'
+if [[ -n "$heartbeat_state_file" && -f "$heartbeat_state_file" ]]; then
+  heartbeat_state_json=$(jq -c '.' "$heartbeat_state_file" 2>/dev/null) || die "invalid heartbeat state JSON: $heartbeat_state_file"
 fi
 
 transport_json='{}'
@@ -192,6 +218,22 @@ if [[ -n "$last_event_at" ]]; then
       lag=0
     fi
     ingest_lag_seconds="$lag"
+  fi
+fi
+
+last_heartbeat_at=$(jq -r '.lastHeartbeatAt // .heartbeat.timestamp // empty' <<<"$heartbeat_state_json")
+heartbeat_lag_seconds=$(jq -r '.heartbeatLagSeconds // empty' <<<"$heartbeat_state_json")
+if [[ -n "$heartbeat_lag_seconds" && ! "$heartbeat_lag_seconds" =~ ^[0-9]+$ ]]; then
+  heartbeat_lag_seconds=""
+fi
+if [[ -z "$heartbeat_lag_seconds" && -n "$last_heartbeat_at" ]]; then
+  heartbeat_epoch=$(jq -rn --arg t "$last_heartbeat_at" '($t | fromdateiso8601? // empty)' 2>/dev/null || true)
+  if [[ -n "$heartbeat_epoch" && "$heartbeat_epoch" =~ ^[0-9]+$ ]]; then
+    heartbeat_lag=$(( now_epoch - heartbeat_epoch ))
+    if (( heartbeat_lag < 0 )); then
+      heartbeat_lag=0
+    fi
+    heartbeat_lag_seconds="$heartbeat_lag"
   fi
 fi
 
@@ -260,6 +302,14 @@ if [[ -n "$ingest_lag_seconds" ]]; then
   fi
 fi
 
+if [[ -n "$heartbeat_lag_seconds" ]]; then
+  if (( heartbeat_lag_seconds >= critical_heartbeat_lag_seconds )); then
+    add_reason "runtime_heartbeat_stale" "critical" "heartbeatLagSeconds" "$heartbeat_lag_seconds" "$critical_heartbeat_lag_seconds"
+  elif (( heartbeat_lag_seconds >= degraded_heartbeat_lag_seconds )); then
+    add_reason "runtime_heartbeat_stale" "degraded" "heartbeatLagSeconds" "$heartbeat_lag_seconds" "$degraded_heartbeat_lag_seconds"
+  fi
+fi
+
 if (( transport_failure_streak >= critical_transport_failure_streak )); then
   add_reason "transport_unreachable" "critical" "transportFailureStreak" "$transport_failure_streak" "$critical_transport_failure_streak"
 elif (( transport_failure_streak >= degraded_transport_failure_streak )); then
@@ -312,10 +362,14 @@ health_json=$(jq -cn \
   --arg lifecycle_state "$lifecycle_state" \
   --arg last_intent_status "$last_intent_status" \
   --arg last_event_at "$last_event_at" \
+  --arg last_heartbeat_at "$last_heartbeat_at" \
   --arg ingest_lag "$ingest_lag_seconds" \
+  --arg heartbeat_lag "$heartbeat_lag_seconds" \
   --argjson transport_failure_streak "$transport_failure_streak" \
   --argjson degraded_ingest "$degraded_ingest_lag_seconds" \
   --argjson critical_ingest "$critical_ingest_lag_seconds" \
+  --argjson degraded_heartbeat "$degraded_heartbeat_lag_seconds" \
+  --argjson critical_heartbeat "$critical_heartbeat_lag_seconds" \
   --argjson degraded_streak "$degraded_transport_failure_streak" \
   --argjson critical_streak "$critical_transport_failure_streak" \
   --argjson reason_codes "$reason_codes" \
@@ -328,6 +382,7 @@ health_json=$(jq -cn \
     reasons: $reasons,
     metrics: {
       ingestLagSeconds: (if ($ingest_lag | length) > 0 then ($ingest_lag | tonumber) else null end),
+      heartbeatLagSeconds: (if ($heartbeat_lag | length) > 0 then ($heartbeat_lag | tonumber) else null end),
       transportFailureStreak: $transport_failure_streak,
       lastControlStatus: (if ($last_intent_status | length) > 0 then $last_intent_status else null end),
       lifecycleState: $lifecycle_state
@@ -336,6 +391,8 @@ health_json=$(jq -cn \
       profile: (if ($threshold_profile | length) > 0 then $threshold_profile else null end),
       degradedIngestLagSeconds: $degraded_ingest,
       criticalIngestLagSeconds: $critical_ingest,
+      degradedHeartbeatLagSeconds: $degraded_heartbeat,
+      criticalHeartbeatLagSeconds: $critical_heartbeat,
       degradedTransportFailureStreak: $degraded_streak,
       criticalTransportFailureStreak: $critical_streak
     },
@@ -346,7 +403,8 @@ health_json=$(jq -cn \
       lastFailureCode: (if ($last_transport_failure_code | length) > 0 then $last_transport_failure_code else null end)
     },
     evidence: {
-      lastEventAt: (if ($last_event_at | length) > 0 then $last_event_at else null end)
+      lastEventAt: (if ($last_event_at | length) > 0 then $last_event_at else null end),
+      lastHeartbeatAt: (if ($last_heartbeat_at | length) > 0 then $last_heartbeat_at else null end)
     }
   }')
 

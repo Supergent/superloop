@@ -309,6 +309,13 @@
                 "null"
               ],
               "additionalProperties": true
+            },
+            "heartbeat": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": true
             }
           }
         },
@@ -336,6 +343,9 @@
               "$ref": "#/$defs/artifactRef"
             },
             "approval": {
+              "$ref": "#/$defs/artifactRef"
+            },
+            "heartbeat": {
               "$ref": "#/$defs/artifactRef"
             }
           }
