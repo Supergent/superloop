@@ -5,12 +5,17 @@ Superloop UI provides the web dashboard and component library for Superloop's **
 ## Quick Start
 
 ```bash
-cd packages/superloop-ui
-bun install
-bun run dev
+cd ../..
+scripts/dev-superloop-ui.sh
 ```
 
-Access the dashboard at `http://localhost:3333/liquid`.
+Access the dashboard at `http://superloop-ui.localhost:1355/liquid`.
+
+Raw localhost fallback:
+
+```bash
+PORTLESS=0 bun run --cwd packages/superloop-ui dev -- --port 5173
+```
 
 ## Architecture
 
@@ -183,7 +188,9 @@ src/
 POST custom UITrees to replace the default view:
 
 ```bash
-curl -X POST http://localhost:3333/api/liquid/override \
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/override" \
   -H "Content-Type: application/json" \
   -d '{"root":"main","elements":{...}}'
 ```
@@ -191,7 +198,9 @@ curl -X POST http://localhost:3333/api/liquid/override \
 ### Save Versioned View
 
 ```bash
-curl -X POST http://localhost:3333/api/liquid/views/my-view \
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/views/my-view" \
   -H "Content-Type: application/json" \
   -d '{
     "tree": {"root":"main","elements":{...}},
@@ -202,7 +211,9 @@ curl -X POST http://localhost:3333/api/liquid/views/my-view \
 ### Clear Override
 
 ```bash
-curl -X DELETE http://localhost:3333/api/liquid/override
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X DELETE "${SUPERLOOP_UI_URL}/api/liquid/override"
 ```
 
 ## Exports

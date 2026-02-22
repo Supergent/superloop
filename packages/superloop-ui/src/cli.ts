@@ -10,6 +10,7 @@ import { normalizeViewName } from "./lib/names.js";
 import { resolveRepoRoot } from "./lib/paths.js";
 
 const program = new Command();
+const defaultPort = Number.isFinite(Number(process.env.PORT)) ? String(process.env.PORT) : "5173";
 
 program
   .name("superloop-ui")
@@ -93,7 +94,7 @@ program
 program
   .command("dev")
   .description("Start the WorkGrid dev server")
-  .option("-p, --port <port>", "Port", "5173")
+  .option("-p, --port <port>", "Port", defaultPort)
   .option("--host <host>", "Host", "localhost")
   .option("--no-open", "Disable auto-open in browser")
   .option("--no-watch", "Disable file watching (use pre-built assets)")
@@ -103,7 +104,7 @@ program
     await devCommand({
       repoRoot,
       loopId: program.opts().loop,
-      port: Number.isNaN(port) ? 5173 : port,
+      port: Number.isNaN(port) ? Number(defaultPort) : port,
       host: options.host,
       open: options.open,
       watch: options.watch,

@@ -26,6 +26,24 @@ This skill is runner-agnostic and should behave the same in Claude Code and Code
 - If the current mode does not support a structured question tool, ask concise direct questions in chat and continue.
 - Keep output contracts (spec format, config structure, validation requirements) identical across runners.
 
+## Companion Skills
+
+Use these shared companion skills when relevant:
+
+- `local-dev-stack` (`.claude/skills/local-dev-stack/SKILL.md`) for local execution and URL conventions.
+- `feature-initiation` (`.claude/skills/feature-initiation/SKILL.md`) for branch/worktree/initiation workflow requirements.
+
+These are shared skills for both Claude Code and Codex after sync via `scripts/install-skill.sh`.
+
+## Local Stack Awareness
+
+Constructor should be environment-aware but not environment-dependent:
+
+- Assume local baseline is `devenv` + `direnv` + `portless`.
+- Prefer wrapper commands and env-based URLs in guidance.
+- Do not make acceptance criteria require local stack tools as mandatory.
+- Preserve fallback compatibility (`PORTLESS=0`) and CI-localhost contracts unless scope explicitly changes them.
+
 ---
 
 # PART 1: SUPERLOOP SYSTEM (What You Must Understand)
@@ -596,6 +614,9 @@ find . -name "*test*" -o -name "*spec*" | head -10
 
 # Check existing superloop setup
 jq '.runners // empty' .superloop/config.json 2>/dev/null
+
+# Optional local stack preflight (if script exists)
+test -x scripts/dev-env-doctor.sh && scripts/dev-env-doctor.sh || true
 ```
 
 ### Report Findings

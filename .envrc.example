@@ -1,0 +1,16 @@
+# Superloop local environment bootstrap (example)
+#
+# Copy to .envrc only if you need a custom variant.
+# The committed .envrc is the default stack contract.
+
+if [ "${USE_DEVENV:-1}" = "1" ]; then
+  if command -v devenv >/dev/null 2>&1; then
+    eval "$(devenv direnvrc)"
+    use devenv
+  fi
+fi
+
+dotenv_if_exists .env.local
+
+export PORTLESS="${PORTLESS:-1}"
+export SUPERLOOP_UI_BASE_URL="${SUPERLOOP_UI_BASE_URL:-http://superloop-ui.localhost:1355}"
