@@ -82,6 +82,14 @@ scripts/ops-manager-reconcile.sh \
 Purpose:
 - Executes snapshot + incremental poll + projection in one pass.
 - Maintains cursor and state under `.superloop/ops-manager/<loop>/`.
+- Emits reconcile telemetry and health projection artifacts under `.superloop/ops-manager/<loop>/telemetry/`.
+- Computes reason-coded manager health (`healthy|degraded|critical`) and writes `.superloop/ops-manager/<loop>/health.json`.
+
+Observability thresholds:
+- `--degraded-ingest-lag-seconds <n>`
+- `--critical-ingest-lag-seconds <n>`
+- `--degraded-transport-failure-streak <n>`
+- `--critical-transport-failure-streak <n>`
 
 ### Control Intent
 ```bash
@@ -111,6 +119,19 @@ scripts/ops-manager-control.sh \
 Confirmation:
 - `scripts/ops-manager-confirm-intent.sh` is used by default.
 - `--no-confirm` skips confirmation and records `executed_unconfirmed`.
+- Control telemetry is appended to `.superloop/ops-manager/<loop>/telemetry/control.jsonl`.
+
+### Operator Status
+```bash
+scripts/ops-manager-status.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --pretty
+```
+
+Purpose:
+- Provides operator-facing lifecycle + health summary for one loop run.
+- Normalizes state, health, cursor, latest control, and latest reconcile telemetry.
 
 ## Sprite Service Transport
 Service implementation entrypoint:
@@ -133,8 +154,23 @@ Transport mode switch:
 ## Manager Persistence Paths
 - `.superloop/ops-manager/<loop>/state.json` - projected lifecycle state.
 - `.superloop/ops-manager/<loop>/cursor.json` - incremental event cursor.
+- `.superloop/ops-manager/<loop>/health.json` - latest health status + reason codes.
 - `.superloop/ops-manager/<loop>/intents.jsonl` - control intent execution log.
 - `.superloop/ops-manager/<loop>/escalations.jsonl` - divergence/escalation records.
+- `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl` - reconcile attempt telemetry.
+- `.superloop/ops-manager/<loop>/telemetry/control.jsonl` - control attempt telemetry.
+- `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
+
+## Health Reason Codes
+Current reason-code surface used in health and escalation artifacts:
+- `transport_unreachable`
+- `ingest_stale`
+- `control_ambiguous`
+- `control_failed_command`
+- `divergence_detected`
+- `invalid_transport_payload`
+- `projection_failed`
+- `reconcile_failed`
 
 ## Compatibility and Versioning Rules
 - `schemaVersion` is required and currently fixed to `v1`.
