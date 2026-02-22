@@ -278,6 +278,149 @@ start_service() {
   [ "$output" = "$local_drift_active" ]
 }
 
+@test "reconcile detects ordering drift and degrades health with sequence diagnostics" {
+  local loop_id="demo-loop"
+  local repo="$TEMP_DIR/sequence-local"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  write_runtime_artifacts "$repo" "$loop_id" "$now_ts"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+
+  cat > "$repo/.superloop/loops/$loop_id/events.jsonl" <<JSONL
+{"timestamp":"$now_ts","event":"loop_start","loop_id":"$loop_id","run_id":"run-123","iteration":1,"data":{"max_iterations":5}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+  local drift_state_json="$output"
+
+  run jq -r '.health.status' <<<"$drift_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -e '.health.reasonCodes | index("ordering_drift_detected") != null' <<<"$drift_state_json"
+  [ "$status" -eq 0 ]
+
+  local sequence_state_file="$repo/.superloop/ops-manager/$loop_id/sequence-state.json"
+  local sequence_telemetry_file="$repo/.superloop/ops-manager/$loop_id/telemetry/sequence.jsonl"
+  [ -f "$sequence_state_file" ]
+  [ -f "$sequence_telemetry_file" ]
+
+  run jq -r '.driftActive' "$sequence_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e '.violations | index("snapshot_sequence_regression") != null' "$sequence_state_file"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.violations | index("event_sequence_regression") != null' "$sequence_state_file"
+  [ "$status" -eq 0 ]
+
+  local escalations_file="$repo/.superloop/ops-manager/$loop_id/escalations.jsonl"
+  [ -f "$escalations_file" ]
+
+  run bash -lc "tail -n 1 '$escalations_file' | jq -r '.category'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "health_degraded" ]
+}
+
+@test "local and sprite_service transports produce equivalent ordering drift diagnostics" {
+  local loop_id="demo-loop"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local local_repo="$TEMP_DIR/local-sequence"
+  local service_repo="$TEMP_DIR/service-sequence"
+  mkdir -p "$local_repo" "$service_repo"
+
+  write_runtime_artifacts "$local_repo" "$loop_id" "$now_ts"
+  write_runtime_artifacts "$service_repo" "$loop_id" "$now_ts"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+
+  cat > "$local_repo/.superloop/loops/$loop_id/events.jsonl" <<JSONL
+{"timestamp":"$now_ts","event":"loop_start","loop_id":"$loop_id","run_id":"run-123","iteration":1,"data":{"max_iterations":5}}
+JSONL
+  cat > "$service_repo/.superloop/loops/$loop_id/events.jsonl" <<JSONL
+{"timestamp":"$now_ts","event":"loop_start","loop_id":"$loop_id","run_id":"run-123","iteration":1,"data":{"max_iterations":5}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+  local local_state_json="$output"
+  local local_health_status
+  local local_reason_codes
+  local_health_status="$(jq -r '.health.status' <<<"$local_state_json")"
+  local_reason_codes="$(jq -c '.health.reasonCodes | sort' <<<"$local_state_json")"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --from-start \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+  local service_state_json="$output"
+
+  run jq -r '.health.status' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_health_status" ]
+
+  run jq -c '.health.reasonCodes | sort' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_reason_codes" ]
+
+  local local_sequence_state="$local_repo/.superloop/ops-manager/$loop_id/sequence-state.json"
+  local service_sequence_state="$service_repo/.superloop/ops-manager/$loop_id/sequence-state.json"
+  [ -f "$local_sequence_state" ]
+  [ -f "$service_sequence_state" ]
+
+  local local_sequence_summary
+  local service_sequence_summary
+  local_sequence_summary="$(jq -c '{status, driftActive, violations: (.violations | sort)}' "$local_sequence_state")"
+  service_sequence_summary="$(jq -c '{status, driftActive, violations: (.violations | sort)}' "$service_sequence_state")"
+  [ "$local_sequence_summary" = "$service_sequence_summary" ]
+}
+
 @test "health script projects critical transport_unreachable from failure streak fixture" {
   local now_ts
   now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

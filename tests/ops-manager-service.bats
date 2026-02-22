@@ -218,6 +218,14 @@ start_service() {
   [ "$status" -eq 0 ]
   [ "$output" = "2026-02-22T11:00:04Z" ]
 
+  run jq -r '.sequence.source' <<<"$snapshot_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cursor_event_line_offset" ]
+
+  run jq -r '.sequence.value' <<<"$snapshot_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
   run jq -r '.artifacts.heartbeat.exists' <<<"$snapshot_response"
   [ "$status" -eq 0 ]
   [ "$output" = "true" ]
@@ -237,6 +245,14 @@ start_service() {
   run jq -r '.events | length' <<<"$events_response"
   [ "$status" -eq 0 ]
   [ "$output" = "2" ]
+
+  run jq -r '.events[0].sequence.source' <<<"$events_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cursor_event_line_offset" ]
+
+  run jq -r '.events[0].sequence.value' <<<"$events_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
 }
 
 @test "reconcile supports sprite_service transport and updates local cursor/state" {
