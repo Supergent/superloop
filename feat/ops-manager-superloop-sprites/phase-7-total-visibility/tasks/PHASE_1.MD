@@ -6,9 +6,9 @@
 3. [x] Link this phase packet from the issue and include prior PR context (`#40`, `#42`, `#44`, `#46`, `#48`, `#50`, `#53`, `#55`, `#56`, `#57`, `#58`).
 
 ## P1.1 Runtime Heartbeat Telemetry
-1. [ ] Add heartbeat envelope artifact path and schema shape for loop runtime/service adapters.
-2. [ ] Ingest heartbeat signals in manager reconcile and persist loop-scoped heartbeat telemetry.
-3. [ ] Project heartbeat freshness into health/status with reason-coded degradation behavior.
+1. [x] Add heartbeat envelope artifact path and schema shape for loop runtime/service adapters.
+2. [x] Ingest heartbeat signals in manager reconcile and persist loop-scoped heartbeat telemetry.
+3. [x] Project heartbeat freshness into health/status with reason-coded degradation behavior.
 
 ## P1.2 Control Invocation Audit Log
 1. [ ] Add structured invocation log entries for manager-issued control actions.
@@ -37,5 +37,5 @@
 
 ## P1.V Validation
 1. [ ] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats` passes.
-2. [ ] All new/changed scripts pass `bash -n` syntax checks.
+2. [x] All new/changed scripts pass `bash -n` syntax checks.
 3. [ ] Updated docs match implemented visibility artifacts, fields, and operator flow.

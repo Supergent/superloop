@@ -50,6 +50,16 @@ JSON
 JSONL
 }
 
+write_runtime_heartbeat() {
+  local repo="$1"
+  local loop_id="$2"
+  local heartbeat_ts="$3"
+
+  cat > "$repo/.superloop/loops/$loop_id/heartbeat.v1.json" <<JSON
+{"schemaVersion":"v1","timestamp":"$heartbeat_ts","source":"runtime","status":"running","stage":"iteration"}
+JSON
+}
+
 start_service() {
   local repo="$1"
   local token="$2"
@@ -361,4 +371,108 @@ JSON
   run bash -lc "tail -n 1 '$escalations_file' | jq -r '.category'"
   [ "$status" -eq 0 ]
   [ "$output" = "health_critical" ]
+}
+
+@test "reconcile persists heartbeat telemetry and marks runtime_heartbeat_stale" {
+  local loop_id="demo-loop"
+  local repo="$TEMP_DIR/heartbeat-local"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  write_runtime_artifacts "$repo" "$loop_id" "$now_ts"
+  write_runtime_heartbeat "$repo" "$loop_id" "2020-01-01T00:00:00Z"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$repo" \
+    --loop "$loop_id" \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999 \
+    --degraded-heartbeat-lag-seconds 1 \
+    --critical-heartbeat-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+  local state_json="$output"
+
+  run jq -r '.health.status' <<<"$state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -c '.health.reasonCodes | sort' <<<"$state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["runtime_heartbeat_stale"]' ]
+
+  local heartbeat_state_file="$repo/.superloop/ops-manager/$loop_id/heartbeat.json"
+  local heartbeat_telemetry_file="$repo/.superloop/ops-manager/$loop_id/telemetry/heartbeat.jsonl"
+  [ -f "$heartbeat_state_file" ]
+  [ -f "$heartbeat_telemetry_file" ]
+
+  run jq -r '.freshnessStatus' "$heartbeat_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run bash -lc "tail -n 1 '$heartbeat_telemetry_file' | jq -r '.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+}
+
+@test "local and sprite_service transports produce equivalent heartbeat stale health" {
+  local loop_id="demo-loop"
+  local heartbeat_ts="2020-01-01T00:00:00Z"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local local_repo="$TEMP_DIR/local-heartbeat"
+  local service_repo="$TEMP_DIR/service-heartbeat"
+  mkdir -p "$local_repo" "$service_repo"
+
+  write_runtime_artifacts "$local_repo" "$loop_id" "$now_ts"
+  write_runtime_artifacts "$service_repo" "$loop_id" "$now_ts"
+  write_runtime_heartbeat "$local_repo" "$loop_id" "$heartbeat_ts"
+  write_runtime_heartbeat "$service_repo" "$loop_id" "$heartbeat_ts"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999 \
+    --degraded-heartbeat-lag-seconds 1 \
+    --critical-heartbeat-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+  local local_state_json="$output"
+  local local_health_status
+  local local_reason_codes
+  local_health_status="$(jq -r '.health.status' <<<"$local_state_json")"
+  local_reason_codes="$(jq -c '.health.reasonCodes | sort' <<<"$local_state_json")"
+
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999 \
+    --degraded-heartbeat-lag-seconds 1 \
+    --critical-heartbeat-lag-seconds 999999999
+  [ "$status" -eq 0 ]
+  local service_state_json="$output"
+
+  run jq -r '.health.status' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_health_status" ]
+
+  run jq -c '.health.reasonCodes | sort' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_reason_codes" ]
+
+  local local_heartbeat_state="$local_repo/.superloop/ops-manager/$loop_id/heartbeat.json"
+  local service_heartbeat_state="$service_repo/.superloop/ops-manager/$loop_id/heartbeat.json"
+  [ -f "$local_heartbeat_state" ]
+  [ -f "$service_heartbeat_state" ]
+
+  local local_summary
+  local service_summary
+  local_summary="$(jq -c '{freshnessStatus, reasonCode}' "$local_heartbeat_state")"
+  service_summary="$(jq -c '{freshnessStatus, reasonCode}' "$service_heartbeat_state")"
+  [ "$local_summary" = "$service_summary" ]
 }

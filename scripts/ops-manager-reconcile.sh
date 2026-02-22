@@ -27,8 +27,12 @@ Options:
   --alert-config-file <path>                     Alert sink config JSON path
   --alert-dispatch-state-file <path>             Alert dispatch state path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
   --alert-dispatch-telemetry-file <path>         Alert dispatch telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/alerts.jsonl
+  --heartbeat-state-file <path>                  Heartbeat state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/heartbeat.json
+  --heartbeat-telemetry-file <path>              Heartbeat telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/heartbeat.jsonl
   --degraded-ingest-lag-seconds <n>              Degraded ingest staleness threshold (default: 300)
   --critical-ingest-lag-seconds <n>              Critical ingest staleness threshold (default: 900)
+  --degraded-heartbeat-lag-seconds <n>           Degraded heartbeat staleness threshold (default: 120)
+  --critical-heartbeat-lag-seconds <n>           Critical heartbeat staleness threshold (default: 300)
   --degraded-transport-failure-streak <n>        Degraded transport failure streak threshold (default: 2)
   --critical-transport-failure-streak <n>        Critical transport failure streak threshold (default: 4)
   --pretty                                       Pretty-print resulting state/health
@@ -74,8 +78,12 @@ alerts_enabled="true"
 alert_config_file=""
 alert_dispatch_state_file=""
 alert_dispatch_telemetry_file=""
+heartbeat_state_file=""
+heartbeat_telemetry_file=""
 degraded_ingest_lag_seconds="300"
 critical_ingest_lag_seconds="900"
+degraded_heartbeat_lag_seconds="120"
+critical_heartbeat_lag_seconds="300"
 degraded_transport_failure_streak="2"
 critical_transport_failure_streak="4"
 pretty="0"
@@ -182,6 +190,14 @@ while [[ $# -gt 0 ]]; do
       alert_dispatch_telemetry_file="${2:-}"
       shift 2
       ;;
+    --heartbeat-state-file)
+      heartbeat_state_file="${2:-}"
+      shift 2
+      ;;
+    --heartbeat-telemetry-file)
+      heartbeat_telemetry_file="${2:-}"
+      shift 2
+      ;;
     --degraded-ingest-lag-seconds)
       degraded_ingest_lag_seconds="${2:-}"
       flag_degraded_ingest_lag_seconds="1"
@@ -190,6 +206,14 @@ while [[ $# -gt 0 ]]; do
     --critical-ingest-lag-seconds)
       critical_ingest_lag_seconds="${2:-}"
       flag_critical_ingest_lag_seconds="1"
+      shift 2
+      ;;
+    --degraded-heartbeat-lag-seconds)
+      degraded_heartbeat_lag_seconds="${2:-}"
+      shift 2
+      ;;
+    --critical-heartbeat-lag-seconds)
+      critical_heartbeat_lag_seconds="${2:-}"
       shift 2
       ;;
     --degraded-transport-failure-streak)
@@ -338,7 +362,7 @@ if [[ ! "$drift_summary_window" =~ ^[0-9]+$ || "$drift_summary_window" -lt 1 ]];
   die "--drift-summary-window must be an integer >= 1"
 fi
 
-for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
+for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_heartbeat_lag_seconds critical_heartbeat_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
   threshold_value="${!threshold_name}"
   if [[ ! "$threshold_value" =~ ^[0-9]+$ ]]; then
     die "${threshold_name//_/\-} must be a non-negative integer"
@@ -346,6 +370,9 @@ for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds de
 done
 if (( critical_ingest_lag_seconds < degraded_ingest_lag_seconds )); then
   die "critical ingest lag threshold must be >= degraded threshold"
+fi
+if (( critical_heartbeat_lag_seconds < degraded_heartbeat_lag_seconds )); then
+  die "critical heartbeat lag threshold must be >= degraded threshold"
 fi
 if (( critical_transport_failure_streak < degraded_transport_failure_streak )); then
   die "critical transport failure threshold must be >= degraded threshold"
@@ -364,6 +391,12 @@ fi
 if [[ -z "$alert_dispatch_telemetry_file" ]]; then
   alert_dispatch_telemetry_file="$telemetry_dir/alerts.jsonl"
 fi
+if [[ -z "$heartbeat_state_file" ]]; then
+  heartbeat_state_file="$ops_dir/heartbeat.json"
+fi
+if [[ -z "$heartbeat_telemetry_file" ]]; then
+  heartbeat_telemetry_file="$telemetry_dir/heartbeat.jsonl"
+fi
 if [[ -z "$drift_state_file" ]]; then
   drift_state_file="$ops_dir/profile-drift.json"
 fi
@@ -371,6 +404,8 @@ if [[ -z "$drift_history_file" ]]; then
   drift_history_file="$telemetry_dir/profile-drift.jsonl"
 fi
 mkdir -p "$telemetry_dir"
+mkdir -p "$(dirname "$heartbeat_state_file")"
+mkdir -p "$(dirname "$heartbeat_telemetry_file")"
 
 previous_health_status="healthy"
 previous_health_reason_codes='[]'
@@ -524,6 +559,138 @@ update_transport_health() {
       lastSuccessAt: (if ($last_success | length) > 0 then $last_success else null end),
       lastFailureAt: (if ($last_failure | length) > 0 then $last_failure else null end)
     } | with_entries(select(.value != null))' > "$transport_health_file"
+}
+
+persist_heartbeat_observation() {
+  if [[ ! -f "$snapshot_file" ]]; then
+    return 0
+  fi
+
+  local heartbeat_json
+  heartbeat_json=$(jq -c '.runtime.heartbeat // null' "$snapshot_file" 2>/dev/null || echo 'null')
+  if [[ "$heartbeat_json" == "null" ]]; then
+    return 0
+  fi
+
+  local now_iso
+  now_iso="$(timestamp)"
+  local now_epoch
+  now_epoch=$(jq -rn --arg t "$now_iso" '($t | fromdateiso8601? // empty)' 2>/dev/null || true)
+  if [[ -z "$now_epoch" || ! "$now_epoch" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+
+  local heartbeat_at
+  heartbeat_at=$(jq -r '.timestamp // .updatedAt // empty' <<<"$heartbeat_json")
+  if [[ -z "$heartbeat_at" ]]; then
+    jq -cn \
+      --arg timestamp "$now_iso" \
+      --arg loop_id "$loop_id" \
+      --arg transport "$transport" \
+      --arg status "failed" \
+      --arg reason_code "missing_heartbeat_timestamp" \
+      --argjson heartbeat "$heartbeat_json" \
+      '{
+        timestamp: $timestamp,
+        loopId: $loop_id,
+        transport: $transport,
+        category: "runtime_heartbeat",
+        status: $status,
+        reasonCode: $reason_code,
+        heartbeat: $heartbeat
+      }' >> "$heartbeat_telemetry_file"
+    return 0
+  fi
+
+  local heartbeat_epoch
+  heartbeat_epoch=$(jq -rn --arg t "$heartbeat_at" '($t | fromdateiso8601? // empty)' 2>/dev/null || true)
+  if [[ -z "$heartbeat_epoch" || ! "$heartbeat_epoch" =~ ^[0-9]+$ ]]; then
+    jq -cn \
+      --arg timestamp "$now_iso" \
+      --arg loop_id "$loop_id" \
+      --arg transport "$transport" \
+      --arg status "failed" \
+      --arg reason_code "invalid_heartbeat_timestamp" \
+      --arg heartbeat_at "$heartbeat_at" \
+      --argjson heartbeat "$heartbeat_json" \
+      '{
+        timestamp: $timestamp,
+        loopId: $loop_id,
+        transport: $transport,
+        category: "runtime_heartbeat",
+        status: $status,
+        reasonCode: $reason_code,
+        heartbeatAt: $heartbeat_at,
+        heartbeat: $heartbeat
+      }' >> "$heartbeat_telemetry_file"
+    return 0
+  fi
+
+  local heartbeat_lag=$(( now_epoch - heartbeat_epoch ))
+  if (( heartbeat_lag < 0 )); then
+    heartbeat_lag=0
+  fi
+
+  local freshness_status="fresh"
+  local reason_code=""
+  if (( heartbeat_lag >= critical_heartbeat_lag_seconds )); then
+    freshness_status="critical"
+    reason_code="runtime_heartbeat_stale"
+  elif (( heartbeat_lag >= degraded_heartbeat_lag_seconds )); then
+    freshness_status="degraded"
+    reason_code="runtime_heartbeat_stale"
+  fi
+
+  local heartbeat_state_json
+  heartbeat_state_json=$(jq -cn \
+    --arg schema_version "v1" \
+    --arg updated_at "$now_iso" \
+    --arg loop_id "$loop_id" \
+    --arg transport "$transport" \
+    --arg heartbeat_at "$heartbeat_at" \
+    --arg freshness_status "$freshness_status" \
+    --arg reason_code "$reason_code" \
+    --argjson heartbeat_lag_seconds "$heartbeat_lag" \
+    --argjson degraded_threshold "$degraded_heartbeat_lag_seconds" \
+    --argjson critical_threshold "$critical_heartbeat_lag_seconds" \
+    --argjson heartbeat "$heartbeat_json" \
+    '{
+      schemaVersion: $schema_version,
+      updatedAt: $updated_at,
+      loopId: $loop_id,
+      transport: $transport,
+      lastHeartbeatAt: $heartbeat_at,
+      heartbeatLagSeconds: $heartbeat_lag_seconds,
+      freshnessStatus: $freshness_status,
+      reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+      thresholds: {
+        degradedHeartbeatLagSeconds: $degraded_threshold,
+        criticalHeartbeatLagSeconds: $critical_threshold
+      },
+      heartbeat: $heartbeat
+    } | with_entries(select(.value != null))')
+  jq -c '.' <<<"$heartbeat_state_json" > "$heartbeat_state_file"
+
+  jq -cn \
+    --arg timestamp "$now_iso" \
+    --arg loop_id "$loop_id" \
+    --arg transport "$transport" \
+    --arg status "$freshness_status" \
+    --arg reason_code "$reason_code" \
+    --arg heartbeat_at "$heartbeat_at" \
+    --argjson heartbeat_lag_seconds "$heartbeat_lag" \
+    --argjson heartbeat "$heartbeat_json" \
+    '{
+      timestamp: $timestamp,
+      loopId: $loop_id,
+      transport: $transport,
+      category: "runtime_heartbeat",
+      status: $status,
+      reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+      heartbeatAt: $heartbeat_at,
+      heartbeatLagSeconds: $heartbeat_lag_seconds,
+      heartbeat: $heartbeat
+    } | with_entries(select(.value != null))' >> "$heartbeat_telemetry_file"
 }
 
 run_profile_drift_evaluation() {
@@ -772,9 +939,14 @@ else
   update_transport_health "failed" "$failure_code"
 fi
 
+if [[ "$ingest_status" == "success" ]]; then
+  persist_heartbeat_observation
+fi
+
 health_json=$(
   "$health_script" \
     --state-file "$state_file" \
+    --heartbeat-state-file "$heartbeat_state_file" \
     --transport-health-file "$transport_health_file" \
     --intents-file "$intents_file" \
     --transport "$transport" \
@@ -783,6 +955,8 @@ health_json=$(
     --failure-code "$failure_code" \
     --degraded-ingest-lag-seconds "$degraded_ingest_lag_seconds" \
     --critical-ingest-lag-seconds "$critical_ingest_lag_seconds" \
+    --degraded-heartbeat-lag-seconds "$degraded_heartbeat_lag_seconds" \
+    --critical-heartbeat-lag-seconds "$critical_heartbeat_lag_seconds" \
     --degraded-transport-failure-streak "$degraded_transport_failure_streak" \
     --critical-transport-failure-streak "$critical_transport_failure_streak" \
     --now "$(timestamp)"
