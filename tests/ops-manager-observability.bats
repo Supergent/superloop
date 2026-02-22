@@ -210,6 +210,64 @@ start_service() {
   [ "$output" = "$local_reason_codes" ]
 }
 
+@test "local and sprite_service transports produce equivalent profile drift outputs" {
+  local loop_id="demo-loop"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local local_repo="$TEMP_DIR/local-drift"
+  local service_repo="$TEMP_DIR/service-drift"
+  mkdir -p "$local_repo" "$service_repo"
+
+  write_runtime_artifacts "$local_repo" "$loop_id" "$now_ts"
+  write_runtime_artifacts "$service_repo" "$loop_id" "$now_ts"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --threshold-profile balanced \
+    --drift-min-confidence low \
+    --drift-required-streak 1 \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+  local local_state_json="$output"
+  local local_drift_status
+  local_drift_status="$(jq -r '.drift.status' <<<"$local_state_json")"
+  local local_drift_profile
+  local_drift_profile="$(jq -r '.drift.recommendedProfile' <<<"$local_state_json")"
+  local local_drift_active
+  local_drift_active="$(jq -r '.drift.driftActive' <<<"$local_state_json")"
+
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --threshold-profile balanced \
+    --drift-min-confidence low \
+    --drift-required-streak 1 \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+  local service_state_json="$output"
+
+  run jq -r '.drift.status' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_drift_status" ]
+
+  run jq -r '.drift.recommendedProfile' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_drift_profile" ]
+
+  run jq -r '.drift.driftActive' <<<"$service_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$local_drift_active" ]
+}
+
 @test "health script projects critical transport_unreachable from failure streak fixture" {
   local now_ts
   now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

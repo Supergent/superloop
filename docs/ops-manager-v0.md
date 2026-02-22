@@ -88,6 +88,11 @@ Purpose:
 Observability thresholds:
 - `--threshold-profile <strict|balanced|relaxed>`
 - `--thresholds-file <path>`
+- `--drift-min-confidence <low|medium|high>`
+- `--drift-required-streak <n>`
+- `--drift-summary-window <n>`
+- `--drift-state-file <path>`
+- `--drift-history-file <path>`
 - `--degraded-ingest-lag-seconds <n>`
 - `--critical-ingest-lag-seconds <n>`
 - `--degraded-transport-failure-streak <n>`
@@ -143,6 +148,7 @@ Purpose:
 - Provides operator-facing lifecycle + health summary for one loop run.
 - Normalizes state, health, cursor, latest control, and latest reconcile telemetry.
 - Includes tuning guidance fields from telemetry summaries (`recommendedProfile`, `confidence`, `rationale`).
+- Includes profile-drift state/action fields when drift artifacts are present.
 
 ### Threshold Profile Resolver
 ```bash
@@ -166,6 +172,24 @@ scripts/ops-manager-telemetry-summary.sh \
 Purpose:
 - Summarizes reconcile/control telemetry over a bounded recent window.
 - Emits profile recommendation + confidence for dogfood threshold tuning.
+
+### Profile Drift Evaluator
+```bash
+scripts/ops-manager-profile-drift.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --applied-profile balanced \
+  --recommended-profile strict \
+  --recommendation-confidence medium \
+  --required-streak 3 \
+  --summary-window 200 \
+  --pretty
+```
+
+Purpose:
+- Evaluates profile mismatch drift with confidence/streak gating.
+- Persists current drift state and appends drift history telemetry.
+- Emits `profile_drift_detected` escalations when drift transitions active.
 
 ## Sprite Service Transport
 Service implementation entrypoint:
@@ -191,8 +215,10 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/health.json` - latest health status + reason codes.
 - `.superloop/ops-manager/<loop>/intents.jsonl` - control intent execution log.
 - `.superloop/ops-manager/<loop>/escalations.jsonl` - divergence/escalation records.
+- `.superloop/ops-manager/<loop>/profile-drift.json` - current profile drift state.
 - `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl` - reconcile attempt telemetry.
 - `.superloop/ops-manager/<loop>/telemetry/control.jsonl` - control attempt telemetry.
+- `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl` - profile drift history.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 
@@ -206,6 +232,7 @@ Current reason-code surface used in health and escalation artifacts:
 - `invalid_transport_payload`
 - `projection_failed`
 - `reconcile_failed`
+- `profile_drift_detected`
 
 ## Compatibility and Versioning Rules
 - `schemaVersion` is required and currently fixed to `v1`.

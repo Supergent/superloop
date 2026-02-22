@@ -18,6 +18,11 @@ Options:
   --from-start                                   Replay events from line 1 (ignores existing cursor)
   --threshold-profile <name>                     Threshold profile name from catalog (default: catalog default)
   --thresholds-file <path>                       Threshold profile catalog JSON path
+  --drift-min-confidence <level>                 Minimum drift confidence (low|medium|high, default: medium)
+  --drift-required-streak <n>                    Consecutive mismatches before active drift (default: 3)
+  --drift-summary-window <n>                     Telemetry summary window for drift (default: 200)
+  --drift-state-file <path>                      Drift state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
+  --drift-history-file <path>                    Drift history JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
   --degraded-ingest-lag-seconds <n>              Degraded ingest staleness threshold (default: 300)
   --critical-ingest-lag-seconds <n>              Critical ingest staleness threshold (default: 900)
   --degraded-transport-failure-streak <n>        Degraded transport failure streak threshold (default: 2)
@@ -56,6 +61,11 @@ max_events="0"
 from_start="0"
 threshold_profile=""
 thresholds_file=""
+drift_min_confidence="medium"
+drift_required_streak="3"
+drift_summary_window="200"
+drift_state_file=""
+drift_history_file=""
 degraded_ingest_lag_seconds="300"
 critical_ingest_lag_seconds="900"
 degraded_transport_failure_streak="2"
@@ -65,6 +75,9 @@ flag_degraded_ingest_lag_seconds="0"
 flag_critical_ingest_lag_seconds="0"
 flag_degraded_transport_failure_streak="0"
 flag_critical_transport_failure_streak="0"
+flag_drift_min_confidence="0"
+flag_drift_required_streak="0"
+flag_drift_summary_window="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -120,6 +133,29 @@ while [[ $# -gt 0 ]]; do
       thresholds_file="${2:-}"
       shift 2
       ;;
+    --drift-min-confidence)
+      drift_min_confidence="${2:-}"
+      flag_drift_min_confidence="1"
+      shift 2
+      ;;
+    --drift-required-streak)
+      drift_required_streak="${2:-}"
+      flag_drift_required_streak="1"
+      shift 2
+      ;;
+    --drift-summary-window)
+      drift_summary_window="${2:-}"
+      flag_drift_summary_window="1"
+      shift 2
+      ;;
+    --drift-state-file)
+      drift_state_file="${2:-}"
+      shift 2
+      ;;
+    --drift-history-file)
+      drift_history_file="${2:-}"
+      shift 2
+      ;;
     --degraded-ingest-lag-seconds)
       degraded_ingest_lag_seconds="${2:-}"
       flag_degraded_ingest_lag_seconds="1"
@@ -172,6 +208,12 @@ fi
 if [[ ! "$retry_backoff_seconds" =~ ^[0-9]+$ ]]; then
   die "--retry-backoff-seconds must be a non-negative integer"
 fi
+if [[ ! "$drift_required_streak" =~ ^[0-9]+$ || "$drift_required_streak" -lt 1 ]]; then
+  die "--drift-required-streak must be an integer >= 1"
+fi
+if [[ ! "$drift_summary_window" =~ ^[0-9]+$ || "$drift_summary_window" -lt 1 ]]; then
+  die "--drift-summary-window must be an integer >= 1"
+fi
 
 case "$transport" in
   local|sprite_service)
@@ -196,6 +238,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-service-client.sh}"
 health_script="${OPS_MANAGER_HEALTH_SCRIPT:-$script_dir/ops-manager-health.sh}"
 threshold_profile_script="${OPS_MANAGER_THRESHOLD_PROFILE_SCRIPT:-$script_dir/ops-manager-threshold-profile.sh}"
+telemetry_summary_script="${OPS_MANAGER_TELEMETRY_SUMMARY_SCRIPT:-$script_dir/ops-manager-telemetry-summary.sh}"
+profile_drift_script="${OPS_MANAGER_PROFILE_DRIFT_SCRIPT:-$script_dir/ops-manager-profile-drift.sh}"
 root_dir="$(cd "$script_dir/.." && pwd)"
 
 if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
@@ -206,6 +250,15 @@ if [[ -z "$threshold_profile" && -n "${OPS_MANAGER_THRESHOLD_PROFILE:-}" ]]; the
 fi
 if [[ -z "$thresholds_file" && -n "${OPS_MANAGER_THRESHOLD_PROFILES_FILE:-}" ]]; then
   thresholds_file="$OPS_MANAGER_THRESHOLD_PROFILES_FILE"
+fi
+if [[ "$flag_drift_min_confidence" != "1" && -n "${OPS_MANAGER_DRIFT_MIN_CONFIDENCE:-}" ]]; then
+  drift_min_confidence="$OPS_MANAGER_DRIFT_MIN_CONFIDENCE"
+fi
+if [[ "$flag_drift_required_streak" != "1" && -n "${OPS_MANAGER_DRIFT_REQUIRED_STREAK:-}" ]]; then
+  drift_required_streak="$OPS_MANAGER_DRIFT_REQUIRED_STREAK"
+fi
+if [[ "$flag_drift_summary_window" != "1" && -n "${OPS_MANAGER_DRIFT_SUMMARY_WINDOW:-}" ]]; then
+  drift_summary_window="$OPS_MANAGER_DRIFT_SUMMARY_WINDOW"
 fi
 if [[ -z "$thresholds_file" ]]; then
   thresholds_file="$root_dir/config/ops-manager-threshold-profiles.v1.json"
@@ -231,6 +284,20 @@ if [[ "$flag_critical_transport_failure_streak" != "1" ]]; then
   critical_transport_failure_streak=$(jq -r '.values.criticalTransportFailureStreak' <<<"$profile_resolved_json")
 fi
 
+case "$drift_min_confidence" in
+  low|medium|high)
+    ;;
+  *)
+    die "--drift-min-confidence must be one of: low, medium, high"
+    ;;
+esac
+if [[ ! "$drift_required_streak" =~ ^[0-9]+$ || "$drift_required_streak" -lt 1 ]]; then
+  die "--drift-required-streak must be an integer >= 1"
+fi
+if [[ ! "$drift_summary_window" =~ ^[0-9]+$ || "$drift_summary_window" -lt 1 ]]; then
+  die "--drift-summary-window must be an integer >= 1"
+fi
+
 for threshold_name in degraded_ingest_lag_seconds critical_ingest_lag_seconds degraded_transport_failure_streak critical_transport_failure_streak; do
   threshold_value="${!threshold_name}"
   if [[ ! "$threshold_value" =~ ^[0-9]+$ ]]; then
@@ -246,9 +313,16 @@ fi
 
 telemetry_dir="$ops_dir/telemetry"
 reconcile_telemetry_file="$telemetry_dir/reconcile.jsonl"
+control_telemetry_file="$telemetry_dir/control.jsonl"
 transport_health_file="$telemetry_dir/transport-health.json"
 health_file="$ops_dir/health.json"
 intents_file="$ops_dir/intents.jsonl"
+if [[ -z "$drift_state_file" ]]; then
+  drift_state_file="$ops_dir/profile-drift.json"
+fi
+if [[ -z "$drift_history_file" ]]; then
+  drift_history_file="$telemetry_dir/profile-drift.jsonl"
+fi
 mkdir -p "$telemetry_dir"
 
 previous_health_status="healthy"
@@ -279,6 +353,8 @@ transport_failure_streak="0"
 health_json='{}'
 health_status="healthy"
 health_reason_codes='[]'
+tuning_summary_json='null'
+drift_json='null'
 
 append_reconcile_telemetry() {
   local end_offset="0"
@@ -400,6 +476,60 @@ update_transport_health() {
       lastSuccessAt: (if ($last_success | length) > 0 then $last_success else null end),
       lastFailureAt: (if ($last_failure | length) > 0 then $last_failure else null end)
     } | with_entries(select(.value != null))' > "$transport_health_file"
+}
+
+run_profile_drift_evaluation() {
+  local summary_output=""
+  tuning_summary_json='null'
+  drift_json='null'
+
+  if [[ -f "$reconcile_telemetry_file" ]]; then
+    if summary_output=$(
+      "$telemetry_summary_script" \
+        --repo "$repo" \
+        --loop "$loop_id" \
+        --reconcile-telemetry-file "$reconcile_telemetry_file" \
+        --control-telemetry-file "$control_telemetry_file" \
+        --window "$drift_summary_window" 2>/dev/null
+    ); then
+      tuning_summary_json=$(jq -c '.' <<<"$summary_output" 2>/dev/null || echo 'null')
+    fi
+  fi
+
+  local applied_profile="$threshold_profile"
+  if [[ -z "$applied_profile" ]]; then
+    applied_profile=$(jq -r '.thresholds.profile // empty' <<<"$health_json")
+  fi
+
+  local recommended_profile=""
+  local recommendation_confidence="low"
+  local recommendation_rationale=""
+  if [[ "$tuning_summary_json" != "null" ]]; then
+    recommended_profile=$(jq -r '.recommendedProfile // empty' <<<"$tuning_summary_json")
+    recommendation_confidence=$(jq -r '.confidence // "low"' <<<"$tuning_summary_json")
+    recommendation_rationale=$(jq -r '.rationale // empty' <<<"$tuning_summary_json")
+  fi
+
+  local drift_args=(
+    --repo "$repo"
+    --loop "$loop_id"
+    --applied-profile "$applied_profile"
+    --recommended-profile "$recommended_profile"
+    --thresholds-file "$thresholds_file"
+    --recommendation-confidence "$recommendation_confidence"
+    --min-confidence "$drift_min_confidence"
+    --required-streak "$drift_required_streak"
+    --summary-window "$drift_summary_window"
+    --drift-state-file "$drift_state_file"
+    --drift-history-file "$drift_history_file"
+  )
+  if [[ -n "$recommendation_rationale" ]]; then
+    drift_args+=(--rationale "$recommendation_rationale")
+  fi
+
+  local drift_output
+  drift_output=$("$profile_drift_script" "${drift_args[@]}")
+  drift_json=$(jq -c '.' <<<"$drift_output")
 }
 
 tmp_dir="$(mktemp -d)"
@@ -640,6 +770,70 @@ if [[ "$health_status" != "healthy" ]]; then
 fi
 
 append_reconcile_telemetry
+run_profile_drift_evaluation
+
+if [[ -f "$state_file" && "$drift_json" != "null" ]]; then
+  state_with_drift=$(jq -c \
+    --argjson drift "$drift_json" \
+    --argjson tuning_summary "$tuning_summary_json" \
+    '. + {drift: $drift}
+     + (
+       if $tuning_summary == null then {}
+       else {
+         tuning: {
+           appliedProfile: (.health.thresholds.profile // null),
+           recommendedProfile: ($tuning_summary.recommendedProfile // null),
+           confidence: ($tuning_summary.confidence // null),
+           rationale: ($tuning_summary.rationale // null),
+           summaryWindow: ($tuning_summary.source.window // null),
+           telemetrySummary: {
+             observed: ($tuning_summary.observed // {}),
+             source: ($tuning_summary.source // {})
+           }
+         }
+       }
+       end
+     )' "$state_file")
+  jq -c '.' <<<"$state_with_drift" > "$state_file"
+
+  if [[ "$ingest_status" == "success" ]]; then
+    state_json="$state_with_drift"
+  fi
+fi
+
+if [[ "$drift_json" != "null" ]]; then
+  drift_to_active=$(jq -r '.transitioned.toActive // false' <<<"$drift_json")
+  if [[ "$drift_to_active" == "true" ]]; then
+    jq -cn \
+      --arg timestamp "$(timestamp)" \
+      --arg loop_id "$loop_id" \
+      --arg transport "$transport" \
+      --arg state_file "$state_file" \
+      --arg drift_state_file "$drift_state_file" \
+      --arg drift_history_file "$drift_history_file" \
+      --argjson drift "$drift_json" \
+      '{
+        timestamp: $timestamp,
+        loopId: $loop_id,
+        category: "profile_drift_detected",
+        transport: $transport,
+        stateFile: $state_file,
+        driftStateFile: $drift_state_file,
+        driftHistoryFile: $drift_history_file,
+        reasonCode: ($drift.reasonCode // "profile_drift_detected"),
+        drift: {
+          status: ($drift.status // "unknown"),
+          appliedProfile: ($drift.appliedProfile // null),
+          recommendedProfile: ($drift.recommendedProfile // null),
+          recommendationConfidence: ($drift.recommendationConfidence // null),
+          mismatchStreak: ($drift.mismatchStreak // 0),
+          requiredStreak: ($drift.requiredStreak // 0),
+          action: ($drift.action // null),
+          rationale: ($drift.rationale // null)
+        }
+      } | with_entries(select(.value != null))' >> "$escalations_file"
+  fi
+fi
 
 if [[ "$ingest_status" == "success" ]]; then
   if [[ "$pretty" == "1" ]]; then
