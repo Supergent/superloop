@@ -46,6 +46,36 @@ This is the outer operations lifecycle machine. It manages run-level state from 
 - none of the above with known artifacts -> `idle`
 - no reliable artifacts -> `unknown`
 
+## Transition Truth Table (Projection Script)
+
+Evaluation order is strict and first-match-wins:
+
+1. `awaiting_approval`
+- Condition: `runtime.approval.status == "pending"`.
+
+2. `complete`
+- Condition: `run.summary.completion_ok == true`.
+
+3. `running`
+- Condition: `runtime.superloopState.active == true` and `runtime.superloopState.current_loop_id == loop`.
+
+4. `stopped`
+- Condition: last runtime event name in `{loop_stop, rate_limit_stop, no_progress_stop}`.
+
+5. `failed`
+- Condition: last runtime event status in `{error, timeout, blocked, rate_limited}`.
+
+6. `idle`
+- Condition: state exists with `active == false` and a run summary exists.
+
+7. `unknown`
+- Condition: no prior predicate matched.
+
+Divergence flags evaluated alongside state:
+- `activeMismatch`: inactive runtime state with active-phase event traffic.
+- `approvalCompletionConflict`: approval pending while completion already true.
+- `cursorRegression`: current cursor offset lower than previously persisted cursor offset.
+
 ## Guards
 - Cursor monotonicity: reject event progression if cursor regresses.
 - Loop scope integrity: reject envelopes whose `source.loopId` mismatches manager target.

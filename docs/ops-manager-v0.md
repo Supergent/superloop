@@ -59,6 +59,53 @@ Options:
 - `--from-start`: ignore existing cursor and replay from first event
 - `--max-events <n>`: cap events emitted in one poll
 
+## Manager Core Commands
+
+### Project State
+```bash
+scripts/ops-manager-project-state.sh \
+  --repo /path/to/repo \
+  --loop my-loop
+```
+
+Purpose:
+- Computes canonical manager lifecycle projection from snapshot/event envelopes.
+- Writes state to `.superloop/ops-manager/<loop>/state.json`.
+
+### Reconcile
+```bash
+scripts/ops-manager-reconcile.sh \
+  --repo /path/to/repo \
+  --loop my-loop
+```
+
+Purpose:
+- Executes snapshot + incremental poll + projection in one pass.
+- Maintains cursor and state under `.superloop/ops-manager/<loop>/`.
+
+### Control Intent
+```bash
+scripts/ops-manager-control.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --intent cancel
+```
+
+Supported intents:
+- `cancel`
+- `approve`
+- `reject`
+
+Confirmation:
+- `scripts/ops-manager-confirm-intent.sh` is used by default.
+- `--no-confirm` skips confirmation and records `executed_unconfirmed`.
+
+## Manager Persistence Paths
+- `.superloop/ops-manager/<loop>/state.json` - projected lifecycle state.
+- `.superloop/ops-manager/<loop>/cursor.json` - incremental event cursor.
+- `.superloop/ops-manager/<loop>/intents.jsonl` - control intent execution log.
+- `.superloop/ops-manager/<loop>/escalations.jsonl` - divergence/escalation records.
+
 ## Compatibility and Versioning Rules
 - `schemaVersion` is required and currently fixed to `v1`.
 - New fields may be added only as backward-compatible additions.
