@@ -268,6 +268,48 @@ EOF
   [[ "$output" =~ "\"ok\":true" ]]
 }
 
+@test "validate --static fails when lifecycle.enabled is explicitly false" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo runner"]
+    }
+  },
+  "loops": [{
+    "id": "lifecycle-disabled-static",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 10,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "lifecycle": {
+      "enabled": false,
+      "require_on_completion": true,
+      "strict": true,
+      "block_on_failure": true,
+      "feature_prefix": "feat/",
+      "main_ref": "origin/main",
+      "no_fetch": false
+    },
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {"reviewer": {"runner": "shell"}}
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" validate --repo "$TEMP_DIR" --schema "$PROJECT_ROOT/schema/config.schema.json" --static
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "lifecycle.enabled" ]]
+}
+
 @test "validate --static accepts valid rlms configuration" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {
@@ -807,6 +849,98 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" =~ "reentrant run blocked" ]]
   [[ "$output" =~ "reentrant-loop" ]]
+}
+
+@test "run does not treat state.active=false as active" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo '<promise>DONE</promise>' > \"{last_message_file}\""],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "active-false-loop",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 2,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {
+      "reviewer": {"runner": "shell"}
+    }
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  cat > "$TEMP_DIR/.superloop/state.json" << 'EOF'
+{
+  "active": false,
+  "loop_index": 0,
+  "iteration": 1,
+  "current_loop_id": "active-false-loop",
+  "updated_at": "2026-02-22T00:00:00Z"
+}
+EOF
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop active-false-loop --skip-validate
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "reentrant run blocked" ]]
+  [[ "$output" =~ "Loop 'active-false-loop' complete" ]]
+}
+
+@test "run rejects explicit lifecycle.enabled=false in loop config" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "shell": {
+      "command": ["bash"],
+      "args": ["-lc", "echo '<promise>DONE</promise>' > \"{last_message_file}\""],
+      "prompt_mode": "stdin"
+    }
+  },
+  "loops": [{
+    "id": "lifecycle-disabled-loop",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 2,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "lifecycle": {
+      "enabled": false,
+      "require_on_completion": true,
+      "strict": true,
+      "block_on_failure": true,
+      "feature_prefix": "feat/",
+      "main_ref": "origin/main",
+      "no_fetch": false
+    },
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": {
+      "reviewer": {"runner": "shell"}
+    }
+  }]
+}
+EOF
+
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop lifecycle-disabled-loop --dry-run --skip-validate
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "lifecycle.enabled must be true" ]]
 }
 
 @test "cancel stops active run process and clears active-run metadata" {
