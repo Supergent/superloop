@@ -47,7 +47,7 @@ Options:
 Notes:
 - This wrapper runs the configured runner in a multi-role loop (planner, implementer, tester, reviewer).
 - The loop stops only when the reviewer outputs a matching promise AND gates pass.
-- Gates: tests, validation, prerequisites, checklists, evidence, and optional approval (per config).
+- Gates: tests, validation, prerequisites, checklists, evidence, mandatory lifecycle audit, and optional approval (per config).
 USAGE
 }
 

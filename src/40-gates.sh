@@ -127,9 +127,10 @@ write_iteration_notes() {
   local checklist_status="$8"
   local tests_mode="$9"
   local evidence_status="${10:-}"
-  local stuck_streak="${11:-}"
-  local stuck_threshold="${12:-}"
-  local approval_status="${13:-}"
+  local lifecycle_status="${11:-}"
+  local stuck_streak="${12:-}"
+  local stuck_threshold="${13:-}"
+  local approval_status="${14:-}"
 
   cat <<EOF > "$notes_file"
 Iteration: $iteration
@@ -140,6 +141,7 @@ Validation: ${validation_status:-skipped}
 Prerequisites: ${prerequisites_status:-skipped}
 Checklist: $checklist_status
 Evidence: ${evidence_status:-skipped}
+Lifecycle: ${lifecycle_status:-unknown}
 Approval: ${approval_status:-skipped}
 Stuck streak: ${stuck_streak:-0}/${stuck_threshold:-0}
 Generated at: $(timestamp)
@@ -158,11 +160,12 @@ write_gate_summary() {
   local prerequisites_status="$5"
   local checklist_status="$6"
   local evidence_status="$7"
-  local stuck_status="$8"
-  local approval_status="${9:-skipped}"
+  local lifecycle_status="$8"
+  local stuck_status="$9"
+  local approval_status="${10:-skipped}"
 
-  printf 'promise=%s tests=%s validation=%s prerequisites=%s checklist=%s evidence=%s stuck=%s approval=%s\n' \
-    "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status" "$evidence_status" "$stuck_status" "$approval_status" \
+  printf 'promise=%s tests=%s validation=%s prerequisites=%s checklist=%s evidence=%s lifecycle=%s stuck=%s approval=%s\n' \
+    "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status" "$evidence_status" "$lifecycle_status" "$stuck_status" "$approval_status" \
     > "$summary_file"
 }
 
@@ -197,12 +200,13 @@ write_approval_request() {
   local prerequisites_status="${12}"
   local checklist_status="${13}"
   local evidence_status="${14}"
-  local gate_summary_file="${15}"
-  local evidence_file="${16}"
-  local reviewer_report="${17}"
-  local test_report="${18}"
-  local plan_file="${19}"
-  local notes_file="${20}"
+  local lifecycle_status="${15}"
+  local gate_summary_file="${16}"
+  local evidence_file="${17}"
+  local reviewer_report="${18}"
+  local test_report="${19}"
+  local plan_file="${20}"
+  local notes_file="${21}"
 
   local promise_matched_json="false"
   if [[ "$promise_matched" == "true" ]]; then
@@ -225,6 +229,7 @@ write_approval_request() {
     --arg prerequisites_status "$prerequisites_status" \
     --arg checklist_status "$checklist_status" \
     --arg evidence_status "$evidence_status" \
+    --arg lifecycle_status "$lifecycle_status" \
     --arg gate_summary_file "$gate_summary_file" \
     --arg evidence_file "$evidence_file" \
     --arg reviewer_report "$reviewer_report" \
@@ -250,7 +255,8 @@ write_approval_request() {
           validation: $validation_status,
           prerequisites: $prerequisites_status,
           checklist: $checklist_status,
-          evidence: $evidence_status
+          evidence: $evidence_status,
+          lifecycle: $lifecycle_status
         }
       },
       files: {

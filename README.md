@@ -65,7 +65,7 @@ In Codex, restart after install so new skills are discovered.
 ./superloop.sh run --repo /path/to/repo
 ```
 
-The loop runs until all gates pass: promise emitted, tests pass, prerequisites pass (when enabled), checklists complete, evidence exists.
+The loop runs until all gates pass: promise emitted, tests pass, prerequisites pass (when enabled), checklists complete, evidence exists, and lifecycle audit passes.
 
 ## Feature Initiation (Repository Workflow)
 
@@ -158,6 +158,15 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "require_on_completion": false,
       "artifacts": []
     },
+    "lifecycle": {
+      "enabled": true,
+      "require_on_completion": true,
+      "strict": true,
+      "block_on_failure": true,
+      "feature_prefix": "feat/",
+      "main_ref": "origin/main",
+      "no_fetch": false
+    },
     "approval": {
       "enabled": false,
       "require_on_completion": false
@@ -178,6 +187,16 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
       "threshold": 3,
       "action": "report_and_stop",
       "ignore": []
+    },
+    "git": {
+      "commit_strategy": "per_iteration",
+      "pre_commit_commands": "bun run lint:fix",
+      "commit_message": {
+        "authoring": "llm",
+        "author_role": "reviewer",
+        "timeout_seconds": 120,
+        "max_subject_length": 72
+      }
     },
     "rlms": {
       "enabled": false,

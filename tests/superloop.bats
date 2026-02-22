@@ -17,6 +17,14 @@ setup() {
 
   # Copy role definitions
   cp -r "$PROJECT_ROOT/.superloop/roles/"* "$TEMP_DIR/.superloop/roles/" 2>/dev/null || true
+
+  # Initialize a git repository so lifecycle gating has a mainline ref.
+  git -C "$TEMP_DIR" init -q -b main
+  git -C "$TEMP_DIR" config user.email "test@example.com"
+  git -C "$TEMP_DIR" config user.name "Test User"
+  echo "# temp repo" > "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md
+  git -C "$TEMP_DIR" commit -q -m "init"
 }
 
 teardown() {
@@ -566,9 +574,7 @@ EOF
 # =============================================================================
 
 @test "lifecycle-audit passes on clean repository and writes JSON output" {
-  git -C "$TEMP_DIR" init -q -b main
-  git -C "$TEMP_DIR" config user.email "test@example.com"
-  git -C "$TEMP_DIR" config user.name "Test User"
+  git -C "$TEMP_DIR" checkout -q main
   echo "base" > "$TEMP_DIR/README.md"
   git -C "$TEMP_DIR" add README.md
   git -C "$TEMP_DIR" commit -q -m "init"
@@ -586,9 +592,7 @@ EOF
 }
 
 @test "lifecycle-audit strict fails on stale merged local feature branch" {
-  git -C "$TEMP_DIR" init -q -b main
-  git -C "$TEMP_DIR" config user.email "test@example.com"
-  git -C "$TEMP_DIR" config user.name "Test User"
+  git -C "$TEMP_DIR" checkout -q main
   echo "base" > "$TEMP_DIR/README.md"
   git -C "$TEMP_DIR" add README.md
   git -C "$TEMP_DIR" commit -q -m "init"
@@ -607,9 +611,7 @@ EOF
 }
 
 @test "lifecycle-audit strict fails when feature worktree is behind and dirty" {
-  git -C "$TEMP_DIR" init -q -b main
-  git -C "$TEMP_DIR" config user.email "test@example.com"
-  git -C "$TEMP_DIR" config user.name "Test User"
+  git -C "$TEMP_DIR" checkout -q main
   echo "base" > "$TEMP_DIR/README.md"
   git -C "$TEMP_DIR" add README.md
   git -C "$TEMP_DIR" commit -q -m "init"

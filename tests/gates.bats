@@ -205,7 +205,7 @@ EOF
 @test "gates: write_gate_summary writes correct format" {
   local summary_file="$TEMP_DIR/gate_summary.txt"
 
-  write_gate_summary "$summary_file" "true" "passed" "passed" "passed" "passed" "passed" "false" "approved"
+  write_gate_summary "$summary_file" "true" "passed" "passed" "passed" "passed" "passed" "ok" "false" "approved"
 
   [ -f "$summary_file" ]
   content=$(cat "$summary_file")
@@ -215,6 +215,7 @@ EOF
   [[ "$content" =~ "prerequisites=passed" ]]
   [[ "$content" =~ "checklist=passed" ]]
   [[ "$content" =~ "evidence=passed" ]]
+  [[ "$content" =~ "lifecycle=ok" ]]
   [[ "$content" =~ "stuck=false" ]]
   [[ "$content" =~ "approval=approved" ]]
 }
@@ -222,7 +223,7 @@ EOF
 @test "gates: write_gate_summary handles all gates failed" {
   local summary_file="$TEMP_DIR/gate_summary.txt"
 
-  write_gate_summary "$summary_file" "false" "failed" "failed" "failed" "incomplete" "missing" "true" "pending"
+  write_gate_summary "$summary_file" "false" "failed" "failed" "failed" "incomplete" "missing" "failed" "true" "pending"
 
   content=$(cat "$summary_file")
   [[ "$content" =~ "promise=false" ]]
@@ -231,6 +232,7 @@ EOF
   [[ "$content" =~ "prerequisites=failed" ]]
   [[ "$content" =~ "checklist=incomplete" ]]
   [[ "$content" =~ "evidence=missing" ]]
+  [[ "$content" =~ "lifecycle=failed" ]]
   [[ "$content" =~ "stuck=true" ]]
   [[ "$content" =~ "approval=pending" ]]
 }
@@ -238,7 +240,7 @@ EOF
 @test "gates: write_gate_summary defaults approval to skipped" {
   local summary_file="$TEMP_DIR/gate_summary.txt"
 
-  write_gate_summary "$summary_file" "true" "passed" "passed" "passed" "passed" "passed" "false"
+  write_gate_summary "$summary_file" "true" "passed" "passed" "passed" "passed" "passed" "ok" "false"
 
   content=$(cat "$summary_file")
   [[ "$content" =~ "approval=skipped" ]]
@@ -251,7 +253,7 @@ EOF
 @test "gates: write_iteration_notes creates notes file" {
   local notes_file="$TEMP_DIR/notes.txt"
 
-  write_iteration_notes "$notes_file" "loop1" "5" "true" "passed" "passed" "passed" "complete" "always" "found" "2" "5" "approved"
+  write_iteration_notes "$notes_file" "loop1" "5" "true" "passed" "passed" "passed" "complete" "always" "found" "ok" "2" "5" "approved"
 
   [ -f "$notes_file" ]
   content=$(cat "$notes_file")
@@ -263,6 +265,7 @@ EOF
   [[ "$content" =~ "Prerequisites: passed" ]]
   [[ "$content" =~ "Checklist: complete" ]]
   [[ "$content" =~ "Evidence: found" ]]
+  [[ "$content" =~ "Lifecycle: ok" ]]
   [[ "$content" =~ "Approval: approved" ]]
   [[ "$content" =~ "Stuck streak: 2/5" ]]
   [[ "$content" =~ "Next steps:" ]]
@@ -277,6 +280,7 @@ EOF
   [[ "$content" =~ "Validation: skipped" ]]
   [[ "$content" =~ "Prerequisites: skipped" ]]
   [[ "$content" =~ "Evidence: skipped" ]]
+  [[ "$content" =~ "Lifecycle: unknown" ]]
   [[ "$content" =~ "Approval: skipped" ]]
   [[ "$content" =~ "Stuck streak: 0/0" ]]
 }
@@ -415,6 +419,7 @@ EOF
     "2024-01-15T10:00:00Z" "2024-01-15T10:30:00Z" \
     "SUPERLOOP_COMPLETE" "SUPERLOOP_COMPLETE" "true" \
     "passed" "passed" "passed" "complete" "found" \
+    "ok" \
     "$TEMP_DIR/gate_summary" "$TEMP_DIR/evidence" \
     "$TEMP_DIR/reviewer" "$TEMP_DIR/test_report" \
     "$TEMP_DIR/plan" "$TEMP_DIR/notes"
@@ -438,6 +443,8 @@ EOF
   [ "$tests_status" = "passed" ]
   prerequisites_status=$(jq -r '.candidate.gates.prerequisites' "$approval_file")
   [ "$prerequisites_status" = "passed" ]
+  lifecycle_status=$(jq -r '.candidate.gates.lifecycle' "$approval_file")
+  [ "$lifecycle_status" = "ok" ]
 }
 
 @test "gates: write_approval_request handles false promise match" {
@@ -447,6 +454,7 @@ EOF
     "2024-01-15T10:00:00Z" "2024-01-15T10:01:00Z" \
     "SUPERLOOP_COMPLETE" "OTHER_PROMISE" "false" \
     "failed" "failed" "failed" "incomplete" "missing" \
+    "failed" \
     "" "" "" "" "" ""
 
   promise_matched=$(jq -r '.candidate.promise.matched' "$approval_file")
@@ -463,6 +471,7 @@ EOF
     "2024-01-15T10:00:00Z" "2024-01-15T10:01:00Z" \
     "SUPERLOOP_COMPLETE" "" "false" \
     "passed" "passed" "passed" "complete" "found" \
+    "ok" \
     "" "" "" "" "" ""
 
   promise_text=$(jq -r '.candidate.promise.text' "$approval_file")
@@ -476,6 +485,7 @@ EOF
     "2024-01-15T10:00:00Z" "2024-01-15T10:30:00Z" \
     "COMPLETE" "COMPLETE" "true" \
     "passed" "skipped" "ok" "incomplete" "missing" \
+    "failed" \
     "" "" "" "" "" ""
 
   tests=$(jq -r '.candidate.gates.tests' "$approval_file")
@@ -491,6 +501,9 @@ EOF
 
   evidence=$(jq -r '.candidate.gates.evidence' "$approval_file")
   [ "$evidence" = "missing" ]
+
+  lifecycle=$(jq -r '.candidate.gates.lifecycle' "$approval_file")
+  [ "$lifecycle" = "failed" ]
 }
 
 @test "gates: write_approval_request includes file references" {
@@ -500,6 +513,7 @@ EOF
     "2024-01-15T10:00:00Z" "2024-01-15T10:10:00Z" \
     "DONE" "DONE" "true" \
     "passed" "passed" "passed" "complete" "found" \
+    "ok" \
     "/path/to/gate_summary" "/path/to/evidence" \
     "/path/to/reviewer" "/path/to/test_report" \
     "/path/to/plan" "/path/to/notes"

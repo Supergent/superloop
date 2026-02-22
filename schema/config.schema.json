@@ -434,6 +434,50 @@
             },
             "required": ["enabled", "require_on_completion", "artifacts"]
           },
+          "lifecycle": {
+            "type": "object",
+            "description": "Deterministic worktree/branch lifecycle gate configuration for loop execution",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [true],
+                "default": true,
+                "description": "Lifecycle gate is mandatory for run"
+              },
+              "require_on_completion": {
+                "type": "boolean",
+                "enum": [true],
+                "default": true,
+                "description": "Lifecycle gate must pass to allow completion"
+              },
+              "strict": {
+                "type": "boolean",
+                "enum": [true],
+                "default": true,
+                "description": "Treat lifecycle threshold breaches as failures"
+              },
+              "block_on_failure": {
+                "type": "boolean",
+                "default": true,
+                "description": "Stop loop immediately when lifecycle gate fails"
+              },
+              "feature_prefix": {
+                "type": "string",
+                "default": "feat/",
+                "description": "Branch prefix audited for lifecycle hygiene"
+              },
+              "main_ref": {
+                "type": "string",
+                "default": "origin/main",
+                "description": "Mainline ref used for ahead/behind and merged checks"
+              },
+              "no_fetch": {
+                "type": "boolean",
+                "default": false,
+                "description": "Skip fetch --prune before lifecycle audit"
+              }
+            }
+          },
           "approval": {
             "type": "object",
             "properties": {
@@ -734,6 +778,36 @@
               "pre_commit_commands": {
                 "type": "string",
                 "description": "Optional shell command to run before committing (e.g., 'bun run lint:fix' to auto-fix linting issues)"
+              },
+              "commit_message": {
+                "type": "object",
+                "description": "Auto-commit message authoring settings",
+                "properties": {
+                  "authoring": {
+                    "type": "string",
+                    "enum": ["llm"],
+                    "default": "llm",
+                    "description": "Commit messages are authored by an LLM"
+                  },
+                  "author_role": {
+                    "type": "string",
+                    "enum": ["planner", "implementer", "tester", "reviewer"],
+                    "default": "reviewer",
+                    "description": "Role context used to author commit messages"
+                  },
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 30,
+                    "default": 120,
+                    "description": "Timeout for commit message authoring runner invocation"
+                  },
+                  "max_subject_length": {
+                    "type": "integer",
+                    "minimum": 40,
+                    "default": 72,
+                    "description": "Maximum commit subject length"
+                  }
+                }
               }
             }
           },

@@ -189,6 +189,14 @@ fi
 echo "chunk-ok"
 EOF
   chmod +x "$SUBCALL_SUCCESS_LLM"
+
+  # Initialize a git repository so lifecycle gate checks can run during loop tests.
+  git -C "$TEMP_DIR" init -q -b main
+  git -C "$TEMP_DIR" config user.email "test@example.com"
+  git -C "$TEMP_DIR" config user.name "Test User"
+  echo "# rlms temp repo" > "$TEMP_DIR/README.md"
+  git -C "$TEMP_DIR" add README.md .superloop/specs/rlms.md
+  git -C "$TEMP_DIR" commit -q -m "init"
 }
 
 teardown() {
