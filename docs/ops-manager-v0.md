@@ -160,6 +160,22 @@ Purpose:
 - Enforces fail-closed behavior for unknown/invalid profiles.
 - Lists available profiles via `--list`.
 
+### Alert Sink Config Resolver
+```bash
+scripts/ops-manager-alert-sink-config.sh --pretty
+scripts/ops-manager-alert-sink-config.sh --category health_critical --severity critical --pretty
+```
+
+Purpose:
+- Resolves a versioned alert sink catalog with routing policy and category severity mapping.
+- Validates sink definitions and route references with fail-closed behavior.
+- Validates env-secret references for enabled sinks (can be bypassed with `--no-env-check`).
+
+Config file precedence:
+1. Explicit `--config-file`
+2. `OPS_MANAGER_ALERT_SINKS_FILE`
+3. `config/ops-manager-alert-sinks.v1.json`
+
 ### Telemetry Summary
 ```bash
 scripts/ops-manager-telemetry-summary.sh \
@@ -221,6 +237,8 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl` - profile drift history.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
+- `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
+- `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
 
 ## Health Reason Codes
 Current reason-code surface used in health and escalation artifacts:
