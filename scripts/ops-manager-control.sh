@@ -43,8 +43,8 @@ loop_id=""
 intent=""
 transport="local"
 service_base_url=""
-service_auth=""
-idempotency_key=""
+service_header=""
+idempotency_ref=""
 retry_attempts="3"
 retry_backoff_seconds="1"
 by="${USER:-unknown}"
@@ -76,11 +76,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --service-token)
-      service_auth="${2:-}"
+      service_header="${2:-}"
       shift 2
       ;;
     --idempotency-key)
-      idempotency_key="${2:-}"
+      idempotency_ref="${2:-}"
       shift 2
       ;;
     --retry-attempts)
@@ -164,11 +164,11 @@ superloop_bin="${SUPERLOOP_BIN:-$root_dir/superloop.sh}"
 confirm_script="${OPS_MANAGER_CONFIRM_SCRIPT:-$script_dir/ops-manager-confirm-intent.sh}"
 client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-service-client.sh}"
 
-if [[ -z "$service_auth" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
-  service_auth="$OPS_MANAGER_SERVICE_TOKEN"
+if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
+  service_header="$OPS_MANAGER_SERVICE_TOKEN"
 fi
-if [[ -z "$idempotency_key" ]]; then
-  idempotency_key="${intent}-$(date +%s)-$$"
+if [[ -z "$idempotency_ref" ]]; then
+  idempotency_ref="${intent}-$(date +%s)-$$"
 fi
 
 ops_dir="$repo/.superloop/ops-manager/$loop_id"
@@ -250,7 +250,7 @@ else
     --arg intent "$intent" \
     --arg by "$by" \
     --arg note "$note" \
-    --arg idempotency_key "$idempotency_key" \
+    --arg idempotency_key "$idempotency_ref" \
     --argjson no_confirm "$(if [[ "$do_confirm" == "1" ]]; then echo false; else echo true; fi)" \
     '{
       loopId: $loop_id,
@@ -267,7 +267,7 @@ else
       --method POST \
       --base-url "$service_base_url" \
       --path "/ops/control" \
-      --token "$service_auth" \
+      --token "$service_header" \
       --body-file "$body_file" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds"
@@ -320,7 +320,7 @@ entry_json=$(jq -cn \
   --arg transport "$transport" \
   --arg status "$status" \
   --arg command "$command_pretty" \
-  --arg idempotency_key "$idempotency_key" \
+  --arg idempotency_key "$idempotency_ref" \
   --argjson exit_code "$exit_code" \
   --argjson confirm_exit_code "$confirm_exit_code" \
   --argjson confirmed "$confirmed" \

@@ -41,7 +41,7 @@ repo=""
 loop_id=""
 transport="local"
 service_base_url=""
-service_auth=""
+service_header=""
 retry_attempts="3"
 retry_backoff_seconds="1"
 cursor_file=""
@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --service-token)
-      service_auth="${2:-}"
+      service_header="${2:-}"
       shift 2
       ;;
     --retry-attempts)
@@ -150,8 +150,8 @@ mkdir -p "$ops_dir"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-service-client.sh}"
 
-if [[ -z "$service_auth" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
-  service_auth="$OPS_MANAGER_SERVICE_TOKEN"
+if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
+  service_header="$OPS_MANAGER_SERVICE_TOKEN"
 fi
 
 tmp_dir="$(mktemp -d)"
@@ -187,7 +187,7 @@ else
       --method GET \
       --base-url "$service_base_url" \
       --path "/ops/snapshot?loopId=$loop_id" \
-      --token "$service_auth" \
+      --token "$service_header" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds"
   )
@@ -206,7 +206,7 @@ else
       --method GET \
       --base-url "$service_base_url" \
       --path "/ops/events?loopId=$loop_id&cursor=$start_offset&maxEvents=$max_events" \
-      --token "$service_auth" \
+      --token "$service_header" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds"
   )
