@@ -230,6 +230,63 @@ Purpose:
 - Persists current drift state and appends drift history telemetry.
 - Emits `profile_drift_detected` escalations when drift transitions active.
 
+## Fleet Orchestration Commands (Phase 8 Baseline)
+
+### Fleet Registry
+```bash
+scripts/ops-manager-fleet-registry.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+Purpose:
+- Validates and normalizes `.superloop/ops-manager/fleet/registry.v1.json`.
+- Enforces fail-closed checks for loop metadata, transport settings, and policy suppressions.
+- Supports loop-level inspection via `--loop <loop-id>`.
+
+Registry schema reference:
+- `schema/ops-manager-fleet.registry.schema.json`
+
+### Fleet Reconcile
+```bash
+scripts/ops-manager-fleet-reconcile.sh \
+  --repo /path/to/repo \
+  --max-parallel 2 \
+  --deterministic-order \
+  --trace-id fleet-trace-001 \
+  --pretty
+```
+
+Purpose:
+- Fans out loop-level `ops-manager-reconcile.sh` across registry entries.
+- Captures per-loop outcomes (`status`, `reasonCode`, `healthStatus`, `durationSeconds`, `traceId`).
+- Persists fleet rollup state and append-only fleet reconcile telemetry.
+
+### Fleet Policy (Advisory)
+```bash
+scripts/ops-manager-fleet-policy.sh \
+  --repo /path/to/repo \
+  --trace-id fleet-trace-001 \
+  --pretty
+```
+
+Purpose:
+- Evaluates fleet reconcile output and emits advisory candidates only.
+- Produces reason-coded candidates for `reconcile_failed`, `health_critical`, and `health_degraded`.
+- Applies registry suppression metadata and records suppressed vs unsuppressed actions.
+
+### Fleet Status
+```bash
+scripts/ops-manager-fleet-status.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+Purpose:
+- Provides operator fleet posture summary and loop exception buckets.
+- Surfaces policy summary and top advisory candidates.
+- Includes trace linkage and per-loop drill-down pointers to loop-level artifacts.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -266,9 +323,15 @@ Transport mode switch:
 - `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl` - profile drift history.
 - `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl` - alert delivery attempts/outcomes and reason codes.
 - `.superloop/ops-manager/<loop>/telemetry/transport-health.json` - rolling transport failure streak state.
+- `.superloop/ops-manager/fleet/registry.v1.json` - fleet membership + transport/policy metadata.
+- `.superloop/ops-manager/fleet/state.json` - latest fleet reconcile rollup.
+- `.superloop/ops-manager/fleet/policy-state.json` - latest advisory policy candidates + suppression state.
+- `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl` - fleet reconcile attempt history.
+- `.superloop/ops-manager/fleet/telemetry/policy.jsonl` - fleet policy evaluation history.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
+- `schema/ops-manager-fleet.registry.schema.json` - JSON schema reference for fleet registry artifact.
 
 ## Health Reason Codes
 Current reason-code surface used in health and escalation artifacts:
@@ -281,6 +344,16 @@ Current reason-code surface used in health and escalation artifacts:
 - `projection_failed`
 - `reconcile_failed`
 - `profile_drift_detected`
+
+## Fleet Reason Codes
+Fleet state/policy/status artifacts may include:
+- `fleet_partial_failure`
+- `fleet_reconcile_failed`
+- `fleet_health_critical`
+- `fleet_health_degraded`
+- `fleet_loop_skipped`
+- `fleet_action_required`
+- `fleet_actions_suppressed`
 
 ## Alert Dispatch Reason Codes
 Current alert dispatch telemetry/state may include:
