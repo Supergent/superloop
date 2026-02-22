@@ -305,6 +305,25 @@ start_service() {
   run bash -lc "jq -r 'has(\"idem-1\")' '$TEMP_DIR/.superloop/ops-manager/demo-loop/service-idempotency.json'"
   [ "$status" -eq 0 ]
   [ "$output" = "true" ]
+
+  local invocation_telemetry="$TEMP_DIR/.superloop/ops-manager/demo-loop/telemetry/control-invocations.jsonl"
+  [ -f "$invocation_telemetry" ]
+
+  run bash -lc "wc -l < '$invocation_telemetry' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.transport'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sprite_service" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.idempotencyKey'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "idem-1" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.execution.replayed'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 }
 
 @test "control fails closed with wrong sprite_service token" {

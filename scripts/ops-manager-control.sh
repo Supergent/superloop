@@ -175,6 +175,7 @@ ops_dir="$repo/.superloop/ops-manager/$loop_id"
 intents_file="$ops_dir/intents.jsonl"
 telemetry_dir="$ops_dir/telemetry"
 control_telemetry_file="$telemetry_dir/control.jsonl"
+control_invocations_file="$telemetry_dir/control-invocations.jsonl"
 mkdir -p "$ops_dir"
 mkdir -p "$telemetry_dir"
 
@@ -188,6 +189,14 @@ exit_code=0
 confirm_exit_code=0
 command_output=""
 command_pretty=""
+execution_status="not_started"
+confirmation_status="not_attempted"
+confirmation_attempted="false"
+service_replayed="false"
+request_do_confirm="false"
+if [[ "$do_confirm" == "1" ]]; then
+  request_do_confirm="true"
+fi
 
 if [[ "$transport" == "local" ]]; then
   command=("$superloop_bin")
@@ -217,8 +226,10 @@ if [[ "$transport" == "local" ]]; then
   trap 'rm -f "$cmd_output_file" "$confirm_output_file"' EXIT
 
   if "${command[@]}" >"$cmd_output_file" 2>&1; then
+    execution_status="succeeded"
     status="executed"
     if [[ "$do_confirm" == "1" ]]; then
+      confirmation_attempted="true"
       if "$confirm_script" \
         --repo "$repo" \
         --loop "$loop_id" \
@@ -227,18 +238,23 @@ if [[ "$transport" == "local" ]]; then
         --interval-seconds "$interval_seconds" >"$confirm_output_file" 2>&1; then
         status="confirmed"
         confirmed="true"
+        confirmation_status="confirmed"
         confirm_json=$(jq -c '.' "$confirm_output_file" 2>/dev/null || echo 'null')
       else
         confirm_exit_code=$?
         status="ambiguous"
+        confirmation_status="ambiguous"
         confirm_json=$(jq -c '.' "$confirm_output_file" 2>/dev/null || echo 'null')
       fi
     else
       status="executed_unconfirmed"
+      confirmation_status="skipped"
     fi
   else
     exit_code=$?
     status="failed_command"
+    execution_status="failed_command"
+    confirmation_status="not_attempted"
   fi
 
   command_output=$(tail -n 40 "$cmd_output_file" | sed 's/\r$//' || true)
@@ -279,9 +295,11 @@ else
       --retry-backoff-seconds "$retry_backoff_seconds"
   ); then
     status="executed"
+    execution_status="succeeded"
   else
     exit_code=$?
     status="failed_command"
+    execution_status="failed_command"
     response_json="{}"
   fi
 
@@ -292,8 +310,14 @@ else
     response_exit_code=$(jq -r '.exitCode // 0' <<<"$response_json")
     result_status=$(jq -r '.result.status // empty' <<<"$response_json")
     result_confirmed=$(jq -r '.result.confirmed // false' <<<"$response_json")
+    result_replayed=$(jq -r '.replayed // false' <<<"$response_json")
+    has_confirm_payload=$(jq -r '.result.confirm != null' <<<"$response_json")
     confirm_json=$(jq -c '.result.confirm // null' <<<"$response_json")
     confirm_exit_code=$(jq -r '.result.confirmExitCode // 0' <<<"$response_json")
+    service_replayed="$result_replayed"
+    if [[ "$has_confirm_payload" == "true" ]]; then
+      confirmation_attempted="true"
+    fi
 
     if [[ "$response_exit_code" =~ ^[0-9]+$ ]]; then
       exit_code="$response_exit_code"
@@ -312,6 +336,34 @@ else
     if [[ "$result_confirmed" == "true" || "$status" == "confirmed" ]]; then
       confirmed="true"
     fi
+
+    case "$status" in
+      failed_command)
+        execution_status="failed_command"
+        ;;
+      confirmed|executed|executed_unconfirmed|ambiguous)
+        execution_status="succeeded"
+        ;;
+    esac
+
+    case "$status" in
+      confirmed)
+        confirmation_status="confirmed"
+        ;;
+      ambiguous)
+        confirmation_status="ambiguous"
+        ;;
+      executed_unconfirmed)
+        confirmation_status="skipped"
+        ;;
+      *)
+        if [[ "$confirmation_attempted" == "true" ]]; then
+          confirmation_status="attempted_unknown"
+        else
+          confirmation_status="not_attempted"
+        fi
+        ;;
+    esac
   fi
 
   command_output=$(jq -c '.' <<<"$response_json" 2>/dev/null || echo "$response_json")
@@ -402,6 +454,73 @@ telemetry_json=$(jq -cn \
     retryBackoffSeconds: $retry_backoff_seconds
   } | with_entries(select(.value != null))')
 printf '%s\n' "$telemetry_json" >> "$control_telemetry_file"
+
+invocation_json=$(jq -cn \
+  --arg schema_version "v1" \
+  --arg timestamp "$control_completed_at" \
+  --arg started_at "$control_started_at" \
+  --arg loop_id "$loop_id" \
+  --arg intent "$intent" \
+  --arg transport "$transport" \
+  --arg requested_by "$by" \
+  --arg note "$note" \
+  --arg idempotency_key "$idempotency_ref" \
+  --arg command "$command_pretty" \
+  --arg status "$status" \
+  --arg reason_code "$reason_code" \
+  --arg execution_status "$execution_status" \
+  --arg confirmation_status "$confirmation_status" \
+  --arg output "$command_output" \
+  --arg replayed "$service_replayed" \
+  --argjson do_confirm "$request_do_confirm" \
+  --argjson timeout_seconds "$timeout_seconds" \
+  --argjson interval_seconds "$interval_seconds" \
+  --argjson retry_attempts "$retry_attempts" \
+  --argjson retry_backoff_seconds "$retry_backoff_seconds" \
+  --argjson exit_code "$exit_code" \
+  --argjson confirm_exit_code "$confirm_exit_code" \
+  --argjson confirmation_attempted "$confirmation_attempted" \
+  --argjson confirmed "$confirmed" \
+  --argjson duration_seconds "$duration_seconds" \
+  --argjson confirm "$confirm_json" \
+  '{
+    schemaVersion: $schema_version,
+    timestamp: $timestamp,
+    startedAt: $started_at,
+    loopId: $loop_id,
+    intent: $intent,
+    transport: $transport,
+    requestedBy: $requested_by,
+    note: (if ($note | length) > 0 then $note else null end),
+    idempotencyKey: (if ($idempotency_key | length) > 0 then $idempotency_key else null end),
+    request: {
+      doConfirm: $do_confirm,
+      timeoutSeconds: $timeout_seconds,
+      intervalSeconds: $interval_seconds,
+      retryAttempts: $retry_attempts,
+      retryBackoffSeconds: $retry_backoff_seconds
+    },
+    execution: {
+      status: $execution_status,
+      exitCode: $exit_code,
+      command: $command,
+      output: (if ($output | length) > 0 then $output else null end),
+      replayed: ($replayed == "true")
+    } | with_entries(select(.value != null)),
+    confirmation: {
+      attempted: $confirmation_attempted,
+      status: $confirmation_status,
+      exitCode: $confirm_exit_code,
+      outcome: (if $confirm == null then null else $confirm end)
+    } | with_entries(select(.value != null)),
+    outcome: {
+      status: $status,
+      confirmed: $confirmed,
+      reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
+      durationSeconds: $duration_seconds
+    } | with_entries(select(.value != null))
+  } | with_entries(select(.value != null))')
+printf '%s\n' "$invocation_json" >> "$control_invocations_file"
 
 jq -c '.' <<<"$entry_json"
 

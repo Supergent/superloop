@@ -288,9 +288,23 @@ EOF
   [ "$output" = "cancel" ]
 
   local control_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control.jsonl"
+  local invocation_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control-invocations.jsonl"
   [ -f "$control_telemetry" ]
+  [ -f "$invocation_telemetry" ]
 
   run bash -lc "tail -n 1 '$control_telemetry' | jq -r '.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "confirmed" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.execution.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "succeeded" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.confirmation.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "confirmed" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.outcome.status'"
   [ "$status" -eq 0 ]
   [ "$output" = "confirmed" ]
 }
@@ -321,4 +335,15 @@ JSON
   run jq -r '.status' "$TEMP_DIR/.superloop/loops/$loop_id/approval.json"
   [ "$status" -eq 0 ]
   [ "$output" = "approved" ]
+
+  local invocation_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control-invocations.jsonl"
+  [ -f "$invocation_telemetry" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.intent'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "approve" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.confirmation.status'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "confirmed" ]
 }
