@@ -11,6 +11,7 @@ Options:
   --cursor-file <path>    Manager cursor path. Default: <repo>/.superloop/ops-manager/<loop>/cursor.json
   --health-file <path>    Manager health path. Default: <repo>/.superloop/ops-manager/<loop>/health.json
   --intents-file <path>   Manager intents log. Default: <repo>/.superloop/ops-manager/<loop>/intents.jsonl
+  --summary-window <n>    Telemetry summary window size (default: 200)
   --pretty                Pretty-print output JSON.
   --help                  Show this help message.
 USAGE
@@ -38,6 +39,7 @@ state_file=""
 cursor_file=""
 health_file=""
 intents_file=""
+summary_window="200"
 pretty="0"
 
 while [[ $# -gt 0 ]]; do
@@ -66,6 +68,10 @@ while [[ $# -gt 0 ]]; do
       intents_file="${2:-}"
       shift 2
       ;;
+    --summary-window)
+      summary_window="${2:-}"
+      shift 2
+      ;;
     --pretty)
       pretty="1"
       shift
@@ -89,11 +95,17 @@ fi
 if [[ -z "$loop_id" ]]; then
   die "--loop is required"
 fi
+if [[ ! "$summary_window" =~ ^[0-9]+$ || "$summary_window" -lt 1 ]]; then
+  die "--summary-window must be an integer >= 1"
+fi
 
 repo="$(cd "$repo" && pwd)"
 ops_dir="$repo/.superloop/ops-manager/$loop_id"
 telemetry_dir="$ops_dir/telemetry"
 reconcile_telemetry_file="$telemetry_dir/reconcile.jsonl"
+control_telemetry_file="$telemetry_dir/control.jsonl"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+telemetry_summary_script="${OPS_MANAGER_TELEMETRY_SUMMARY_SCRIPT:-$script_dir/ops-manager-telemetry-summary.sh}"
 
 if [[ -z "$state_file" ]]; then
   state_file="$ops_dir/state.json"
@@ -145,6 +157,20 @@ if [[ -f "$reconcile_telemetry_file" ]]; then
   fi
 fi
 
+tuning_summary_json='null'
+if [[ -f "$reconcile_telemetry_file" ]]; then
+  if summary_output=$(
+    "$telemetry_summary_script" \
+      --repo "$repo" \
+      --loop "$loop_id" \
+      --reconcile-telemetry-file "$reconcile_telemetry_file" \
+      --control-telemetry-file "$control_telemetry_file" \
+      --window "$summary_window" 2>/dev/null
+  ); then
+    tuning_summary_json=$(jq -c '.' <<<"$summary_output" 2>/dev/null || echo 'null')
+  fi
+fi
+
 status_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg generated_at "$(timestamp)" \
@@ -155,11 +181,14 @@ status_json=$(jq -cn \
   --arg health_file "$health_file" \
   --arg intents_file "$intents_file" \
   --arg reconcile_telemetry_file "$reconcile_telemetry_file" \
+  --arg control_telemetry_file "$control_telemetry_file" \
   --argjson state "$state_json" \
   --argjson cursor "$cursor_json" \
   --argjson health_file_json "$health_json" \
   --argjson last_intent "$last_intent_json" \
   --argjson last_reconcile "$last_reconcile_json" \
+  --argjson tuning_summary "$tuning_summary_json" \
+  --argjson summary_window "$summary_window" \
   '{
     schemaVersion: $schema_version,
     generatedAt: $generated_at,
@@ -195,12 +224,33 @@ status_json=$(jq -cn \
       lastFailureCode: ($last_reconcile.failureCode // null),
       lastDurationSeconds: ($last_reconcile.durationSeconds // null)
     },
+    tuning: {
+      summaryWindow: $summary_window,
+      appliedProfile: (
+        if ($state.health.thresholds.profile // null) != null then $state.health.thresholds.profile
+        elif ($health_file_json.thresholds.profile // null) != null then $health_file_json.thresholds.profile
+        else null
+        end
+      ),
+      recommendedProfile: ($tuning_summary.recommendedProfile // null),
+      confidence: ($tuning_summary.confidence // null),
+      rationale: ($tuning_summary.rationale // null),
+      telemetrySummary: (
+        if $tuning_summary == null then null
+        else {
+          observed: ($tuning_summary.observed // {}),
+          source: ($tuning_summary.source // {})
+        }
+        end
+      )
+    },
     files: {
       stateFile: $state_file,
       cursorFile: $cursor_file,
       healthFile: $health_file,
       intentsFile: $intents_file,
-      reconcileTelemetryFile: $reconcile_telemetry_file
+      reconcileTelemetryFile: $reconcile_telemetry_file,
+      controlTelemetryFile: $control_telemetry_file
     }
   } | with_entries(select(.value != null))')
 
