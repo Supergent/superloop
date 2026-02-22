@@ -206,6 +206,7 @@ start_service() {
     --method GET \
     --base-url "$SERVICE_URL" \
     --path "/ops/snapshot?loopId=demo-loop" \
+    --trace-id "trace-service-snapshot-1" \
     --token "$SERVICE_TOKEN"
   [ "$status" -eq 0 ]
   local snapshot_response="$output"
@@ -226,6 +227,10 @@ start_service() {
   [ "$status" -eq 0 ]
   [ "$output" = "2" ]
 
+  run jq -r '.traceId' <<<"$snapshot_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-service-snapshot-1" ]
+
   run jq -r '.artifacts.heartbeat.exists' <<<"$snapshot_response"
   [ "$status" -eq 0 ]
   [ "$output" = "true" ]
@@ -234,6 +239,7 @@ start_service() {
     --method GET \
     --base-url "$SERVICE_URL" \
     --path "/ops/events?loopId=demo-loop&cursor=0&maxEvents=2" \
+    --trace-id "trace-service-events-1" \
     --token "$SERVICE_TOKEN"
   [ "$status" -eq 0 ]
   local events_response="$output"
@@ -253,6 +259,14 @@ start_service() {
   run jq -r '.events[0].sequence.value' <<<"$events_response"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+
+  run jq -r '.traceId' <<<"$events_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-service-events-1" ]
+
+  run jq -r '.events[0].traceId' <<<"$events_response"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-service-events-1" ]
 }
 
 @test "reconcile supports sprite_service transport and updates local cursor/state" {
@@ -291,6 +305,7 @@ start_service() {
     --repo "$TEMP_DIR" \
     --loop demo-loop \
     --intent cancel \
+    --trace-id "trace-service-control-1" \
     --transport sprite_service \
     --service-base-url "$SERVICE_URL" \
     --service-token "$SERVICE_TOKEN" \
@@ -305,6 +320,7 @@ start_service() {
     --repo "$TEMP_DIR" \
     --loop demo-loop \
     --intent cancel \
+    --trace-id "trace-service-control-1" \
     --transport sprite_service \
     --service-base-url "$SERVICE_URL" \
     --service-token "$SERVICE_TOKEN" \
@@ -340,6 +356,10 @@ start_service() {
   run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.execution.replayed'"
   [ "$status" -eq 0 ]
   [ "$output" = "true" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-service-control-1" ]
 }
 
 @test "control fails closed with wrong sprite_service token" {

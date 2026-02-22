@@ -336,6 +336,7 @@ JSONL
   run "$PROJECT_ROOT/scripts/ops-manager-alert-dispatch.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-alert-dispatch-1" \
     --alert-config-file "$config_file"
   [ "$status" -eq 0 ]
   local first_json="$output"
@@ -374,6 +375,10 @@ JSONL
   [ "$status" -eq 0 ]
   [ "$output" = "2" ]
 
+  run bash -lc "head -n 1 '$telemetry_file' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-dispatch-1" ]
+
   local dispatch_state_file="$ops_dir/alert-dispatch-state.json"
   [ -f "$dispatch_state_file" ]
   run jq -r '.escalationsLineOffset' "$dispatch_state_file"
@@ -392,6 +397,7 @@ JSONL
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-alert-status-1" \
     --alerts-enabled true \
     --alert-config-file "$config_file" \
     --degraded-ingest-lag-seconds 1 \
@@ -419,6 +425,7 @@ JSONL
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-alert-status-1" \
     --alerts-enabled true \
     --alert-config-file "$config_file" \
     --degraded-ingest-lag-seconds 1 \
@@ -447,6 +454,7 @@ JSONL
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-alert-status-1" \
     --alerts-enabled true \
     --alert-config-file "$config_file" \
     --degraded-ingest-lag-seconds 1 \
@@ -461,6 +469,10 @@ JSONL
   [ "$status" -eq 0 ]
   [ "$output" = "success" ]
 
+  run jq -r '.alerts.dispatch.lastTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
+
   run jq -e '.alerts.dispatch.processedCount >= 1' <<<"$status_json"
   [ "$status" -eq 0 ]
 
@@ -471,6 +483,18 @@ JSONL
   run jq -r '.alerts.lastDelivery.reasonCode' <<<"$status_json"
   [ "$status" -eq 0 ]
   [ "$output" = "no_dispatchable_sinks" ]
+
+  run jq -r '.alerts.lastDelivery.traceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
+
+  run jq -r '.traceLinkage.reconcileTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
+
+  run jq -r '.traceLinkage.alertTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
 
   run jq -r '.files.alertDispatchStateFile' <<<"$status_json"
   [ "$status" -eq 0 ]

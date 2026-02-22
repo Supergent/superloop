@@ -10,6 +10,7 @@ Options:
   --transport <local|sprite_service>             Ingestion transport mode (default: local)
   --service-base-url <url>                       Sprite service base URL (required for sprite_service)
   --service-token <token>                        Sprite service auth token (optional)
+  --trace-id <id>                                Trace id for this reconcile operation (generated when omitted)
   --retry-attempts <n>                           Service retry attempts (default: 3)
   --retry-backoff-seconds <n>                    Service retry backoff base (default: 1)
   --cursor-file <path>                           Cursor JSON path. Default: <repo>/.superloop/ops-manager/<loop>/cursor.json
@@ -58,11 +59,28 @@ timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+generate_trace_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16
+    return 0
+  fi
+  printf 'trace-%s-%s-%04d\n' "$(date -u +%Y%m%d%H%M%S)" "$$" "$RANDOM"
+}
+
 repo=""
 loop_id=""
 transport="local"
 service_base_url=""
 service_header=""
+trace_id=""
 retry_attempts="3"
 retry_backoff_seconds="1"
 cursor_file=""
@@ -120,6 +138,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --service-token)
       service_header="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --retry-attempts)
@@ -315,6 +337,12 @@ root_dir="$(cd "$script_dir/.." && pwd)"
 if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
   service_header="$OPS_MANAGER_SERVICE_TOKEN"
 fi
+if [[ -z "$trace_id" && -n "${OPS_MANAGER_TRACE_ID:-}" ]]; then
+  trace_id="$OPS_MANAGER_TRACE_ID"
+fi
+if [[ -z "$trace_id" ]]; then
+  trace_id="$(generate_trace_id)"
+fi
 if [[ -z "$threshold_profile" && -n "${OPS_MANAGER_THRESHOLD_PROFILE:-}" ]]; then
   threshold_profile="$OPS_MANAGER_THRESHOLD_PROFILE"
 fi
@@ -492,6 +520,7 @@ append_reconcile_telemetry() {
     --arg timestamp "$reconcile_completed_at" \
     --arg started_at "$reconcile_started_at" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg status "$ingest_status" \
     --arg failure_code "$failure_code" \
@@ -514,6 +543,7 @@ append_reconcile_telemetry() {
       timestamp: $timestamp,
       startedAt: $started_at,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       status: $status,
       failureCode: (if ($failure_code | length) > 0 then $failure_code else null end),
@@ -570,6 +600,7 @@ update_transport_health() {
   jq -cn \
     --arg schema_version "v1" \
     --arg updated_at "$updated_at" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg status "$next_status" \
     --arg failure_code "$next_failure_code" \
@@ -579,6 +610,7 @@ update_transport_health() {
     '{
       schemaVersion: $schema_version,
       updatedAt: $updated_at,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       lastResult: $status,
       failureStreak: $failure_streak,
@@ -613,6 +645,7 @@ persist_heartbeat_observation() {
     jq -cn \
       --arg timestamp "$now_iso" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg transport "$transport" \
       --arg status "failed" \
       --arg reason_code "missing_heartbeat_timestamp" \
@@ -620,6 +653,7 @@ persist_heartbeat_observation() {
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         transport: $transport,
         category: "runtime_heartbeat",
         status: $status,
@@ -635,6 +669,7 @@ persist_heartbeat_observation() {
     jq -cn \
       --arg timestamp "$now_iso" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg transport "$transport" \
       --arg status "failed" \
       --arg reason_code "invalid_heartbeat_timestamp" \
@@ -643,6 +678,7 @@ persist_heartbeat_observation() {
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         transport: $transport,
         category: "runtime_heartbeat",
         status: $status,
@@ -673,6 +709,7 @@ persist_heartbeat_observation() {
     --arg schema_version "v1" \
     --arg updated_at "$now_iso" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg heartbeat_at "$heartbeat_at" \
     --arg freshness_status "$freshness_status" \
@@ -685,6 +722,7 @@ persist_heartbeat_observation() {
       schemaVersion: $schema_version,
       updatedAt: $updated_at,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       lastHeartbeatAt: $heartbeat_at,
       heartbeatLagSeconds: $heartbeat_lag_seconds,
@@ -701,6 +739,7 @@ persist_heartbeat_observation() {
   jq -cn \
     --arg timestamp "$now_iso" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg status "$freshness_status" \
     --arg reason_code "$reason_code" \
@@ -710,6 +749,7 @@ persist_heartbeat_observation() {
     '{
       timestamp: $timestamp,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       category: "runtime_heartbeat",
       status: $status,
@@ -842,6 +882,7 @@ run_sequence_diagnostics() {
     --arg schema_version "v1" \
     --arg updated_at "$(timestamp)" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg status "$sequence_status" \
     --arg reason_code "$sequence_reason_code" \
@@ -867,6 +908,7 @@ run_sequence_diagnostics() {
       schemaVersion: $schema_version,
       updatedAt: $updated_at,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       status: $status,
       reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
@@ -901,6 +943,7 @@ run_sequence_diagnostics() {
   jq -cn \
     --arg timestamp "$(timestamp)" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg transport "$transport" \
     --arg status "$sequence_status" \
     --arg reason_code "$sequence_reason_code" \
@@ -908,6 +951,7 @@ run_sequence_diagnostics() {
     '{
       timestamp: $timestamp,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       transport: $transport,
       category: "envelope_sequence",
       status: $status,
@@ -983,6 +1027,7 @@ run_alert_dispatch() {
   local dispatch_args=(
     --repo "$repo"
     --loop "$loop_id"
+    --trace-id "$trace_id"
     --escalations-file "$escalations_file"
     --dispatch-state-file "$alert_dispatch_state_file"
     --dispatch-telemetry-file "$alert_dispatch_telemetry_file"
@@ -1007,12 +1052,14 @@ run_alert_dispatch() {
   jq -cn \
     --arg timestamp "$(timestamp)" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg status "failed_command" \
     --arg reason_code "alert_dispatch_failed" \
     --arg message "$dispatch_error" \
     '{
       timestamp: $timestamp,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       category: "alert_dispatch",
       status: $status,
       reasonCode: $reason_code,
@@ -1027,7 +1074,7 @@ snapshot_file="$tmp_dir/snapshot.json"
 events_file="$tmp_dir/events.ndjson"
 
 if [[ "$transport" == "local" ]]; then
-  if ! "$script_dir/ops-manager-loop-run-snapshot.sh" --repo "$repo" --loop "$loop_id" > "$snapshot_file" 2>"$tmp_dir/snapshot.err"; then
+  if ! "$script_dir/ops-manager-loop-run-snapshot.sh" --repo "$repo" --loop "$loop_id" --trace-id "$trace_id" > "$snapshot_file" 2>"$tmp_dir/snapshot.err"; then
     ingest_status="failed"
     failure_code="snapshot_unavailable"
     failure_message=$(tail -n 40 "$tmp_dir/snapshot.err" | sed 's/\r$//' || true)
@@ -1038,6 +1085,7 @@ if [[ "$transport" == "local" ]]; then
       --repo "$repo"
       --loop "$loop_id"
       --cursor-file "$cursor_file"
+      --trace-id "$trace_id"
     )
     if [[ "$from_start" == "1" ]]; then
       poll_args+=(--from-start)
@@ -1065,6 +1113,7 @@ else
       --base-url "$service_base_url" \
       --path "/ops/snapshot?loopId=$loop_id" \
       --token "$service_header" \
+      --trace-id "$trace_id" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds" 2>&1
   ); then
@@ -1091,6 +1140,7 @@ else
         --base-url "$service_base_url" \
         --path "/ops/events?loopId=$loop_id&cursor=$start_offset&maxEvents=$max_events" \
         --token "$service_header" \
+        --trace-id "$trace_id" \
         --retry-attempts "$retry_attempts" \
         --retry-backoff-seconds "$retry_backoff_seconds" 2>&1
     ); then
@@ -1181,6 +1231,7 @@ health_json=$(
     --sequence-state-file "$sequence_state_file" \
     --transport-health-file "$transport_health_file" \
     --intents-file "$intents_file" \
+    --trace-id "$trace_id" \
     --transport "$transport" \
     --threshold-profile "$threshold_profile" \
     --ingest-status "$ingest_status" \
@@ -1202,13 +1253,19 @@ if [[ "$ingest_status" == "success" ]]; then
   state_json=$(jq -c \
     --argjson health "$health_json" \
     --argjson sequence "$sequence_json" \
+    --arg trace_id "$trace_id" \
     '. + {health: $health}
+     + {trace: ((.trace // {}) + {reconcileTraceId: $trace_id})}
      + (if $sequence == null then {} else {sequence: $sequence} end)' <<<"$state_json")
   jq -c '.' <<<"$state_json" > "$state_file"
 else
   if [[ -f "$state_file" ]]; then
     fallback_state=$(jq -c '.' "$state_file" 2>/dev/null || echo '{}')
-    fallback_state=$(jq -c --argjson health "$health_json" '. + {health: $health}' <<<"$fallback_state")
+    fallback_state=$(jq -c \
+      --argjson health "$health_json" \
+      --arg trace_id "$trace_id" \
+      '. + {health: $health}
+       + {trace: ((.trace // {}) + {reconcileTraceId: $trace_id})}' <<<"$fallback_state")
     jq -c '.' <<<"$fallback_state" > "$state_file"
   fi
 fi
@@ -1219,6 +1276,7 @@ if [[ "$ingest_status" == "success" ]]; then
     jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg state_file "$state_file" \
       --arg cursor_file "$cursor_file" \
       --arg transport "$transport" \
@@ -1227,6 +1285,7 @@ if [[ "$ingest_status" == "success" ]]; then
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: "divergence_detected",
         transport: $transport,
         stateFile: $state_file,
@@ -1247,6 +1306,7 @@ if [[ "$sequence_json" != "null" ]]; then
     jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg transport "$transport" \
       --arg state_file "$state_file" \
       --arg sequence_state_file "$sequence_state_file" \
@@ -1255,6 +1315,7 @@ if [[ "$sequence_json" != "null" ]]; then
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: "ordering_drift_detected",
         transport: $transport,
         reasonCode: ($sequence.reasonCode // "ordering_drift_detected"),
@@ -1277,6 +1338,7 @@ if [[ "$health_status" != "healthy" ]]; then
     jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg transport "$transport" \
       --arg category "health_${health_status}" \
       --arg state_file "$state_file" \
@@ -1288,6 +1350,7 @@ if [[ "$health_status" != "healthy" ]]; then
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: $category,
         transport: $transport,
         ingestStatus: $ingest_status,
@@ -1309,7 +1372,14 @@ if [[ -f "$state_file" && "$drift_json" != "null" ]]; then
   state_with_drift=$(jq -c \
     --argjson drift "$drift_json" \
     --argjson tuning_summary "$tuning_summary_json" \
-    '. + {drift: $drift}
+    --arg trace_id "$trace_id" \
+    '. + {
+         drift: (
+           if $drift == null then null
+           else ($drift + {traceId: $trace_id})
+           end
+         )
+       }
      + (
        if $tuning_summary == null then {}
        else {
@@ -1340,6 +1410,7 @@ if [[ "$drift_json" != "null" ]]; then
     jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg transport "$transport" \
       --arg state_file "$state_file" \
       --arg drift_state_file "$drift_state_file" \
@@ -1348,6 +1419,7 @@ if [[ "$drift_json" != "null" ]]; then
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: "profile_drift_detected",
         transport: $transport,
         stateFile: $state_file,

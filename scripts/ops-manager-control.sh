@@ -11,6 +11,7 @@ Options:
   --service-base-url <url>            Sprite service base URL (required for sprite_service)
   --service-token <token>             Sprite service auth token (optional)
   --idempotency-key <key>             Idempotency key for sprite_service control requests
+  --trace-id <id>                     Trace id for this control operation (generated when omitted)
   --retry-attempts <n>                Service retry attempts (default: 3)
   --retry-backoff-seconds <n>         Service retry backoff base (default: 1)
   --by <name>                         Actor identity for approve/reject (default: $USER)
@@ -38,6 +39,22 @@ timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+generate_trace_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16
+    return 0
+  fi
+  printf 'trace-%s-%s-%04d\n' "$(date -u +%Y%m%d%H%M%S)" "$$" "$RANDOM"
+}
+
 repo=""
 loop_id=""
 intent=""
@@ -45,6 +62,7 @@ transport="local"
 service_base_url=""
 service_header=""
 idempotency_ref=""
+trace_id=""
 retry_attempts="3"
 retry_backoff_seconds="1"
 by="${USER:-unknown}"
@@ -81,6 +99,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --idempotency-key)
       idempotency_ref="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --retry-attempts)
@@ -166,6 +188,12 @@ client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-serv
 
 if [[ -z "$service_header" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
   service_header="$OPS_MANAGER_SERVICE_TOKEN"
+fi
+if [[ -z "$trace_id" && -n "${OPS_MANAGER_TRACE_ID:-}" ]]; then
+  trace_id="$OPS_MANAGER_TRACE_ID"
+fi
+if [[ -z "$trace_id" ]]; then
+  trace_id="$(generate_trace_id)"
 fi
 if [[ -z "$idempotency_ref" ]]; then
   idempotency_ref="${intent}-$(date +%s)-$$"
@@ -272,6 +300,7 @@ else
     --arg intent "$intent" \
     --arg by "$by" \
     --arg note "$note" \
+    --arg trace_id "$trace_id" \
     --arg idempotency_key "$idempotency_ref" \
     --argjson no_confirm "$(if [[ "$do_confirm" == "1" ]]; then echo false; else echo true; fi)" \
     '{
@@ -279,6 +308,7 @@ else
       intent: $intent,
       by: $by,
       note: (if ($note | length) > 0 then $note else null end),
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       idempotencyKey: $idempotency_key,
       noConfirm: $no_confirm
     } | with_entries(select(.value != null))' > "$body_file"
@@ -290,6 +320,7 @@ else
       --base-url "$service_base_url" \
       --path "/ops/control" \
       --token "$service_header" \
+      --trace-id "$trace_id" \
       --body-file "$body_file" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds"
@@ -373,6 +404,7 @@ entry_json=$(jq -cn \
   --arg timestamp "$(timestamp)" \
   --arg loop_id "$loop_id" \
   --arg intent "$intent" \
+  --arg trace_id "$trace_id" \
   --arg requested_by "$by" \
   --arg note "$note" \
   --arg transport "$transport" \
@@ -388,6 +420,7 @@ entry_json=$(jq -cn \
     timestamp: $timestamp,
     loopId: $loop_id,
     intent: $intent,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
     requestedBy: $requested_by,
     note: (if ($note | length) > 0 then $note else null end),
     transport: $transport,
@@ -425,6 +458,7 @@ telemetry_json=$(jq -cn \
   --arg started_at "$control_started_at" \
   --arg loop_id "$loop_id" \
   --arg intent "$intent" \
+  --arg trace_id "$trace_id" \
   --arg transport "$transport" \
   --arg status "$status" \
   --arg reason_code "$reason_code" \
@@ -441,6 +475,7 @@ telemetry_json=$(jq -cn \
     startedAt: $started_at,
     loopId: $loop_id,
     intent: $intent,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
     transport: $transport,
     status: $status,
     reasonCode: (if ($reason_code | length) > 0 then $reason_code else null end),
@@ -461,6 +496,7 @@ invocation_json=$(jq -cn \
   --arg started_at "$control_started_at" \
   --arg loop_id "$loop_id" \
   --arg intent "$intent" \
+  --arg trace_id "$trace_id" \
   --arg transport "$transport" \
   --arg requested_by "$by" \
   --arg note "$note" \
@@ -489,6 +525,7 @@ invocation_json=$(jq -cn \
     startedAt: $started_at,
     loopId: $loop_id,
     intent: $intent,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
     transport: $transport,
     requestedBy: $requested_by,
     note: (if ($note | length) > 0 then $note else null end),

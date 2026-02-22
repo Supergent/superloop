@@ -10,6 +10,7 @@ Options:
   --cursor-file <path>  Cursor JSON path. Default: <repo>/.superloop/loops/<loop>/ops-manager.cursor.json
   --from-start          Ignore existing cursor and emit from first line.
   --max-events <n>      Emit at most n events in this call (n > 0).
+  --trace-id <id>       Optional trace id propagated by ops manager transport.
   --help                Show this help message.
 USAGE
 }
@@ -35,6 +36,7 @@ loop_id=""
 cursor_file=""
 from_start="0"
 max_events="0"
+trace_id=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-events)
       max_events="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --help|-h)
@@ -149,6 +155,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   jq -cn \
     --arg schema_version "v1" \
     --arg emitted_at "$(timestamp)" \
+    --arg trace_id "$trace_id" \
     --arg repo_path "$repo" \
     --arg loop_id "$loop_id" \
     --argjson line_offset "$line_no" \
@@ -167,6 +174,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       schemaVersion: $schema_version,
       envelopeType: "loop_run_event",
       emittedAt: $emitted_at,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       source: {
         repoPath: $repo_path,
         loopId: $loop_id

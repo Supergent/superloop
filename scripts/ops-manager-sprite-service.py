@@ -97,6 +97,9 @@ class OpsHandler(BaseHTTPRequestHandler):
         loop_vals = query.get("loopId", [])
         return loop_vals[0] if loop_vals else ""
 
+    def _trace_id(self) -> str:
+        return (self.headers.get("X-Trace-Id", "") or "").strip()
+
     def _int_from_query(self, query: Dict[str, List[str]], key: str, default: int = 0) -> int:
         vals = query.get(key, [])
         if not vals:
@@ -126,9 +129,12 @@ class OpsHandler(BaseHTTPRequestHandler):
                 self._error(400, "invalid_request", "loopId is required")
                 return
 
-            code, out, err = run_command(
-                [str(self.cfg.snapshot_script), "--repo", str(self.cfg.repo), "--loop", loop_id]
-            )
+            trace_id = self._trace_id()
+            command = [str(self.cfg.snapshot_script), "--repo", str(self.cfg.repo), "--loop", loop_id]
+            if trace_id:
+                command += ["--trace-id", trace_id]
+
+            code, out, err = run_command(command)
             if code != 0:
                 self._error(502, "runtime_error", tail_text(err) or "snapshot command failed")
                 return
@@ -137,6 +143,8 @@ class OpsHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._error(502, "runtime_error", "snapshot output was not valid JSON")
                 return
+            if trace_id and isinstance(payload, dict) and "traceId" not in payload:
+                payload["traceId"] = trace_id
 
             self._json(200, payload)
             return
@@ -146,6 +154,8 @@ class OpsHandler(BaseHTTPRequestHandler):
             if not loop_id:
                 self._error(400, "invalid_request", "loopId is required")
                 return
+
+            trace_id = self._trace_id()
 
             try:
                 cursor = self._int_from_query(query, "cursor", 0)
@@ -180,6 +190,8 @@ class OpsHandler(BaseHTTPRequestHandler):
                     "--cursor-file",
                     str(cursor_file),
                 ]
+                if trace_id:
+                    command += ["--trace-id", trace_id]
                 if max_events > 0:
                     command += ["--max-events", str(max_events)]
 
@@ -208,6 +220,7 @@ class OpsHandler(BaseHTTPRequestHandler):
                 response = {
                     "ok": True,
                     "schemaVersion": "v1",
+                    "traceId": trace_id or None,
                     "source": {
                         "repoPath": str(self.cfg.repo),
                         "loopId": loop_id,
@@ -219,6 +232,7 @@ class OpsHandler(BaseHTTPRequestHandler):
                         "updatedAt": cursor_json.get("updatedAt"),
                     },
                 }
+                response = {k: v for k, v in response.items() if v is not None}
                 self._json(200, response)
                 return
 
@@ -251,6 +265,7 @@ class OpsHandler(BaseHTTPRequestHandler):
         by = str(payload.get("by") or os.environ.get("USER", "ops-service")).strip()
         note = str(payload.get("note") or "").strip()
         idempotency_key = str(payload.get("idempotencyKey") or self.headers.get("X-Idempotency-Key", "")).strip()
+        trace_id = str(payload.get("traceId") or self._trace_id()).strip()
         no_confirm = bool(payload.get("noConfirm", False))
 
         if not loop_id:
@@ -271,6 +286,8 @@ class OpsHandler(BaseHTTPRequestHandler):
             if isinstance(replayed_obj, dict):
                 replayed_obj = dict(replayed_obj)
                 replayed_obj["replayed"] = True
+                if trace_id and "traceId" not in replayed_obj:
+                    replayed_obj["traceId"] = trace_id
                 self._json(200, replayed_obj)
                 return
 
@@ -289,6 +306,8 @@ class OpsHandler(BaseHTTPRequestHandler):
             command += ["--note", note]
         if no_confirm:
             command += ["--no-confirm"]
+        if trace_id:
+            command += ["--trace-id", trace_id]
 
         code, out, err = run_command(command)
         result_obj = parse_last_json_line(out)
@@ -299,6 +318,7 @@ class OpsHandler(BaseHTTPRequestHandler):
             "result": result_obj,
             "stderr": tail_text(err) or None,
             "replayed": False,
+            "traceId": trace_id or (result_obj.get("traceId") if isinstance(result_obj, dict) else None),
         }
 
         # Remove null keys

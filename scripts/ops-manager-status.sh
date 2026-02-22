@@ -193,6 +193,15 @@ if [[ -f "$reconcile_telemetry_file" ]]; then
   fi
 fi
 
+last_control_json='null'
+if [[ -f "$control_telemetry_file" ]]; then
+  if line=$(tail -n 1 "$control_telemetry_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      last_control_json=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
 tuning_summary_json='null'
 if [[ -f "$reconcile_telemetry_file" ]]; then
   if summary_output=$(
@@ -248,6 +257,7 @@ status_json=$(jq -cn \
   --argjson health_file_json "$health_json" \
   --argjson last_intent "$last_intent_json" \
   --argjson last_reconcile "$last_reconcile_json" \
+  --argjson last_control "$last_control_json" \
   --argjson tuning_summary "$tuning_summary_json" \
   --argjson drift "$drift_json" \
   --argjson alert_dispatch_state "$alert_dispatch_state_json" \
@@ -279,14 +289,20 @@ status_json=$(jq -cn \
       lastIntent: ($last_intent.intent // null),
       lastStatus: ($last_intent.status // null),
       lastRequestedBy: ($last_intent.requestedBy // null),
-      lastTimestamp: ($last_intent.timestamp // null)
+      lastTimestamp: ($last_intent.timestamp // null),
+      lastTraceId: (
+        if ($last_intent.traceId // null) != null then $last_intent.traceId
+        else ($last_control.traceId // null)
+        end
+      )
     },
     reconcile: {
       lastStatus: ($last_reconcile.status // null),
       lastTimestamp: ($last_reconcile.timestamp // null),
       lastTransport: ($last_reconcile.transport // null),
       lastFailureCode: ($last_reconcile.failureCode // null),
-      lastDurationSeconds: ($last_reconcile.durationSeconds // null)
+      lastDurationSeconds: ($last_reconcile.durationSeconds // null),
+      lastTraceId: ($last_reconcile.traceId // null)
     },
     tuning: {
       summaryWindow: $summary_window,
@@ -327,7 +343,8 @@ status_json=$(jq -cn \
             failedCount: ($alert_dispatch_state.failedCount // 0),
             failureReasonCodes: ($alert_dispatch_state.failureReasonCodes // []),
             escalationsLineOffset: ($alert_dispatch_state.escalationsLineOffset // 0),
-            escalationsLineCount: ($alert_dispatch_state.escalationsLineCount // 0)
+            escalationsLineCount: ($alert_dispatch_state.escalationsLineCount // 0),
+            lastTraceId: ($alert_dispatch_state.traceId // null)
           } | with_entries(select(.value != null))
           end
         ),
@@ -341,13 +358,34 @@ status_json=$(jq -cn \
             eventSeverity: ($last_alert_delivery.eventSeverity // null),
             sinkCount: ($last_alert_delivery.sinkCount // null),
             dispatchedSinkCount: ($last_alert_delivery.dispatchedSinkCount // null),
-            failedSinkCount: ($last_alert_delivery.failedSinkCount // null)
+            failedSinkCount: ($last_alert_delivery.failedSinkCount // null),
+            traceId: ($last_alert_delivery.traceId // null),
+            escalationTraceId: ($last_alert_delivery.escalationTraceId // null)
           } | with_entries(select(.value != null))
           end
         )
       } | with_entries(select(.value != null))
       end
     ),
+    traceLinkage: {
+      controlTraceId: (
+        if ($last_intent.traceId // null) != null then $last_intent.traceId
+        else ($last_control.traceId // null)
+        end
+      ),
+      reconcileTraceId: ($last_reconcile.traceId // null),
+      alertTraceId: ($last_alert_delivery.traceId // $alert_dispatch_state.traceId // null),
+      sharedTraceId: (
+        (
+          if ($last_intent.traceId // null) != null then $last_intent.traceId
+          else ($last_control.traceId // null)
+          end
+        ) as $c
+        | ($last_reconcile.traceId // null) as $r
+        | ($last_alert_delivery.traceId // $alert_dispatch_state.traceId // null) as $a
+        | if $r != null and $a != null and $r == $a and ($c == null or $c == $r) then $r else null end
+      )
+    },
     files: {
       stateFile: $state_file,
       cursorFile: $cursor_file,
