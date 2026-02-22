@@ -25,6 +25,8 @@ build_role_prompt() {
   local rlms_summary_file="${24:-}"
   local rlms_status_file="${25:-}"
   local delegation_status_file="${26:-}"
+  local git_branch="${27:-}"
+  local git_worktree="${28:-}"
 
   cat "$role_template" > "$prompt_file"
   cat <<EOF >> "$prompt_file"
@@ -45,6 +47,13 @@ Context files (read as needed):
 - Evidence: $evidence_file
 - Tasks directory: $tasks_dir
 EOF
+
+  if [[ -n "$git_branch" ]]; then
+    echo "- Git branch: $git_branch" >> "$prompt_file"
+  fi
+  if [[ -n "$git_worktree" ]]; then
+    echo "- Git worktree: $git_worktree" >> "$prompt_file"
+  fi
 
   # Add lint feedback if it exists
   local loop_dir
