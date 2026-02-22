@@ -31,11 +31,11 @@
 3. [x] Update `docs/ops-manager-runbook.md` with total-visibility triage workflows and fallback behavior.
 
 ## P1.6 Test Coverage
-1. [ ] Add `tests/ops-manager-visibility.bats` for heartbeat, invocation audit, sequence checks, and trace propagation.
+1. [x] Add `tests/ops-manager-visibility.bats` for heartbeat, invocation audit, sequence checks, and trace propagation.
 2. [x] Add/extend tests proving status output includes new visibility fields.
-3. [ ] Verify local vs sprite_service parity for visibility artifacts and reason codes.
+3. [x] Verify local vs sprite_service parity for visibility artifacts and reason codes.
 
 ## P1.V Validation
-1. [ ] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats` passes.
+1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats` passes.
 2. [x] All new/changed scripts pass `bash -n` syntax checks.
-3. [ ] Updated docs match implemented visibility artifacts, fields, and operator flow.
+3. [x] Updated docs match implemented visibility artifacts, fields, and operator flow.
