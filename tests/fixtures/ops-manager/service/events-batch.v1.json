@@ -1,0 +1,52 @@
+{
+  "ok": true,
+  "schemaVersion": "v1",
+  "source": {
+    "repoPath": "/tmp/demo",
+    "loopId": "demo-loop"
+  },
+  "events": [
+    {
+      "schemaVersion": "v1",
+      "envelopeType": "loop_run_event",
+      "emittedAt": "2026-02-22T11:00:00Z",
+      "source": {
+        "repoPath": "/tmp/demo",
+        "loopId": "demo-loop"
+      },
+      "cursor": {
+        "eventLineOffset": 1,
+        "eventLineCount": 3
+      },
+      "run": {
+        "runId": "run-123",
+        "iteration": 2
+      },
+      "event": {
+        "timestamp": "2026-02-22T11:00:00Z",
+        "name": "iteration_start",
+        "role": null,
+        "status": null,
+        "message": null,
+        "payload": {
+          "started_at": "2026-02-22T11:00:00Z"
+        },
+        "raw": {
+          "timestamp": "2026-02-22T11:00:00Z",
+          "event": "iteration_start",
+          "loop_id": "demo-loop",
+          "run_id": "run-123",
+          "iteration": 2,
+          "data": {
+            "started_at": "2026-02-22T11:00:00Z"
+          }
+        }
+      }
+    }
+  ],
+  "cursor": {
+    "eventLineOffset": 1,
+    "eventLineCount": 3,
+    "updatedAt": "2026-02-22T11:00:00Z"
+  }
+}

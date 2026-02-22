@@ -96,9 +96,39 @@ Supported intents:
 - `approve`
 - `reject`
 
+Service transport example:
+```bash
+scripts/ops-manager-control.sh \
+  --repo /path/to/repo \
+  --loop my-loop \
+  --intent approve \
+  --transport sprite_service \
+  --service-base-url http://127.0.0.1:8787 \
+  --service-token "$OPS_MANAGER_SERVICE_TOKEN" \
+  --idempotency-key approve-my-loop-001
+```
+
 Confirmation:
 - `scripts/ops-manager-confirm-intent.sh` is used by default.
 - `--no-confirm` skips confirmation and records `executed_unconfirmed`.
+
+## Sprite Service Transport
+Service implementation entrypoint:
+- `scripts/ops-manager-sprite-service.py`
+
+Service client helper:
+- `scripts/ops-manager-service-client.sh`
+
+Auth:
+- shared token via `Authorization: Bearer <token>` or `X-Ops-Token`
+
+Transport retry:
+- `--retry-attempts <n>`
+- `--retry-backoff-seconds <n>`
+
+Transport mode switch:
+- reconcile: `scripts/ops-manager-reconcile.sh --transport <local|sprite_service> ...`
+- control: `scripts/ops-manager-control.sh --transport <local|sprite_service> ...`
 
 ## Manager Persistence Paths
 - `.superloop/ops-manager/<loop>/state.json` - projected lifecycle state.
