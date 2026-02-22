@@ -710,6 +710,55 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "run --dry-run resolves lifecycle main ref to HEAD on detached checkout" {
+  cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
+{
+  "runners": {
+    "codex": {
+      "command": ["codex", "exec"],
+      "args": ["--full-auto", "-C", "{repo}", "-"]
+    }
+  },
+  "loops": [{
+    "id": "detached-head-loop",
+    "spec_file": ".superloop/specs/test.md",
+    "max_iterations": 3,
+    "completion_promise": "DONE",
+    "checklists": [],
+    "tests": {"mode": "disabled", "commands": []},
+    "evidence": {"enabled": false, "require_on_completion": false, "artifacts": []},
+    "lifecycle": {
+      "enabled": true,
+      "require_on_completion": true,
+      "strict": true,
+      "block_on_failure": true,
+      "feature_prefix": "feat/",
+      "main_ref": "origin/main",
+      "no_fetch": true
+    },
+    "approval": {"enabled": false, "require_on_completion": false},
+    "reviewer_packet": {"enabled": false},
+    "timeouts": {"enabled": false, "default": 300, "planner": 120, "implementer": 300, "tester": 300, "reviewer": 120},
+    "stuck": {"enabled": false, "threshold": 3, "action": "report_and_stop", "ignore": []},
+    "roles": ["planner", "implementer", "tester", "reviewer"]
+  }]
+}
+EOF
+
+  mkdir -p "$TEMP_DIR/schema"
+  cp "$PROJECT_ROOT/schema/config.schema.json" "$TEMP_DIR/schema/"
+  echo "# Test Spec" > "$TEMP_DIR/.superloop/specs/test.md"
+
+  git -C "$TEMP_DIR" checkout -q --detach HEAD
+  git -C "$TEMP_DIR" branch -D main >/dev/null
+  run git -C "$TEMP_DIR" rev-parse --verify "main^{commit}"
+  [ "$status" -ne 0 ]
+
+  run "$PROJECT_ROOT/superloop.sh" run --repo "$TEMP_DIR" --loop detached-head-loop --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Dry-run summary (detached-head-loop)" ]]
+}
+
 @test "run blocks reentrant invocation for the same active loop id" {
   cat > "$TEMP_DIR/.superloop/config.json" << 'EOF'
 {
