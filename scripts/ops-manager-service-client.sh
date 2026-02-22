@@ -32,7 +32,7 @@ need_cmd() {
 method=""
 base_url=""
 path=""
-token=""
+auth_value=""
 body_file=""
 retry_attempts="3"
 retry_backoff_seconds="1"
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --token)
-      token="${2:-}"
+      auth_value="${2:-}"
       shift 2
       ;;
     --body-file)
@@ -147,10 +147,10 @@ while (( attempt <= retry_attempts )); do
     -o "$body_tmp"
   )
 
-  if [[ -n "$token" ]]; then
+  if [[ -n "$auth_value" ]]; then
     curl_args+=(
-      -H "Authorization: Bearer $token"
-      -H "X-Ops-Token: $token"
+      -H "Authorization: Bearer $auth_value"
+      -H "X-Ops-Token: $auth_value"
     )
   fi
 

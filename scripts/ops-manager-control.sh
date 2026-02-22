@@ -43,7 +43,7 @@ loop_id=""
 intent=""
 transport="local"
 service_base_url=""
-service_token=""
+service_auth=""
 idempotency_key=""
 retry_attempts="3"
 retry_backoff_seconds="1"
@@ -76,7 +76,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --service-token)
-      service_token="${2:-}"
+      service_auth="${2:-}"
       shift 2
       ;;
     --idempotency-key)
@@ -164,8 +164,8 @@ superloop_bin="${SUPERLOOP_BIN:-$root_dir/superloop.sh}"
 confirm_script="${OPS_MANAGER_CONFIRM_SCRIPT:-$script_dir/ops-manager-confirm-intent.sh}"
 client_script="${OPS_MANAGER_SERVICE_CLIENT_SCRIPT:-$script_dir/ops-manager-service-client.sh}"
 
-if [[ -z "$service_token" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
-  service_token="$OPS_MANAGER_SERVICE_TOKEN"
+if [[ -z "$service_auth" && -n "${OPS_MANAGER_SERVICE_TOKEN:-}" ]]; then
+  service_auth="$OPS_MANAGER_SERVICE_TOKEN"
 fi
 if [[ -z "$idempotency_key" ]]; then
   idempotency_key="${intent}-$(date +%s)-$$"
@@ -267,7 +267,7 @@ else
       --method POST \
       --base-url "$service_base_url" \
       --path "/ops/control" \
-      --token "$service_token" \
+      --token "$service_auth" \
       --body-file "$body_file" \
       --retry-attempts "$retry_attempts" \
       --retry-backoff-seconds "$retry_backoff_seconds"
