@@ -10,20 +10,20 @@ Superloop owns this contract. Target repositories implement adapters to consume 
 
 - `SUPERLOOP_DEV_BASE_URL`
   - Purpose: canonical base URL for primary local app execution lane.
-  - Example: `http://supergent.localhost:1355`
-- `SUPERLOOP_LAB_BASE_URL`
-  - Purpose: canonical base URL for lab/evidence verification lane.
-  - Example: `http://lab.supergent.localhost:1355`
+  - Example: `http://app.target.localhost:1355`
+- `SUPERLOOP_VERIFY_BASE_URL`
+  - Purpose: canonical base URL for verification/evidence lane.
+  - Example: `http://verify.target.localhost:1355`
 - `SUPERLOOP_DEV_PORT` (optional)
   - Purpose: canonical raw local development port when a script requires explicit port selection.
   - Example: `5174`
 
 ## Resolution Order
 
-When reading dev/lab URL or port values in Superloop-aware scripts:
+When reading dev/verify URL or port values in Superloop-aware scripts:
 
 1. Canonical `SUPERLOOP_*` key.
-2. Target-repo legacy/product-specific alias (for example `SUPERGENT_*`).
+2. Target-repo legacy/product-specific alias (if present).
 3. Generic fallback env where applicable (for example `TEST_BASE_URL`, `PORT`).
 4. Explicit hardcoded localhost fallback only when policy permits.
 

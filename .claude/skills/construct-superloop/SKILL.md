@@ -41,8 +41,8 @@ Constructor should be environment-aware but not environment-dependent:
 
 - Assume local baseline is `devenv` + `direnv` + `portless`.
 - Prefer wrapper commands and env-based URLs in guidance.
-- Treat `SUPERLOOP_DEV_BASE_URL`, `SUPERLOOP_LAB_BASE_URL`, and `SUPERLOOP_DEV_PORT` as canonical orchestration-level local env keys.
-- For migrations, allow legacy target-repo aliases only as compatibility notes (for example `SUPERGENT_BASE_URL`, `SUPERGENT_LAB_BASE_URL`, `SUPERGENT_DEV_PORT`).
+- Treat `SUPERLOOP_DEV_BASE_URL`, `SUPERLOOP_VERIFY_BASE_URL`, and `SUPERLOOP_DEV_PORT` as canonical orchestration-level local env keys.
+- For migrations, allow legacy target-repo aliases only as compatibility notes.
 - When a spec references local execution evidence, require explicit variable precedence: canonical `SUPERLOOP_*` first, then legacy alias, then approved fallback.
 - Do not make acceptance criteria require local stack tools as mandatory.
 - Preserve fallback compatibility (`PORTLESS=0`) and CI-localhost contracts unless scope explicitly changes them.

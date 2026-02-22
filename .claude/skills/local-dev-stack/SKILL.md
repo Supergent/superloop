@@ -37,11 +37,11 @@ For Superloop UI lane:
 scripts/dev-superloop-ui.sh
 ```
 
-For Supergent lanes:
+For target-repo lanes (when wrappers exist in that repo):
 
 ```bash
-scripts/dev-supergent.sh
-scripts/dev-supergent-lab.sh
+scripts/dev-<target>.sh
+scripts/dev-<target>-verify.sh
 ```
 
 ## URL and Env Rules
@@ -50,14 +50,14 @@ Prefer env-driven URLs over hardcoded ports.
 
 - Superloop UI: `SUPERLOOP_UI_URL` (default `http://superloop-ui.localhost:1355`)
 - Canonical app URL: `SUPERLOOP_DEV_BASE_URL` (profile default depends on target repo)
-- Canonical lab URL: `SUPERLOOP_LAB_BASE_URL` (profile default depends on target repo)
+- Canonical verify URL: `SUPERLOOP_VERIFY_BASE_URL` (profile default depends on target repo)
 - Canonical raw dev port (optional): `SUPERLOOP_DEV_PORT` (target-repo default often `5174`)
 
 For repos still migrating, keep compatibility aliases as fallback only:
 
-- `SUPERGENT_BASE_URL` -> fallback alias for `SUPERLOOP_DEV_BASE_URL`
-- `SUPERGENT_LAB_BASE_URL` -> fallback alias for `SUPERLOOP_LAB_BASE_URL`
-- `SUPERGENT_DEV_PORT` -> fallback alias for `SUPERLOOP_DEV_PORT`
+- `<TARGET>_BASE_URL` -> fallback alias for `SUPERLOOP_DEV_BASE_URL`
+- `<TARGET>_VERIFY_BASE_URL` (or repo-specific equivalent) -> fallback alias for `SUPERLOOP_VERIFY_BASE_URL`
+- `<TARGET>_DEV_PORT` -> fallback alias for `SUPERLOOP_DEV_PORT`
 
 Resolution order should be:
 
