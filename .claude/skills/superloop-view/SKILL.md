@@ -605,7 +605,9 @@ Look for checkbox patterns:
 After generating your UITree, POST it:
 
 ```bash
-curl -X POST http://localhost:3333/api/liquid/override \
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/override" \
   -H "Content-Type: application/json" \
   -d '{"root":"main","elements":{...}}'
 ```
@@ -617,7 +619,9 @@ Or if using WebFetch, make a POST request to the override endpoint.
 To save the view with version history for future reference and iteration:
 
 ```bash
-curl -X POST http://localhost:3333/api/liquid/override \
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/override" \
   -H "Content-Type: application/json" \
   -d '{
     "save": true,
@@ -630,7 +634,9 @@ curl -X POST http://localhost:3333/api/liquid/override \
 Or save directly to a named view:
 
 ```bash
-curl -X POST http://localhost:3333/api/liquid/views/test-failures \
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X POST "${SUPERLOOP_UI_URL}/api/liquid/views/test-failures" \
   -H "Content-Type: application/json" \
   -d '{
     "tree": {"root":"main","elements":{...}},
@@ -649,7 +655,9 @@ curl -X POST http://localhost:3333/api/liquid/views/test-failures \
 To return to default view:
 
 ```bash
-curl -X DELETE http://localhost:3333/api/liquid/override
+SUPERLOOP_UI_URL="${SUPERLOOP_UI_URL:-http://superloop-ui.localhost:1355}"
+
+curl -X DELETE "${SUPERLOOP_UI_URL}/api/liquid/override"
 ```
 
 ---
