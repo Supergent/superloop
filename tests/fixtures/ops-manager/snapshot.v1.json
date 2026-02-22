@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "v1",
+  "envelopeType": "loop_run_snapshot",
+  "emittedAt": "2026-02-22T03:45:00Z",
+  "source": {
+    "repoPath": "/tmp/repo",
+    "loopId": "demo-loop"
+  },
+  "run": {
+    "runId": "20260222T034500Z",
+    "iteration": 3,
+    "status": "running",
+    "summary": {
+      "run_id": "20260222T034500Z",
+      "iteration": 2,
+      "gates": {
+        "tests": "ok",
+        "validation": "ok",
+        "prerequisites": "ok",
+        "checklist": "ok",
+        "evidence": "skipped",
+        "approval": "none"
+      },
+      "stuck": {
+        "streak": 0,
+        "threshold": 3
+      },
+      "completion_ok": false
+    }
+  },
+  "runtime": {
+    "superloopState": {
+      "active": true,
+      "loop_index": 0,
+      "iteration": 3,
+      "current_loop_id": "demo-loop",
+      "updated_at": "2026-02-22T03:45:00Z"
+    },
+    "activeRun": {
+      "repo": "/tmp/repo",
+      "pid": 12345,
+      "pgid": 12345,
+      "loop_id": "demo-loop",
+      "iteration": 3,
+      "stage": "loop_start",
+      "updated_at": "2026-02-22T03:45:00Z"
+    },
+    "approval": null
+  },
+  "artifacts": {
+    "events": {
+      "path": ".superloop/loops/demo-loop/events.jsonl",
+      "exists": true,
+      "sizeBytes": 2048,
+      "lineCount": 42,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mtimeEpoch": 1763330000
+    },
+    "runSummary": {
+      "path": ".superloop/loops/demo-loop/run-summary.json",
+      "exists": true,
+      "sizeBytes": 4096,
+      "lineCount": 1,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mtimeEpoch": 1763330001
+    },
+    "state": {
+      "path": ".superloop/state.json",
+      "exists": true,
+      "sizeBytes": 256,
+      "lineCount": 1,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "mtimeEpoch": 1763330002
+    },
+    "activeRun": {
+      "path": ".superloop/active-run.json",
+      "exists": true,
+      "sizeBytes": 256,
+      "lineCount": 1,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "mtimeEpoch": 1763330003
+    },
+    "approval": {
+      "path": ".superloop/loops/demo-loop/approval.json",
+      "exists": false,
+      "sizeBytes": 0,
+      "lineCount": 0,
+      "sha256": null,
+      "mtimeEpoch": null
+    }
+  },
+  "cursor": {
+    "eventLineOffset": 42,
+    "eventLineCount": 42
+  },
+  "health": {
+    "eventCount": 42,
+    "lastEventAt": "2026-02-22T03:45:00Z",
+    "lastEventName": "iteration_start",
+    "lastSummaryAt": "2026-02-22T03:44:59Z",
+    "hasPendingApproval": false,
+    "gates": {
+      "tests": "ok",
+      "validation": "ok",
+      "prerequisites": "ok",
+      "checklist": "ok",
+      "evidence": "skipped",
+      "approval": "none"
+    },
+    "stuck": {
+      "streak": 0,
+      "threshold": 3
+    }
+  }
+}
