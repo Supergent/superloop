@@ -338,6 +338,26 @@ JSONL
   run jq -e '.violations | index("event_sequence_regression") != null' "$sequence_state_file"
   [ "$status" -eq 0 ]
 
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.visibility.sequence.status' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ordering_drift_detected" ]
+
+  run jq -r '.visibility.sequence.driftActive' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.visibility.sequence.traceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-seq-drift-1" ]
+
+  run jq -r '.visibility.trace.sequenceTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-seq-drift-1" ]
+
   local escalations_file="$repo/.superloop/ops-manager/$loop_id/escalations.jsonl"
   [ -f "$escalations_file" ]
 
@@ -568,6 +588,22 @@ JSON
   run bash -lc "tail -n 1 '$heartbeat_telemetry_file' | jq -r '.status'"
   [ "$status" -eq 0 ]
   [ "$output" = "degraded" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.visibility.heartbeat.freshnessStatus' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -r '.visibility.heartbeat.reasonCode' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "runtime_heartbeat_stale" ]
+
+  run jq -r '.visibility.heartbeat.lastHeartbeatAt' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2020-01-01T00:00:00Z" ]
 }
 
 @test "local and sprite_service transports produce equivalent heartbeat stale health" {

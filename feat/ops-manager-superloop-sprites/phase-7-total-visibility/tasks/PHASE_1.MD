@@ -26,13 +26,13 @@
 3. [x] Preserve backward compatibility with null-safe trace fields for existing artifacts.
 
 ## P1.5 Operator Surface + Runbook
-1. [ ] Extend `scripts/ops-manager-status.sh` with heartbeat, sequence, and trace visibility summary fields.
-2. [ ] Update `docs/ops-manager-v0.md` with visibility artifact contract and field definitions.
-3. [ ] Update `docs/ops-manager-runbook.md` with total-visibility triage workflows and fallback behavior.
+1. [x] Extend `scripts/ops-manager-status.sh` with heartbeat, sequence, and trace visibility summary fields.
+2. [x] Update `docs/ops-manager-v0.md` with visibility artifact contract and field definitions.
+3. [x] Update `docs/ops-manager-runbook.md` with total-visibility triage workflows and fallback behavior.
 
 ## P1.6 Test Coverage
 1. [ ] Add `tests/ops-manager-visibility.bats` for heartbeat, invocation audit, sequence checks, and trace propagation.
-2. [ ] Add/extend tests proving status output includes new visibility fields.
+2. [x] Add/extend tests proving status output includes new visibility fields.
 3. [ ] Verify local vs sprite_service parity for visibility artifacts and reason codes.
 
 ## P1.V Validation

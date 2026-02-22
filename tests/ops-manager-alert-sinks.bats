@@ -450,6 +450,7 @@ JSONL
   local config_file="$PROJECT_ROOT/config/ops-manager-alert-sinks.v1.json"
   local dispatch_state_file="$repo/.superloop/ops-manager/$loop_id/alert-dispatch-state.json"
   local dispatch_telemetry_file="$repo/.superloop/ops-manager/$loop_id/telemetry/alerts.jsonl"
+  local sequence_state_file="$repo/.superloop/ops-manager/$loop_id/sequence-state.json"
 
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
@@ -496,6 +497,18 @@ JSONL
   [ "$status" -eq 0 ]
   [ "$output" = "trace-alert-status-1" ]
 
+  run jq -r '.visibility.sequence.status' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+
+  run jq -r '.visibility.trace.alertTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
+
+  run jq -r '.visibility.trace.sharedTraceId' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-alert-status-1" ]
+
   run jq -r '.files.alertDispatchStateFile' <<<"$status_json"
   [ "$status" -eq 0 ]
   [ "$output" = "$dispatch_state_file" ]
@@ -503,6 +516,10 @@ JSONL
   run jq -r '.files.alertDispatchTelemetryFile' <<<"$status_json"
   [ "$status" -eq 0 ]
   [ "$output" = "$dispatch_telemetry_file" ]
+
+  run jq -r '.files.sequenceStateFile' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$sequence_state_file" ]
 }
 
 @test "alert dispatch is transport-parity across local and sprite_service reconciles" {
