@@ -11,6 +11,8 @@ Options:
   --cursor-file <path>    Manager cursor path. Default: <repo>/.superloop/ops-manager/<loop>/cursor.json
   --health-file <path>    Manager health path. Default: <repo>/.superloop/ops-manager/<loop>/health.json
   --intents-file <path>   Manager intents log. Default: <repo>/.superloop/ops-manager/<loop>/intents.jsonl
+  --drift-state-file <path>   Profile drift state path. Default: <repo>/.superloop/ops-manager/<loop>/profile-drift.json
+  --drift-history-file <path> Profile drift history path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
   --summary-window <n>    Telemetry summary window size (default: 200)
   --pretty                Pretty-print output JSON.
   --help                  Show this help message.
@@ -39,6 +41,8 @@ state_file=""
 cursor_file=""
 health_file=""
 intents_file=""
+drift_state_file=""
+drift_history_file=""
 summary_window="200"
 pretty="0"
 
@@ -66,6 +70,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --intents-file)
       intents_file="${2:-}"
+      shift 2
+      ;;
+    --drift-state-file)
+      drift_state_file="${2:-}"
+      shift 2
+      ;;
+    --drift-history-file)
+      drift_history_file="${2:-}"
       shift 2
       ;;
     --summary-window)
@@ -119,6 +131,12 @@ fi
 if [[ -z "$intents_file" ]]; then
   intents_file="$ops_dir/intents.jsonl"
 fi
+if [[ -z "$drift_state_file" ]]; then
+  drift_state_file="$ops_dir/profile-drift.json"
+fi
+if [[ -z "$drift_history_file" ]]; then
+  drift_history_file="$telemetry_dir/profile-drift.jsonl"
+fi
 
 if [[ ! -f "$state_file" && ! -f "$health_file" ]]; then
   die "no status artifacts found for loop: $loop_id"
@@ -171,6 +189,13 @@ if [[ -f "$reconcile_telemetry_file" ]]; then
   fi
 fi
 
+drift_json='null'
+if [[ -f "$drift_state_file" ]]; then
+  drift_json=$(jq -c '.' "$drift_state_file" 2>/dev/null) || die "invalid drift JSON: $drift_state_file"
+elif jq -e '.drift != null' <<<"$state_json" >/dev/null 2>&1; then
+  drift_json=$(jq -c '.drift' <<<"$state_json")
+fi
+
 status_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg generated_at "$(timestamp)" \
@@ -180,6 +205,8 @@ status_json=$(jq -cn \
   --arg cursor_file "$cursor_file" \
   --arg health_file "$health_file" \
   --arg intents_file "$intents_file" \
+  --arg drift_state_file "$drift_state_file" \
+  --arg drift_history_file "$drift_history_file" \
   --arg reconcile_telemetry_file "$reconcile_telemetry_file" \
   --arg control_telemetry_file "$control_telemetry_file" \
   --argjson state "$state_json" \
@@ -188,6 +215,7 @@ status_json=$(jq -cn \
   --argjson last_intent "$last_intent_json" \
   --argjson last_reconcile "$last_reconcile_json" \
   --argjson tuning_summary "$tuning_summary_json" \
+  --argjson drift "$drift_json" \
   --argjson summary_window "$summary_window" \
   '{
     schemaVersion: $schema_version,
@@ -244,11 +272,18 @@ status_json=$(jq -cn \
         end
       )
     },
+    drift: (
+      if $drift != null then $drift
+      else ($state.drift // null)
+      end
+    ),
     files: {
       stateFile: $state_file,
       cursorFile: $cursor_file,
       healthFile: $health_file,
       intentsFile: $intents_file,
+      driftStateFile: $drift_state_file,
+      driftHistoryFile: $drift_history_file,
       reconcileTelemetryFile: $reconcile_telemetry_file,
       controlTelemetryFile: $control_telemetry_file
     }

@@ -13,8 +13,10 @@ Operational procedures for manager core behavior across local and sprite-service
 - manager cursor: `.superloop/ops-manager/<loop>/cursor.json`
 - manager health: `.superloop/ops-manager/<loop>/health.json`
 - intent log: `.superloop/ops-manager/<loop>/intents.jsonl`
+- profile drift state: `.superloop/ops-manager/<loop>/profile-drift.json`
 - reconcile telemetry: `.superloop/ops-manager/<loop>/telemetry/reconcile.jsonl`
 - control telemetry: `.superloop/ops-manager/<loop>/telemetry/control.jsonl`
+- profile drift telemetry: `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
@@ -36,6 +38,29 @@ scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-wi
 ```
 
 Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, latest control/reconcile outcomes, and tuning guidance (`recommendedProfile`, `confidence`).
+
+## Profile Drift Triage
+Use when policy profile and telemetry recommendation may be diverging.
+
+1. Inspect current drift state:
+```bash
+jq '.' .superloop/ops-manager/<loop>/profile-drift.json
+```
+
+2. Check recent drift evaluations:
+```bash
+tail -n 20 .superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl
+```
+
+3. Read status action guidance:
+```bash
+scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-window 200 --pretty
+```
+
+Operator actions for active drift (`status=drift_active`):
+- review applied profile vs recommendation and rationale
+- keep advisory mode (no automatic profile switching)
+- apply explicit profile change only after operator confirmation
 
 ## Divergence Triage
 1. Inspect current manager projection:
@@ -163,7 +188,9 @@ scripts/ops-manager-telemetry-summary.sh \
 scripts/ops-manager-reconcile.sh \
   --repo /path/to/repo \
   --loop <loop-id> \
-  --threshold-profile balanced
+  --threshold-profile balanced \
+  --drift-min-confidence medium \
+  --drift-required-streak 3
 ```
 3. If needed, override specific values explicitly (highest precedence):
 ```bash

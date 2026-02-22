@@ -178,3 +178,52 @@ JSONL
   [ "$status" -eq 0 ]
   [ -n "$output" ]
 }
+
+@test "reconcile persists profile drift artifacts and status includes drift guidance" {
+  local loop_id="demo-loop"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  write_runtime_artifacts "$TEMP_DIR" "$loop_id" "$now_ts"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$TEMP_DIR" \
+    --loop "$loop_id" \
+    --threshold-profile balanced \
+    --drift-min-confidence low \
+    --drift-required-streak 1 \
+    --drift-summary-window 25
+  [ "$status" -eq 0 ]
+  local state_json="$output"
+
+  run jq -r '.drift.status' <<<"$state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "drift_active" ]
+
+  run jq -r '.drift.recommendedProfile' <<<"$state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "strict" ]
+
+  local drift_state_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/profile-drift.json"
+  local drift_history_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/profile-drift.jsonl"
+  [ -f "$drift_state_file" ]
+  [ -f "$drift_history_file" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" \
+    --repo "$TEMP_DIR" \
+    --loop "$loop_id" \
+    --summary-window 25
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.drift.status' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "drift_active" ]
+
+  run jq -r '.drift.action' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "review_threshold_profile" ]
+
+  run jq -r '.files.driftStateFile' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$drift_state_file" ]
+}
