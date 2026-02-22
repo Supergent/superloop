@@ -266,6 +266,12 @@
           "type": "string",
           "format": "date-time"
         },
+        "traceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "source": {
           "$ref": "#/$defs/source"
         },
@@ -462,6 +468,12 @@
         "emittedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "traceId": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source": {
           "$ref": "#/$defs/source"

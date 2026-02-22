@@ -8,6 +8,7 @@ Usage:
 
 Options:
   --token <token>                Optional auth token (sent as Bearer and X-Ops-Token)
+  --trace-id <id>                Optional trace id header (X-Trace-Id)
   --body-file <path>             JSON request body file for POST
   --retry-attempts <n>           Retry attempts on transient failures (default: 3)
   --retry-backoff-seconds <n>    Base backoff seconds between retries (default: 1)
@@ -33,6 +34,7 @@ method=""
 base_url=""
 path=""
 header_value=""
+trace_id=""
 body_file=""
 retry_attempts="3"
 retry_backoff_seconds="1"
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --token)
       header_value="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --body-file)
@@ -152,6 +158,9 @@ while (( attempt <= retry_attempts )); do
       -H "Authorization: Bearer $header_value"
       -H "X-Ops-Token: $header_value"
     )
+  fi
+  if [[ -n "$trace_id" ]]; then
+    curl_args+=(-H "X-Trace-Id: $trace_id")
   fi
 
   if [[ "$method" == "POST" ]]; then

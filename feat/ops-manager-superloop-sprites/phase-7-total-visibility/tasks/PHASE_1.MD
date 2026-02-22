@@ -21,9 +21,9 @@
 3. [x] Persist ordering diagnostics for operator triage.
 
 ## P1.4 Trace ID Propagation
-1. [ ] Generate/propagate trace IDs across reconcile, control, runtime effects, and escalation/alert telemetry.
-2. [ ] Surface trace linkage fields in status output for latest control/reconcile/alert actions.
-3. [ ] Preserve backward compatibility with null-safe trace fields for existing artifacts.
+1. [x] Generate/propagate trace IDs across reconcile, control, runtime effects, and escalation/alert telemetry.
+2. [x] Surface trace linkage fields in status output for latest control/reconcile/alert actions.
+3. [x] Preserve backward compatibility with null-safe trace fields for existing artifacts.
 
 ## P1.5 Operator Surface + Runbook
 1. [ ] Extend `scripts/ops-manager-status.sh` with heartbeat, sequence, and trace visibility summary fields.

@@ -10,6 +10,7 @@ Options:
   --escalations-file <path>          Escalations JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/escalations.jsonl
   --dispatch-state-file <path>       Dispatch state JSON path. Default: <repo>/.superloop/ops-manager/<loop>/alert-dispatch-state.json
   --dispatch-telemetry-file <path>   Dispatch telemetry JSONL path. Default: <repo>/.superloop/ops-manager/<loop>/telemetry/alerts.jsonl
+  --trace-id <id>                    Trace id for this dispatch operation (generated when omitted)
   --alert-config-file <path>         Alert sink config JSON path.
   --max-escalations <n>              Maximum new escalation rows to process (default: 0 = all available).
   --pretty                           Pretty-print output JSON.
@@ -33,6 +34,22 @@ timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+generate_trace_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16
+    return 0
+  fi
+  printf 'trace-%s-%s-%04d\n' "$(date -u +%Y%m%d%H%M%S)" "$$" "$RANDOM"
+}
+
 severity_rank() {
   case "$1" in
     info) echo 1 ;;
@@ -47,6 +64,7 @@ loop_id=""
 escalations_file=""
 dispatch_state_file=""
 dispatch_telemetry_file=""
+trace_id=""
 alert_config_file=""
 max_escalations="0"
 pretty="0"
@@ -71,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dispatch-telemetry-file)
       dispatch_telemetry_file="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --alert-config-file)
@@ -127,6 +149,12 @@ fi
 if [[ -z "$alert_config_file" && -n "${OPS_MANAGER_ALERT_SINKS_FILE:-}" ]]; then
   alert_config_file="$OPS_MANAGER_ALERT_SINKS_FILE"
 fi
+if [[ -z "$trace_id" && -n "${OPS_MANAGER_TRACE_ID:-}" ]]; then
+  trace_id="$OPS_MANAGER_TRACE_ID"
+fi
+if [[ -z "$trace_id" ]]; then
+  trace_id="$(generate_trace_id)"
+fi
 
 mkdir -p "$(dirname "$dispatch_state_file")"
 mkdir -p "$(dirname "$dispatch_telemetry_file")"
@@ -156,6 +184,7 @@ write_state_and_print() {
     --arg schema_version "v1" \
     --arg updated_at "$(timestamp)" \
     --arg loop_id "$loop_id" \
+    --arg trace_id "$trace_id" \
     --arg escalations_file "$escalations_file" \
     --arg dispatch_telemetry_file "$dispatch_telemetry_file" \
     --arg status "$status" \
@@ -170,6 +199,7 @@ write_state_and_print() {
       schemaVersion: $schema_version,
       updatedAt: $updated_at,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
       escalationsFile: $escalations_file,
       dispatchTelemetryFile: $dispatch_telemetry_file,
       status: $status,
@@ -267,6 +297,11 @@ dispatch_to_sink() {
   category=$(jq -r '.category // "unknown"' <<<"$escalation_json")
   loop_for_event=$(jq -r '.loopId // empty' <<<"$escalation_json")
   escalation_ts=$(jq -r '.timestamp // ""' <<<"$escalation_json")
+  local escalation_trace_id
+  escalation_trace_id=$(jq -r '.traceId // empty' <<<"$escalation_json")
+  if [[ -z "$escalation_trace_id" ]]; then
+    escalation_trace_id="$trace_id"
+  fi
   if [[ -z "$loop_for_event" ]]; then
     loop_for_event="$loop_id"
   fi
@@ -295,6 +330,7 @@ dispatch_to_sink() {
       payload_json=$(jq -cn \
         --arg schema_version "v1" \
         --arg emitted_at "$(timestamp)" \
+        --arg trace_id "$escalation_trace_id" \
         --arg repo_path "$repo" \
         --arg loop_id "$loop_for_event" \
         --arg category "$category" \
@@ -308,7 +344,8 @@ dispatch_to_sink() {
           source: {
             repoPath: $repo_path,
             loopId: $loop_id,
-            channel: "ops_manager_alert_dispatch"
+            channel: "ops_manager_alert_dispatch",
+            traceId: (if ($trace_id | length) > 0 then $trace_id else null end)
           },
           event: {
             category: $category,
@@ -338,7 +375,7 @@ dispatch_to_sink() {
       icon_emoji=$(jq -r '.config.iconEmoji // empty' <<<"$sink_json")
 
       local text
-      text="[ops-manager][$event_severity] $category loop=$loop_for_event"
+      text="[ops-manager][$event_severity] $category loop=$loop_for_event trace=$escalation_trace_id"
 
       local payload_json
       payload_json=$(jq -cn \
@@ -347,6 +384,7 @@ dispatch_to_sink() {
         --arg username "$username" \
         --arg icon_emoji "$icon_emoji" \
         --arg escalation_ts "$escalation_ts" \
+        --arg trace_id "$escalation_trace_id" \
         '{
           text: $text,
           channel: (if ($channel | length) > 0 then $channel else null end),
@@ -366,6 +404,10 @@ dispatch_to_sink() {
                 {
                   type: "mrkdwn",
                   text: (if ($escalation_ts | length) > 0 then ("Escalation timestamp: `" + $escalation_ts + "`") else "Escalation timestamp unavailable" end)
+                },
+                {
+                  type: "mrkdwn",
+                  text: ("Trace: `" + $trace_id + "`")
                 }
               ]
             }
@@ -396,6 +438,7 @@ dispatch_to_sink() {
       payload_json=$(jq -cn \
         --arg routing_key "$routing_key" \
         --arg dedup_key "$dedup_key" \
+        --arg trace_id "$escalation_trace_id" \
         --arg summary "ops-manager $category ($event_severity) loop=$loop_for_event" \
         --arg severity "$event_severity" \
         --arg source "$pd_source" \
@@ -415,7 +458,8 @@ dispatch_to_sink() {
             group: $group,
             class: $class,
             custom_details: {
-              escalation: $escalation
+              escalation: $escalation,
+              traceId: (if ($trace_id | length) > 0 then $trace_id else null end)
             }
           }
         }')
@@ -476,12 +520,14 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg status "failed" \
       --arg reason_code "invalid_escalation_json" \
       --arg raw_line "$line" \
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: "alert_dispatch",
         status: $status,
         reasonCode: $reason_code,
@@ -494,6 +540,10 @@ for line in "${escalation_lines[@]}"; do
   escalation_timestamp=$(jq -r '.timestamp // ""' <<<"$escalation_json")
   escalation_loop_id=$(jq -r '.loopId // empty' <<<"$escalation_json")
   escalation_severity=$(jq -r '.severity // empty' <<<"$escalation_json")
+  escalation_trace_id=$(jq -r '.traceId // empty' <<<"$escalation_json")
+  if [[ -z "$escalation_trace_id" ]]; then
+    escalation_trace_id="$trace_id"
+  fi
   if [[ -z "$escalation_loop_id" ]]; then
     escalation_loop_id="$loop_id"
   fi
@@ -504,12 +554,14 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
       --arg status "failed" \
       --arg reason_code "missing_escalation_category" \
       --argjson escalation "$escalation_json" \
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
         category: "alert_dispatch",
         status: $status,
         reasonCode: $reason_code,
@@ -536,6 +588,8 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
+      --arg escalation_trace_id "$escalation_trace_id" \
       --arg escalation_category "$escalation_category" \
       --arg escalation_timestamp "$escalation_timestamp" \
       --arg status "failed" \
@@ -545,6 +599,8 @@ for line in "${escalation_lines[@]}"; do
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+        escalationTraceId: (if ($escalation_trace_id | length) > 0 then $escalation_trace_id else null end),
         category: "alert_dispatch",
         escalationCategory: $escalation_category,
         escalationTimestamp: (if ($escalation_timestamp | length) > 0 then $escalation_timestamp else null end),
@@ -563,6 +619,8 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
+      --arg escalation_trace_id "$escalation_trace_id" \
       --arg escalation_category "$escalation_category" \
       --arg status "failed" \
       --arg reason_code "invalid_route_resolution" \
@@ -571,6 +629,8 @@ for line in "${escalation_lines[@]}"; do
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+        escalationTraceId: (if ($escalation_trace_id | length) > 0 then $escalation_trace_id else null end),
         category: "alert_dispatch",
         escalationCategory: $escalation_category,
         status: $status,
@@ -594,6 +654,8 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
+      --arg escalation_trace_id "$escalation_trace_id" \
       --arg escalation_category "$escalation_category" \
       --arg escalation_timestamp "$escalation_timestamp" \
       --arg event_severity "$event_severity" \
@@ -604,6 +666,8 @@ for line in "${escalation_lines[@]}"; do
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+        escalationTraceId: (if ($escalation_trace_id | length) > 0 then $escalation_trace_id else null end),
         category: "alert_dispatch",
         escalationCategory: $escalation_category,
         escalationTimestamp: (if ($escalation_timestamp | length) > 0 then $escalation_timestamp else null end),
@@ -624,6 +688,8 @@ for line in "${escalation_lines[@]}"; do
     append_telemetry "$(jq -cn \
       --arg timestamp "$(timestamp)" \
       --arg loop_id "$loop_id" \
+      --arg trace_id "$trace_id" \
+      --arg escalation_trace_id "$escalation_trace_id" \
       --arg escalation_category "$escalation_category" \
       --arg escalation_timestamp "$escalation_timestamp" \
       --arg event_severity "$event_severity" \
@@ -634,6 +700,8 @@ for line in "${escalation_lines[@]}"; do
       '{
         timestamp: $timestamp,
         loopId: $loop_id,
+        traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+        escalationTraceId: (if ($escalation_trace_id | length) > 0 then $escalation_trace_id else null end),
         category: "alert_dispatch",
         escalationCategory: $escalation_category,
         escalationTimestamp: (if ($escalation_timestamp | length) > 0 then $escalation_timestamp else null end),
@@ -700,6 +768,8 @@ for line in "${escalation_lines[@]}"; do
   append_telemetry "$(jq -cn \
     --arg timestamp "$(timestamp)" \
     --arg loop_id "$escalation_loop_id" \
+    --arg trace_id "$trace_id" \
+    --arg escalation_trace_id "$escalation_trace_id" \
     --arg escalation_category "$escalation_category" \
     --arg escalation_timestamp "$escalation_timestamp" \
     --arg event_severity "$event_severity" \
@@ -714,6 +784,8 @@ for line in "${escalation_lines[@]}"; do
     '{
       timestamp: $timestamp,
       loopId: $loop_id,
+      traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+      escalationTraceId: (if ($escalation_trace_id | length) > 0 then $escalation_trace_id else null end),
       category: "alert_dispatch",
       escalationCategory: $escalation_category,
       escalationTimestamp: (if ($escalation_timestamp | length) > 0 then $escalation_timestamp else null end),

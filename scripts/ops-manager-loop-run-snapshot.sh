@@ -8,6 +8,7 @@ Usage:
 
 Options:
   --run-id <id>   Override inferred run id in emitted snapshot.
+  --trace-id <id> Optional trace id propagated by ops manager transport.
   --pretty        Pretty-print JSON output.
   --help          Show this help message.
 USAGE
@@ -121,6 +122,7 @@ json_or_null_file() {
 repo=""
 loop_id=""
 requested_run_id=""
+trace_id=""
 pretty="0"
 
 while [[ $# -gt 0 ]]; do
@@ -135,6 +137,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-id)
       requested_run_id="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --pretty)
@@ -257,6 +263,7 @@ heartbeat_ref=$(file_ref_json "$repo" "$heartbeat_file")
 snapshot_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg emitted_at "$(timestamp)" \
+  --arg trace_id "$trace_id" \
   --arg repo_path "$repo" \
   --arg loop_id "$loop_id" \
   --arg run_id "$resolved_run_id" \
@@ -285,6 +292,7 @@ snapshot_json=$(jq -cn \
     schemaVersion: $schema_version,
     envelopeType: "loop_run_snapshot",
     emittedAt: $emitted_at,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
     source: {
       repoPath: $repo_path,
       loopId: $loop_id

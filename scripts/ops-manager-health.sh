@@ -12,6 +12,7 @@ Options:
   --sequence-state-file <path>                Optional sequence diagnostics JSON file.
   --transport-health-file <path>              Optional transport health JSON file.
   --intents-file <path>                       Optional intents JSONL file.
+  --trace-id <id>                             Optional trace id for this health projection.
   --transport <local|sprite_service>          Transport mode label (default: local)
   --threshold-profile <name>                  Optional applied threshold profile label.
   --ingest-status <success|failed>            Reconcile ingest result (default: success)
@@ -49,6 +50,7 @@ heartbeat_state_file=""
 sequence_state_file=""
 transport_health_file=""
 intents_file=""
+trace_id=""
 transport="local"
 threshold_profile=""
 ingest_status="success"
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --intents-file)
       intents_file="${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="${2:-}"
       shift 2
       ;;
     --transport)
@@ -382,6 +388,7 @@ fi
 health_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg updated_at "$now_iso" \
+  --arg trace_id "$trace_id" \
   --arg status "$health_status" \
   --arg transport "$transport" \
   --arg threshold_profile "$threshold_profile" \
@@ -408,6 +415,7 @@ health_json=$(jq -cn \
   '{
     schemaVersion: $schema_version,
     updatedAt: $updated_at,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
     status: $status,
     reasonCodes: $reason_codes,
     reasons: $reasons,

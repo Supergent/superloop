@@ -288,6 +288,7 @@ start_service() {
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-seq-baseline-1" \
     --from-start \
     --degraded-ingest-lag-seconds 999999 \
     --critical-ingest-lag-seconds 9999999
@@ -300,6 +301,7 @@ JSONL
   run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
     --repo "$repo" \
     --loop "$loop_id" \
+    --trace-id "trace-seq-drift-1" \
     --from-start \
     --degraded-ingest-lag-seconds 999999 \
     --critical-ingest-lag-seconds 9999999
@@ -309,6 +311,10 @@ JSONL
   run jq -r '.health.status' <<<"$drift_state_json"
   [ "$status" -eq 0 ]
   [ "$output" = "degraded" ]
+
+  run jq -r '.health.traceId' <<<"$drift_state_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-seq-drift-1" ]
 
   run jq -e '.health.reasonCodes | index("ordering_drift_detected") != null' <<<"$drift_state_json"
   [ "$status" -eq 0 ]
@@ -322,6 +328,10 @@ JSONL
   [ "$status" -eq 0 ]
   [ "$output" = "true" ]
 
+  run jq -r '.traceId' "$sequence_state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-seq-drift-1" ]
+
   run jq -e '.violations | index("snapshot_sequence_regression") != null' "$sequence_state_file"
   [ "$status" -eq 0 ]
 
@@ -334,6 +344,10 @@ JSONL
   run bash -lc "tail -n 1 '$escalations_file' | jq -r '.category'"
   [ "$status" -eq 0 ]
   [ "$output" = "health_degraded" ]
+
+  run bash -lc "tail -n 1 '$escalations_file' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-seq-drift-1" ]
 }
 
 @test "local and sprite_service transports produce equivalent ordering drift diagnostics" {

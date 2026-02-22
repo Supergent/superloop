@@ -64,7 +64,7 @@ JSONL
 @test "ops manager snapshot emits loop_run_snapshot envelope" {
   write_base_runtime_artifacts
 
-  run "$PROJECT_ROOT/scripts/ops-manager-loop-run-snapshot.sh" --repo "$TEMP_DIR" --loop "$LOOP_ID"
+  run "$PROJECT_ROOT/scripts/ops-manager-loop-run-snapshot.sh" --repo "$TEMP_DIR" --loop "$LOOP_ID" --trace-id "trace-snapshot-1"
   [ "$status" -eq 0 ]
 
   output_file="$TEMP_DIR/snapshot.json"
@@ -85,6 +85,10 @@ JSONL
   run jq -r '.run.runId' "$output_file"
   [ "$status" -eq 0 ]
   [ "$output" = "run-123" ]
+
+  run jq -r '.traceId' "$output_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-snapshot-1" ]
 
   run jq -r '.sequence.source' "$output_file"
   [ "$status" -eq 0 ]
@@ -127,7 +131,7 @@ JSON
 
   cursor_file="$TEMP_DIR/cursor.json"
 
-  run "$PROJECT_ROOT/scripts/ops-manager-poll-events.sh" --repo "$TEMP_DIR" --loop "$LOOP_ID" --cursor-file "$cursor_file"
+  run "$PROJECT_ROOT/scripts/ops-manager-poll-events.sh" --repo "$TEMP_DIR" --loop "$LOOP_ID" --cursor-file "$cursor_file" --trace-id "trace-events-1"
   [ "$status" -eq 0 ]
 
   line_count=$(printf '%s\n' "$output" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -144,6 +148,10 @@ JSON
   run bash -lc "head -n 1 '$TEMP_DIR/events.ndjson' | jq -r '.sequence.value'"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+
+  run bash -lc "head -n 1 '$TEMP_DIR/events.ndjson' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-events-1" ]
 
   run jq -r '.eventLineOffset' "$cursor_file"
   [ "$status" -eq 0 ]

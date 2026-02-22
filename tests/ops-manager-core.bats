@@ -191,8 +191,12 @@ JSON
   local loop_id="demo-loop"
   write_runtime_artifacts "$TEMP_DIR" "$loop_id"
 
-  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" --repo "$TEMP_DIR" --loop "$loop_id"
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" --repo "$TEMP_DIR" --loop "$loop_id" --trace-id "trace-reconcile-1"
   [ "$status" -eq 0 ]
+
+  run jq -r '.health.traceId' <<<"$output"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-reconcile-1" ]
 
   local cursor_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/cursor.json"
   local state_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/state.json"
@@ -207,12 +211,19 @@ JSON
 {"timestamp":"2026-02-22T10:00:25Z","event":"role_end","loop_id":"demo-loop","run_id":"run-123","iteration":2,"role":"planner","status":"ok","data":{"duration_ms":1200}}
 JSONL
 
-  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" --repo "$TEMP_DIR" --loop "$loop_id" --max-events 1
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" --repo "$TEMP_DIR" --loop "$loop_id" --max-events 1 --trace-id "trace-reconcile-2"
   [ "$status" -eq 0 ]
 
   run jq -r '.eventLineOffset' "$cursor_file"
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
+
+  local reconcile_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/reconcile.jsonl"
+  [ -f "$reconcile_telemetry" ]
+
+  run bash -lc "tail -n 1 '$reconcile_telemetry' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-reconcile-2" ]
 }
 
 @test "ops manager reconcile emits escalation artifact on divergence" {
@@ -273,7 +284,8 @@ EOF
   run env SUPERLOOP_BIN="$stub" "$PROJECT_ROOT/scripts/ops-manager-control.sh" \
     --repo "$TEMP_DIR" \
     --loop "$loop_id" \
-    --intent cancel
+    --intent cancel \
+    --trace-id "trace-control-local-1"
   [ "$status" -eq 0 ]
 
   local intents_file="$TEMP_DIR/.superloop/ops-manager/$loop_id/intents.jsonl"
@@ -287,6 +299,10 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "cancel" ]
 
+  run bash -lc "tail -n 1 '$intents_file' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-control-local-1" ]
+
   local control_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control.jsonl"
   local invocation_telemetry="$TEMP_DIR/.superloop/ops-manager/$loop_id/telemetry/control-invocations.jsonl"
   [ -f "$control_telemetry" ]
@@ -296,9 +312,17 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "confirmed" ]
 
+  run bash -lc "tail -n 1 '$control_telemetry' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-control-local-1" ]
+
   run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.execution.status'"
   [ "$status" -eq 0 ]
   [ "$output" = "succeeded" ]
+
+  run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-control-local-1" ]
 
   run bash -lc "tail -n 1 '$invocation_telemetry' | jq -r '.confirmation.status'"
   [ "$status" -eq 0 ]
