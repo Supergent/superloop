@@ -25,6 +25,11 @@ Operational procedures for manager core behavior across local and sprite-service
 - profile drift telemetry: `.superloop/ops-manager/<loop>/telemetry/profile-drift.jsonl`
 - alert dispatch telemetry: `.superloop/ops-manager/<loop>/telemetry/alerts.jsonl`
 - transport health: `.superloop/ops-manager/<loop>/telemetry/transport-health.json`
+- fleet registry: `.superloop/ops-manager/fleet/registry.v1.json`
+- fleet state: `.superloop/ops-manager/fleet/state.json`
+- fleet policy state: `.superloop/ops-manager/fleet/policy-state.json`
+- fleet reconcile telemetry: `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl`
+- fleet policy telemetry: `.superloop/ops-manager/fleet/telemetry/policy.jsonl`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
@@ -48,6 +53,87 @@ scripts/ops-manager-status.sh --repo /path/to/repo --loop <loop-id> --summary-wi
 Use this as the default first read during incidents; it summarizes lifecycle, health, reason codes, latest control/reconcile outcomes, and tuning guidance (`recommendedProfile`, `confidence`).
 Alert delivery fields are included under `alerts.dispatch` and `alerts.lastDelivery`.
 Total visibility fields are surfaced under `visibility.heartbeat`, `visibility.sequence`, `visibility.invocationAudit`, and `visibility.trace`.
+
+## Fleet Orchestration Workflow
+Use this flow when operating multiple loop runs as one fleet.
+
+1. Validate and inspect fleet registry:
+```bash
+scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
+```
+
+2. Execute fleet reconcile fan-out:
+```bash
+scripts/ops-manager-fleet-reconcile.sh \
+  --repo /path/to/repo \
+  --max-parallel 2 \
+  --deterministic-order \
+  --pretty
+```
+
+3. Evaluate advisory fleet policy:
+```bash
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+```
+
+4. Read operator fleet surface:
+```bash
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+```
+
+Expected fleet outputs:
+- fleet rollup status + reason codes (`success|partial_failure|failed`)
+- per-loop exception buckets (`reconcileFailures`, `criticalLoops`, `degradedLoops`, `skippedLoops`)
+- advisory candidate summary with suppression counts
+- trace-linked pointers to loop-level state/health/cursor/telemetry artifacts
+
+## Fleet Partial-Failure Triage
+Use when fleet status is `partial_failure` or `failed`.
+
+1. Check fleet exception buckets:
+```bash
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+```
+
+2. Confirm fleet reason codes:
+- `fleet_partial_failure`
+- `fleet_reconcile_failed`
+- `fleet_health_critical`
+- `fleet_health_degraded`
+- `fleet_loop_skipped`
+
+3. Drill into affected loop artifacts:
+```bash
+jq '.loops[] | select(.status != "success")' .superloop/ops-manager/fleet/state.json
+```
+
+4. Reconcile failing loops directly (loop-level replay/fallback):
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --from-start --pretty
+```
+
+5. Re-run fleet workflow after loop-level remediation:
+```bash
+scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+```
+
+## Fleet Transport Parity Checks
+Use when the same fleet includes both `local` and `sprite_service` loops.
+
+1. Verify each loop transport declaration in registry:
+```bash
+jq '.loops[] | {loopId, transport, service: .service}' .superloop/ops-manager/fleet/registry.v1.json
+```
+
+2. For `sprite_service` loops, verify service reachability and token env wiring before fleet reconcile.
+
+3. Run fleet reconcile and confirm both transport classes report expected health/status:
+```bash
+scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
+jq '.results[] | {loopId, transport, status, healthStatus, reasonCode}' .superloop/ops-manager/fleet/state.json
+```
 
 ## Total Visibility Triage
 Use this flow when the operator needs end-to-end visibility from runtime heartbeat to escalation delivery.
