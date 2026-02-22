@@ -21,13 +21,24 @@ A bash orchestration harness that runs AI coding agents in an iterative loop unt
 
 ## Quick Start
 
-**0. Install/sync constructor skill** (Claude Code + Codex):
+**0. Install/sync shared skill pack** (Claude Code + Codex):
 
 ```bash
 ./scripts/install-skill.sh
 ```
 
+By default this syncs all repo skills to both runtimes. Use `--skill <name>` to sync specific skills only.
 Use `./scripts/install-skill.sh --force` to overwrite without prompts.
+
+**0.5. Activate local dev stack** (recommended):
+
+```bash
+direnv allow
+scripts/dev-env-doctor.sh
+```
+
+This enables the default local stack (`devenv` + `direnv` + `portless`).
+Use `PORTLESS=0` to bypass proxy routing temporarily.
 
 **1. Create a spec**:
 
@@ -472,11 +483,10 @@ Still open (tracked in issue `#9`):
 Superloop includes a **liquid dashboard** - a contextual UI that adapts to loop state:
 
 ```bash
-cd packages/superloop-ui
-bun run dev
+scripts/dev-superloop-ui.sh
 ```
 
-Then open `http://localhost:3333/liquid` to see:
+Then open `http://superloop-ui.localhost:1355/liquid` to see:
 - **Automatic views** - UI morphs based on loop phase (planning, implementing, testing, reviewing)
 - **Gate status** - Real-time test/approval/checklist status
 - **Task progress** - Current phase tasks with completion tracking
@@ -574,7 +584,7 @@ superloop/
 │   ├── config.json        # Loop configuration
 │   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
 │   └── templates/         # Spec template
-└── .claude/skills/        # Claude Code skills (/construct-superloop, /superloop-view)
+└── .claude/skills/        # Shared skill sources synced to Claude Code and Codex
 ```
 
 ## Development
@@ -582,6 +592,12 @@ superloop/
 ```bash
 # Edit modules
 vim src/*.sh
+
+# Verify local dev environment
+scripts/dev-env-doctor.sh
+
+# Start Superloop UI dev lane (portless-aware)
+scripts/dev-superloop-ui.sh
 
 # Rebuild
 ./scripts/build.sh

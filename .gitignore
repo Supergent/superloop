@@ -8,9 +8,12 @@ prose/
 
 # Dependencies
 **/node_modules/
+.devenv/
+.direnv/
 
 # Lockfiles (optional - depends on preference)
 **/bun.lock
+devenv.lock
 
 # Turbo cache
 **/.turbo/
