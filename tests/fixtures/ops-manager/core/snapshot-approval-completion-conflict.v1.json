@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "v1",
+  "envelopeType": "loop_run_snapshot",
+  "emittedAt": "2026-02-22T10:05:00Z",
+  "source": {
+    "repoPath": "/tmp/demo",
+    "loopId": "demo-loop"
+  },
+  "run": {
+    "runId": "run-999",
+    "iteration": 5,
+    "status": "awaiting_approval",
+    "summary": {
+      "run_id": "run-999",
+      "iteration": 5,
+      "completion_ok": true,
+      "gates": {
+        "tests": "ok",
+        "validation": "ok",
+        "prerequisites": "ok",
+        "checklist": "ok",
+        "evidence": "ok",
+        "approval": "pending"
+      },
+      "stuck": {
+        "streak": 0,
+        "threshold": 3
+      }
+    }
+  },
+  "runtime": {
+    "superloopState": {
+      "active": true,
+      "loop_index": 0,
+      "iteration": 5,
+      "current_loop_id": "demo-loop",
+      "updated_at": "2026-02-22T10:05:00Z"
+    },
+    "activeRun": {
+      "repo": "/tmp/demo",
+      "pid": 1111,
+      "pgid": 1111,
+      "loop_id": "demo-loop",
+      "iteration": 5,
+      "stage": "loop_start",
+      "updated_at": "2026-02-22T10:05:00Z"
+    },
+    "approval": {
+      "status": "pending",
+      "loop_id": "demo-loop",
+      "run_id": "run-999",
+      "iteration": 5
+    }
+  },
+  "artifacts": {
+    "events": {
+      "path": ".superloop/loops/demo-loop/events.jsonl",
+      "exists": true,
+      "sizeBytes": 4096,
+      "lineCount": 40,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mtimeEpoch": 1763335500
+    },
+    "runSummary": {
+      "path": ".superloop/loops/demo-loop/run-summary.json",
+      "exists": true,
+      "sizeBytes": 2048,
+      "lineCount": 1,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mtimeEpoch": 1763335501
+    },
+    "state": {
+      "path": ".superloop/state.json",
+      "exists": true,
+      "sizeBytes": 128,
+      "lineCount": 1,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "mtimeEpoch": 1763335502
+    },
+    "activeRun": {
+      "path": ".superloop/active-run.json",
+      "exists": true,
+      "sizeBytes": 256,
+      "lineCount": 1,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "mtimeEpoch": 1763335503
+    },
+    "approval": {
+      "path": ".superloop/loops/demo-loop/approval.json",
+      "exists": true,
+      "sizeBytes": 512,
+      "lineCount": 1,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "mtimeEpoch": 1763335504
+    }
+  },
+  "cursor": {
+    "eventLineOffset": 40,
+    "eventLineCount": 40
+  },
+  "health": {
+    "eventCount": 40,
+    "lastEventAt": "2026-02-22T10:05:00Z",
+    "lastEventName": "approval_wait",
+    "lastSummaryAt": "2026-02-22T10:05:00Z",
+    "hasPendingApproval": true,
+    "gates": {
+      "tests": "ok",
+      "validation": "ok",
+      "prerequisites": "ok",
+      "checklist": "ok",
+      "evidence": "ok",
+      "approval": "pending"
+    },
+    "stuck": {
+      "streak": 0,
+      "threshold": 3
+    }
+  }
+}
