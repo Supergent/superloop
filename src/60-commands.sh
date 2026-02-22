@@ -39,6 +39,15 @@ init_cmd() {
         "require_on_completion": true,
         "artifacts": []
       },
+      "lifecycle": {
+        "enabled": true,
+        "require_on_completion": true,
+        "strict": true,
+        "block_on_failure": true,
+        "feature_prefix": "feat/",
+        "main_ref": "origin/main",
+        "no_fetch": false
+      },
       "approval": {
         "enabled": false,
         "require_on_completion": true
@@ -105,6 +114,16 @@ init_cmd() {
         "max_auto_recoveries_per_run": 3,
         "cooldown_seconds": 60,
         "on_unknown": "escalate"
+      },
+      "git": {
+        "commit_strategy": "never",
+        "pre_commit_commands": "",
+        "commit_message": {
+          "authoring": "llm",
+          "author_role": "reviewer",
+          "timeout_seconds": 120,
+          "max_subject_length": 72
+        }
       },
       "roles": {
         "planner": {"runner": "codex"},
@@ -1582,6 +1601,9 @@ run_cmd() {
     local checklist_status="$loop_dir/checklist-status.json"
     local checklist_remaining="$loop_dir/checklist-remaining.md"
     local evidence_file="$loop_dir/evidence.json"
+    local lifecycle_status_file="$loop_dir/lifecycle-status.json"
+    local lifecycle_audit_file="$loop_dir/lifecycle-audit.json"
+    local lifecycle_audit_output="$loop_dir/lifecycle-audit.txt"
     local reviewer_packet="$loop_dir/reviewer-packet.md"
     local summary_file="$loop_dir/gate-summary.txt"
     local events_file="$loop_dir/events.jsonl"
@@ -1814,6 +1836,51 @@ run_cmd() {
     local evidence_require
     evidence_require=$(jq -r '.evidence.require_on_completion // false' <<<"$loop_json")
 
+    local lifecycle_enabled
+    lifecycle_enabled=$(jq -r '.lifecycle.enabled // true' <<<"$loop_json")
+    local lifecycle_require
+    lifecycle_require=$(jq -r '.lifecycle.require_on_completion // true' <<<"$loop_json")
+    local lifecycle_strict
+    lifecycle_strict=$(jq -r '.lifecycle.strict // true' <<<"$loop_json")
+    local lifecycle_block_on_failure
+    lifecycle_block_on_failure=$(jq -r '.lifecycle.block_on_failure // true' <<<"$loop_json")
+    local lifecycle_feature_prefix
+    lifecycle_feature_prefix=$(jq -r '.lifecycle.feature_prefix // "feat/"' <<<"$loop_json")
+    local lifecycle_main_ref
+    lifecycle_main_ref=$(jq -r '.lifecycle.main_ref // "origin/main"' <<<"$loop_json")
+    local lifecycle_no_fetch
+    lifecycle_no_fetch=$(jq -r '.lifecycle.no_fetch // false' <<<"$loop_json")
+
+    if [[ "$lifecycle_enabled" != "true" ]]; then
+      die "loop '$loop_id': lifecycle.enabled must be true. Lifecycle audit is mandatory for run."
+    fi
+    if [[ "$lifecycle_require" != "true" ]]; then
+      die "loop '$loop_id': lifecycle.require_on_completion must be true. Lifecycle gate is mandatory for completion."
+    fi
+    if [[ "$lifecycle_strict" != "true" ]]; then
+      die "loop '$loop_id': lifecycle.strict must be true. Deterministic lifecycle gating requires strict mode."
+    fi
+
+    if ! git -C "$repo" rev-parse --verify "${lifecycle_main_ref}^{commit}" >/dev/null 2>&1; then
+      if git -C "$repo" rev-parse --verify "main^{commit}" >/dev/null 2>&1; then
+        lifecycle_main_ref="main"
+      elif git -C "$repo" rev-parse --verify "master^{commit}" >/dev/null 2>&1; then
+        lifecycle_main_ref="master"
+      elif git -C "$repo" rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then
+        lifecycle_main_ref="origin/main"
+      elif git -C "$repo" rev-parse --verify "origin/master^{commit}" >/dev/null 2>&1; then
+        lifecycle_main_ref="origin/master"
+      else
+        local current_branch_ref
+        current_branch_ref=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ -n "$current_branch_ref" && "$current_branch_ref" != "HEAD" ]] && git -C "$repo" rev-parse --verify "${current_branch_ref}^{commit}" >/dev/null 2>&1; then
+          lifecycle_main_ref="$current_branch_ref"
+        else
+          die "loop '$loop_id': lifecycle.main_ref '$lifecycle_main_ref' is not a valid commit, and no fallback main ref was found."
+        fi
+      fi
+    fi
+
     local approval_enabled
     approval_enabled=$(jq -r '.approval.enabled // false' <<<"$loop_json")
     local approval_require
@@ -1989,6 +2056,91 @@ run_cmd() {
     commit_strategy=$(jq -r '.git.commit_strategy // "never"' <<<"$loop_json")
     local pre_commit_commands
     pre_commit_commands=$(jq -r '.git.pre_commit_commands // ""' <<<"$loop_json")
+    local commit_message_authoring
+    commit_message_authoring=$(jq -r '.git.commit_message.authoring // "llm"' <<<"$loop_json")
+    local commit_message_author_role
+    commit_message_author_role=$(jq -r '.git.commit_message.author_role // "reviewer"' <<<"$loop_json")
+    local commit_message_timeout_seconds
+    commit_message_timeout_seconds=$(jq -r '.git.commit_message.timeout_seconds // 120' <<<"$loop_json")
+    local commit_message_max_subject_length
+    commit_message_max_subject_length=$(jq -r '.git.commit_message.max_subject_length // 72' <<<"$loop_json")
+
+    local commit_message_runner_name=""
+    local commit_message_runner_config=""
+    local -a commit_message_runner_command=()
+    local -a commit_message_runner_args=()
+    local commit_message_runner_prompt_mode="stdin"
+    local commit_message_runner_thinking_env=""
+
+    commit_message_timeout_seconds=$(rlms_safe_int "$commit_message_timeout_seconds" 120)
+    commit_message_max_subject_length=$(rlms_safe_int "$commit_message_max_subject_length" 72)
+    if [[ "$commit_message_timeout_seconds" -lt 30 ]]; then
+      commit_message_timeout_seconds=30
+    fi
+    if [[ "$commit_message_max_subject_length" -lt 40 ]]; then
+      commit_message_max_subject_length=40
+    fi
+
+    if [[ "$commit_strategy" != "never" ]]; then
+      if [[ "$commit_message_authoring" != "llm" ]]; then
+        die "loop '$loop_id': git.commit_message.authoring must be 'llm' when git.commit_strategy is not 'never'."
+      fi
+
+      case "$commit_message_author_role" in
+        planner|implementer|tester|reviewer) ;;
+        *)
+          die "loop '$loop_id': git.commit_message.author_role must be one of planner|implementer|tester|reviewer."
+          ;;
+      esac
+
+      commit_message_runner_name=$(get_role_runner_name "$commit_message_author_role")
+      commit_message_runner_config=$(get_runner_for_role "$commit_message_author_role" "$commit_message_runner_name")
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && commit_message_runner_command+=("$line")
+      done < <(jq -r '.command[]?' <<<"$commit_message_runner_config")
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && commit_message_runner_args+=("$line")
+      done < <(jq -r '.args[]?' <<<"$commit_message_runner_config")
+      commit_message_runner_prompt_mode=$(jq -r '.prompt_mode // "stdin"' <<<"$commit_message_runner_config")
+      if [[ "$commit_message_runner_prompt_mode" != "stdin" && "$commit_message_runner_prompt_mode" != "file" ]]; then
+        commit_message_runner_prompt_mode="stdin"
+      fi
+      if [[ ${#commit_message_runner_command[@]} -eq 0 ]]; then
+        die "loop '$loop_id': unable to resolve runner command for git.commit_message.author_role '$commit_message_author_role'."
+      fi
+      if [[ "${dry_run:-0}" -ne 1 ]]; then
+        need_exec "${commit_message_runner_command[0]}"
+      fi
+
+      local commit_message_role_model
+      commit_message_role_model=$(get_role_model "$commit_message_author_role")
+      local commit_message_role_thinking
+      commit_message_role_thinking=$(get_role_thinking "$commit_message_author_role")
+      local commit_message_runner_type="unknown"
+      if [[ ${#commit_message_runner_command[@]} -gt 0 ]]; then
+        commit_message_runner_type=$(detect_runner_type_from_cmd "${commit_message_runner_command[0]}")
+      fi
+
+      if [[ -n "$commit_message_role_model" ]]; then
+        case "$commit_message_runner_type" in
+          codex)
+            commit_message_runner_args+=("-m" "$commit_message_role_model")
+            ;;
+          claude)
+            commit_message_runner_args+=("--model" "$commit_message_role_model")
+            ;;
+        esac
+      fi
+
+      local commit_message_thinking_flags
+      commit_message_thinking_flags=$(get_thinking_flags "$commit_message_runner_type" "$commit_message_role_thinking")
+      if [[ -n "$commit_message_thinking_flags" ]]; then
+        while IFS= read -r flag; do
+          [[ -n "$flag" ]] && commit_message_runner_args+=("$flag")
+        done < <(echo "$commit_message_thinking_flags")
+      fi
+      commit_message_runner_thinking_env=$(get_thinking_env "$commit_message_runner_type" "$commit_message_role_thinking")
+    fi
 
     # Recovery configuration
     local recovery_enabled
@@ -2033,7 +2185,7 @@ run_cmd() {
         fi
       fi
 
-      local tests_status validation_status prerequisites_status checklist_status_text evidence_status stuck_value
+      local tests_status validation_status prerequisites_status checklist_status_text evidence_status lifecycle_status stuck_value
       tests_status=$(read_test_status_summary "$test_status")
       validation_status=$(read_validation_status_summary "$validation_status_file")
       prerequisites_status=$(read_prerequisites_status_summary "$prerequisites_status_file")
@@ -2047,6 +2199,7 @@ run_cmd() {
       else
         evidence_status="skipped"
       fi
+      lifecycle_status=$(read_lifecycle_status_summary "$lifecycle_status_file")
       stuck_value="n/a"
       if [[ "$stuck_enabled" == "true" ]]; then
         local stuck_streak_read
@@ -2059,7 +2212,7 @@ run_cmd() {
         approval_status=$(read_approval_status "$approval_file")
       fi
 
-      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status validation=$validation_status prerequisites=$prerequisites_status checklist=$checklist_status_text evidence=$evidence_status approval=$approval_status stuck=$stuck_value"
+      echo "Dry-run summary ($loop_id): promise=$promise_status tests=$tests_status validation=$validation_status prerequisites=$prerequisites_status checklist=$checklist_status_text evidence=$evidence_status lifecycle=$lifecycle_status approval=$approval_status stuck=$stuck_value"
       if [[ -n "$target_loop_id" && "$loop_id" == "$target_loop_id" ]]; then
         return 0
       fi
@@ -2090,6 +2243,15 @@ run_cmd() {
       --argjson delegation_retry_backoff_max_seconds "$delegation_retry_backoff_max_seconds" \
       --argjson rlms_enabled "$(if [[ "$rlms_enabled" == "true" ]]; then echo true; else echo false; fi)" \
       --arg rlms_mode "$rlms_mode" \
+      --arg lifecycle_feature_prefix "$lifecycle_feature_prefix" \
+      --arg lifecycle_main_ref "$lifecycle_main_ref" \
+      --arg lifecycle_no_fetch "$lifecycle_no_fetch" \
+      --arg lifecycle_strict "$lifecycle_strict" \
+      --arg lifecycle_block_on_failure "$lifecycle_block_on_failure" \
+      --arg commit_strategy "$commit_strategy" \
+      --arg commit_message_authoring "$commit_message_authoring" \
+      --arg commit_message_author_role "$commit_message_author_role" \
+      --argjson commit_message_timeout "$commit_message_timeout_seconds" \
       '{
         spec_file: $spec_file,
         max_iterations: $max_iterations,
@@ -2116,6 +2278,21 @@ run_cmd() {
         rlms: {
           enabled: $rlms_enabled,
           mode: $rlms_mode
+        },
+        lifecycle: {
+          feature_prefix: $lifecycle_feature_prefix,
+          main_ref: $lifecycle_main_ref,
+          no_fetch: $lifecycle_no_fetch,
+          strict: $lifecycle_strict,
+          block_on_failure: $lifecycle_block_on_failure
+        },
+        git: {
+          commit_strategy: $commit_strategy,
+          commit_message: {
+            authoring: $commit_message_authoring,
+            author_role: $commit_message_author_role,
+            timeout_seconds: $commit_message_timeout
+          }
         }
       }')
     log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_start" "$loop_start_data"
@@ -2139,7 +2316,7 @@ run_cmd() {
         return 0
       elif [[ "$approval_state" == "approved" ]]; then
         local approval_run_id approval_iteration approval_promise_text approval_promise_matched
-        local approval_tests approval_validation approval_prerequisites approval_checklist approval_evidence approval_started_at approval_ended_at
+        local approval_tests approval_validation approval_prerequisites approval_checklist approval_evidence approval_lifecycle approval_started_at approval_ended_at
         local approval_decision_by approval_decision_note approval_decision_at
         approval_run_id=$(jq -r '.run_id // ""' "$approval_file")
         approval_iteration=$(jq -r '.iteration // 0' "$approval_file")
@@ -2150,6 +2327,7 @@ run_cmd() {
         approval_prerequisites=$(jq -r '.candidate.gates.prerequisites // "unknown"' "$approval_file")
         approval_checklist=$(jq -r '.candidate.gates.checklist // "unknown"' "$approval_file")
         approval_evidence=$(jq -r '.candidate.gates.evidence // "unknown"' "$approval_file")
+        approval_lifecycle=$(jq -r '.candidate.gates.lifecycle // "unknown"' "$approval_file")
         approval_started_at=$(jq -r '.iteration_started_at // ""' "$approval_file")
         approval_ended_at=$(jq -r '.iteration_ended_at // ""' "$approval_file")
         approval_decision_by=$(jq -r '.decision.by // ""' "$approval_file")
@@ -2178,6 +2356,7 @@ run_cmd() {
         local prerequisites_status="$approval_prerequisites"
         local checklist_status_text="$approval_checklist"
         local evidence_status="$approval_evidence"
+        local lifecycle_status="$approval_lifecycle"
         local approval_status="approved"
 
         local stuck_streak="0"
@@ -2189,8 +2368,8 @@ run_cmd() {
           stuck_value="${stuck_streak}/${stuck_threshold}"
         fi
 
-        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
-        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+        write_iteration_notes "$notes_file" "$loop_id" "$approval_iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$lifecycle_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$stuck_value" "$approval_status"
 
         local approval_consume_data
         approval_consume_data=$(jq -n \
@@ -2202,7 +2381,7 @@ run_cmd() {
         log_event "$events_file" "$loop_id" "$approval_iteration" "$approval_run_id" "approval_consumed" "$approval_consume_data"
 
         local completion_ok=1
-        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+        append_run_summary "$run_summary_file" "$repo" "$loop_id" "$approval_run_id" "$approval_iteration" "$approval_started_at" "$approval_ended_at" "$promise_matched" "$completion_promise" "$approval_promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
         write_timeline "$run_summary_file" "$timeline_file"
 
         local loop_complete_data
@@ -2251,6 +2430,13 @@ run_cmd() {
       local iteration_start_data
       iteration_start_data=$(jq -n --arg started_at "$iteration_started_at" '{started_at: $started_at}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_start" "$iteration_start_data"
+
+      local repo_git_branch=""
+      repo_git_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      if [[ "$repo_git_branch" == "HEAD" ]]; then
+        repo_git_branch=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || echo "detached")
+      fi
+      local repo_git_worktree="$repo"
 
       # Setup error logging for this iteration
       local error_log="$log_dir/errors.log"
@@ -4904,7 +5090,9 @@ EOF
           "$rlms_result_for_prompt" \
           "$rlms_summary_for_prompt" \
           "$rlms_status_for_prompt" \
-          "$role_delegation_status_for_prompt" 2>> "$error_log"; then
+          "$role_delegation_status_for_prompt" \
+          "$repo_git_branch" \
+          "$repo_git_worktree" 2>> "$error_log"; then
           echo "[$(timestamp)] ERROR: build_role_prompt failed for role: $role" >> "$error_log"
           echo "Error: Failed to build prompt for role '$role' in iteration $iteration" >&2
           echo "See $error_log for details" >&2
@@ -5460,6 +5648,98 @@ EOF
         evidence_gate_ok=$evidence_ok
       fi
 
+      local lifecycle_status="skipped"
+      local lifecycle_ok=1
+      local lifecycle_gate_ok=1
+      local lifecycle_start_data
+      lifecycle_start_data=$(jq -n \
+        --arg feature_prefix "$lifecycle_feature_prefix" \
+        --arg main_ref "$lifecycle_main_ref" \
+        --arg strict "$lifecycle_strict" \
+        --arg no_fetch "$lifecycle_no_fetch" \
+        --arg require_on_completion "$lifecycle_require" \
+        --arg block_on_failure "$lifecycle_block_on_failure" \
+        '{feature_prefix: $feature_prefix, main_ref: $main_ref, strict: $strict, no_fetch: $no_fetch, require_on_completion: $require_on_completion, block_on_failure: $block_on_failure}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "lifecycle_start" "$lifecycle_start_data"
+
+      if [[ "$lifecycle_enabled" == "true" ]]; then
+        local lifecycle_rc=0
+        local lifecycle_strict_mode="0"
+        local lifecycle_no_fetch_mode="0"
+        if [[ "$lifecycle_strict" == "true" ]]; then
+          lifecycle_strict_mode="1"
+        fi
+        if [[ "$lifecycle_no_fetch" == "true" ]]; then
+          lifecycle_no_fetch_mode="1"
+        fi
+
+        set +e
+        lifecycle_audit_cmd "$repo" "$lifecycle_feature_prefix" "$lifecycle_main_ref" "$lifecycle_strict_mode" "$lifecycle_audit_file" "$lifecycle_no_fetch_mode" > "$lifecycle_audit_output" 2>&1
+        lifecycle_rc=$?
+        set -e
+
+        if [[ $lifecycle_rc -eq 0 ]]; then
+          lifecycle_status="ok"
+          lifecycle_ok=1
+        else
+          lifecycle_status="failed"
+          lifecycle_ok=0
+        fi
+      fi
+
+      local lifecycle_ok_json="false"
+      if [[ $lifecycle_ok -eq 1 ]]; then
+        lifecycle_ok_json="true"
+      fi
+      local lifecycle_threshold_failures=0
+      local lifecycle_report_status=""
+      if [[ -f "$lifecycle_audit_file" ]]; then
+        lifecycle_threshold_failures=$(jq -r '.counts.threshold_failures // 0' "$lifecycle_audit_file" 2>/dev/null || echo "0")
+        lifecycle_report_status=$(jq -r '.status // ""' "$lifecycle_audit_file" 2>/dev/null || echo "")
+      fi
+      if [[ "$lifecycle_status" == "ok" && "$lifecycle_report_status" == "fail" ]]; then
+        lifecycle_status="failed"
+        lifecycle_ok=0
+        lifecycle_ok_json="false"
+      fi
+
+      jq -n \
+        --arg generated_at "$(timestamp)" \
+        --arg status "$lifecycle_status" \
+        --argjson ok "$lifecycle_ok_json" \
+        --arg main_ref "$lifecycle_main_ref" \
+        --arg feature_prefix "$lifecycle_feature_prefix" \
+        --arg strict "$lifecycle_strict" \
+        --arg no_fetch "$lifecycle_no_fetch" \
+        --arg audit_file "${lifecycle_audit_file#$repo/}" \
+        --arg output_file "${lifecycle_audit_output#$repo/}" \
+        --argjson threshold_failures "$lifecycle_threshold_failures" \
+        '{
+          generated_at: $generated_at,
+          status: $status,
+          ok: $ok,
+          main_ref: $main_ref,
+          feature_prefix: $feature_prefix,
+          strict: $strict,
+          no_fetch: $no_fetch,
+          threshold_failures: $threshold_failures,
+          audit_file: $audit_file,
+          output_file: $output_file
+        }' > "$lifecycle_status_file"
+
+      local lifecycle_end_data
+      lifecycle_end_data=$(jq -n \
+        --arg status "$lifecycle_status" \
+        --argjson ok "$lifecycle_ok_json" \
+        --arg audit_file "${lifecycle_audit_file#$repo/}" \
+        --arg output_file "${lifecycle_audit_output#$repo/}" \
+        '{status: $status, ok: $ok, audit_file: $audit_file, output_file: $output_file}')
+      log_event "$events_file" "$loop_id" "$iteration" "$run_id" "lifecycle_end" "$lifecycle_end_data"
+
+      if [[ "$lifecycle_enabled" == "true" && "$lifecycle_require" == "true" ]]; then
+        lifecycle_gate_ok=$lifecycle_ok
+      fi
+
       local progress_code_sig_prev=""
       local progress_test_sig_prev=""
       local progress_code_sig_current=""
@@ -5499,7 +5779,7 @@ EOF
       fi
 
       local candidate_ok=0
-      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $validation_gate_ok -eq 1 && $prerequisites_gate_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 ]]; then
+      if [[ "$promise_matched" == "true" && $tests_ok -eq 1 && $validation_gate_ok -eq 1 && $prerequisites_gate_ok -eq 1 && $checklist_ok -eq 1 && $evidence_gate_ok -eq 1 && $lifecycle_gate_ok -eq 1 ]]; then
         candidate_ok=1
       fi
 
@@ -5515,6 +5795,30 @@ EOF
         completion_ok=1
       fi
 
+      if [[ "$lifecycle_enabled" == "true" && $lifecycle_ok -eq 0 && "$lifecycle_block_on_failure" == "true" ]]; then
+        local lifecycle_stuck_value="n/a"
+        if [[ "$stuck_enabled" == "true" ]]; then
+          local lifecycle_stuck_streak
+          lifecycle_stuck_streak=$(read_stuck_streak "$loop_dir/stuck.json")
+          lifecycle_stuck_value="${lifecycle_stuck_streak}/${stuck_threshold}"
+        fi
+        write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$lifecycle_status" "0" "$stuck_threshold" "$approval_status"
+        write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$lifecycle_stuck_value" "$approval_status"
+        local lifecycle_stop_data
+        lifecycle_stop_data=$(jq -n \
+          --arg reason "lifecycle_gate_failed" \
+          --arg status "$lifecycle_status" \
+          --arg audit_file "${lifecycle_audit_file#$repo/}" \
+          --arg output_file "${lifecycle_audit_output#$repo/}" \
+          '{reason: $reason, status: $status, audit_file: $audit_file, output_file: $output_file}')
+        log_event "$events_file" "$loop_id" "$iteration" "$run_id" "loop_stop" "$lifecycle_stop_data"
+        if [[ "${dry_run:-0}" -ne 1 ]]; then
+          write_state "$state_file" "$i" "$iteration" "$loop_id" "false"
+        fi
+        echo "Lifecycle gate failed for loop '$loop_id'. See ${lifecycle_audit_output#$repo/} for details."
+        return 1
+      fi
+
       local stuck_streak="0"
       local stuck_triggered="false"
       if [[ $completion_ok -eq 0 && "$stuck_enabled" == "true" && $candidate_ok -eq 0 ]]; then
@@ -5527,12 +5831,12 @@ EOF
         if [[ $stuck_rc -eq 0 ]]; then
           stuck_streak="$stuck_result"
           if [[ "$no_progress" == "true" ]]; then
-            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+            write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$lifecycle_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
             local stuck_value="n/a"
             if [[ "$stuck_enabled" == "true" ]]; then
               stuck_value="${stuck_streak}/${stuck_threshold}"
             fi
-            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+            write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$stuck_value" "$approval_status"
             local no_progress_data
             no_progress_data=$(jq -n \
               --arg reason "checklist_remaining_no_change" \
@@ -5553,12 +5857,12 @@ EOF
         elif [[ $stuck_rc -eq 2 ]]; then
           stuck_streak="$stuck_result"
           stuck_triggered="true"
-          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+          write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$lifecycle_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
           local stuck_value="n/a"
           if [[ "$stuck_enabled" == "true" ]]; then
             stuck_value="${stuck_streak}/${stuck_threshold}"
           fi
-          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+          write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$stuck_value" "$approval_status"
           local stuck_data
           stuck_data=$(jq -n \
             --argjson streak "$stuck_streak" \
@@ -5591,12 +5895,12 @@ EOF
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "stuck_checked" "$stuck_data"
       fi
 
-      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
+      write_iteration_notes "$notes_file" "$loop_id" "$iteration" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$tests_mode" "$evidence_status" "$lifecycle_status" "$stuck_streak" "$stuck_threshold" "$approval_status"
       local stuck_value="n/a"
       if [[ "$stuck_enabled" == "true" ]]; then
         stuck_value="${stuck_streak}/${stuck_threshold}"
       fi
-      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$stuck_value" "$approval_status"
+      write_gate_summary "$summary_file" "$promise_matched" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$stuck_value" "$approval_status"
       local gates_data
       gates_data=$(jq -n \
         --argjson promise "$promise_matched_json" \
@@ -5605,9 +5909,10 @@ EOF
         --arg prerequisites "$prerequisites_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
+        --arg lifecycle "$lifecycle_status" \
         --arg approval "$approval_status" \
         --arg stuck "$stuck_value" \
-        '{promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, approval: $approval, stuck: $stuck}')
+        '{promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, lifecycle: $lifecycle, approval: $approval, stuck: $stuck}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "gates_evaluated" "$gates_data"
 
       local iteration_ended_at
@@ -5627,16 +5932,41 @@ EOF
         --arg prerequisites "$prerequisites_status" \
         --arg checklist "$checklist_status_text" \
         --arg evidence "$evidence_status" \
+        --arg lifecycle "$lifecycle_status" \
         --arg approval "$approval_status" \
-        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, approval: $approval}')
+        '{started_at: $started_at, ended_at: $ended_at, completion: $completion, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, lifecycle: $lifecycle, approval: $approval}')
       log_event "$events_file" "$loop_id" "$iteration" "$run_id" "iteration_end" "$iteration_end_data"
 
       # Auto-commit iteration changes if configured
       if [[ "$commit_strategy" != "never" ]]; then
-        auto_commit_iteration "$repo" "$loop_id" "$iteration" "$tests_status" "$commit_strategy" "$events_file" "$run_id" "$pre_commit_commands" || true
+        local commit_message_runner_command_json="[]"
+        if [[ ${#commit_message_runner_command[@]} -gt 0 ]]; then
+          commit_message_runner_command_json=$(printf '%s\n' "${commit_message_runner_command[@]}" | jq -R . | jq -s .)
+        fi
+        local commit_message_runner_args_json="[]"
+        if [[ ${#commit_message_runner_args[@]} -gt 0 ]]; then
+          commit_message_runner_args_json=$(printf '%s\n' "${commit_message_runner_args[@]}" | jq -R . | jq -s .)
+        fi
+        auto_commit_iteration \
+          "$repo" \
+          "$loop_id" \
+          "$iteration" \
+          "$tests_status" \
+          "$commit_strategy" \
+          "$events_file" \
+          "$run_id" \
+          "$pre_commit_commands" \
+          "$commit_message_authoring" \
+          "$commit_message_author_role" \
+          "$commit_message_timeout_seconds" \
+          "$commit_message_max_subject_length" \
+          "$commit_message_runner_prompt_mode" \
+          "$commit_message_runner_command_json" \
+          "$commit_message_runner_args_json" \
+          "$commit_message_runner_thinking_env" || true
       fi
 
-      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
+      append_run_summary "$run_summary_file" "$repo" "$loop_id" "$run_id" "$iteration" "$iteration_started_at" "$iteration_ended_at" "$promise_matched" "$completion_promise" "$promise_text" "$tests_mode" "$tests_status" "$validation_status" "$prerequisites_status" "$checklist_status_text" "$evidence_status" "$lifecycle_status" "$approval_status" "$stuck_streak" "$stuck_threshold" "$completion_ok" "$loop_dir" "$events_file"
       write_timeline "$run_summary_file" "$timeline_file"
 
       if [[ $approval_required -eq 1 && $candidate_ok -eq 1 ]]; then
@@ -5655,6 +5985,7 @@ EOF
           "$prerequisites_status" \
           "$checklist_status_text" \
           "$evidence_status" \
+          "$lifecycle_status" \
           "${summary_file#$repo/}" \
           "${evidence_file#$repo/}" \
           "${reviewer_report#$repo/}" \
@@ -5671,7 +6002,8 @@ EOF
           --arg prerequisites "$prerequisites_status" \
           --arg checklist "$checklist_status_text" \
           --arg evidence "$evidence_status" \
-          '{approval_file: $approval_file, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence}')
+          --arg lifecycle "$lifecycle_status" \
+          '{approval_file: $approval_file, promise: $promise, tests: $tests, validation: $validation, prerequisites: $prerequisites, checklist: $checklist, evidence: $evidence, lifecycle: $lifecycle}')
         log_event "$events_file" "$loop_id" "$iteration" "$run_id" "approval_requested" "$approval_request_data"
 
         echo "Approval required for loop '$loop_id'. Run: superloop.sh approve --repo $repo --loop $loop_id"

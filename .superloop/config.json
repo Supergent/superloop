@@ -33,6 +33,15 @@
         "require_on_completion": false,
         "artifacts": []
       },
+      "lifecycle": {
+        "enabled": true,
+        "require_on_completion": true,
+        "strict": true,
+        "block_on_failure": true,
+        "feature_prefix": "feat/",
+        "main_ref": "origin/main",
+        "no_fetch": false
+      },
       "approval": {
         "enabled": false,
         "require_on_completion": false
@@ -83,6 +92,16 @@
           "force_on": false,
           "force_off": false,
           "fail_mode": "warn_and_continue"
+        }
+      },
+      "git": {
+        "commit_strategy": "never",
+        "pre_commit_commands": "",
+        "commit_message": {
+          "authoring": "llm",
+          "author_role": "reviewer",
+          "timeout_seconds": 120,
+          "max_subject_length": 72
         }
       },
       "roles": {

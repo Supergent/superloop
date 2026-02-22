@@ -372,6 +372,15 @@ Understanding config helps you set appropriate values:
       "require_on_completion": false,
       "artifacts": []
     },
+    "lifecycle": {
+      "enabled": true,
+      "require_on_completion": true,
+      "strict": true,
+      "block_on_failure": true,
+      "feature_prefix": "feat/",
+      "main_ref": "origin/main",
+      "no_fetch": false
+    },
     "approval": {
       "enabled": false,
       "require_on_completion": false
@@ -394,6 +403,16 @@ Understanding config helps you set appropriate values:
       "threshold": 3,
       "action": "report_and_stop",
       "ignore": []
+    },
+    "git": {
+      "commit_strategy": "per_iteration",
+      "pre_commit_commands": "",
+      "commit_message": {
+        "authoring": "llm",
+        "author_role": "reviewer",
+        "timeout_seconds": 120,
+        "max_subject_length": 72
+      }
     },
 
     "delegation": {
@@ -440,6 +459,8 @@ Understanding config helps you set appropriate values:
 | `tests.mode` | When tests run | `on_promise` (when Reviewer ready) or `every` (each iteration) |
 | `tests.commands` | Test commands | Must exit 0 on success. Required when `tests.mode` is not `disabled`. |
 | `validation.require_on_completion` | Validation gate strictness | Set `true` for build-quality loops so completion cannot skip validation. |
+| `lifecycle.*` | Branch/worktree lifecycle gate | Keep `enabled=true`, `require_on_completion=true`, and `strict=true` for deterministic cleanup enforcement. |
+| `git.commit_message.*` | Auto-commit message policy | When `git.commit_strategy != never`, require `authoring=llm` and set an explicit `author_role`. |
 | `timeouts.*` | Role time limits | Increase for complex features |
 | `stuck.threshold` | Stall detection | Lower = fail faster on stuck loops |
 | `delegation.dispatch_mode` | Child dispatch shape | `serial` for deterministic narrow work, `parallel` for bounded fan-out |
@@ -1013,6 +1034,8 @@ Hard requirements when constructing loops:
 - Include an `automated_checklist.mapping_file` path when validation is enabled, and ensure the file exists.
 - If delivery is phase-gated (PLAN/PHASE artifacts), configure `prerequisites.enabled: true` with concrete checks so execution cannot skip readiness artifacts.
   - Prefer check types: `markdown_checklist_complete`, `file_regex_absent` (placeholder detection), and `file_contains_all` (required content anchors).
+- Configure `lifecycle` as mandatory and strict: `enabled: true`, `require_on_completion: true`, `strict: true`, and a concrete `main_ref`.
+- If `git.commit_strategy` is not `never`, require `git.commit_message.authoring: \"llm\"` and set a valid `author_role`.
 
 ```json
 {
@@ -1064,6 +1087,15 @@ Hard requirements when constructing loops:
         "require_on_completion": false,
         "artifacts": []
       },
+      "lifecycle": {
+        "enabled": true,
+        "require_on_completion": true,
+        "strict": true,
+        "block_on_failure": true,
+        "feature_prefix": "feat/",
+        "main_ref": "origin/main",
+        "no_fetch": false
+      },
       "approval": {
         "enabled": false,
         "require_on_completion": false
@@ -1084,6 +1116,16 @@ Hard requirements when constructing loops:
         "threshold": 3,
         "action": "report_and_stop",
         "ignore": []
+      },
+      "git": {
+        "commit_strategy": "never",
+        "pre_commit_commands": "",
+        "commit_message": {
+          "authoring": "llm",
+          "author_role": "reviewer",
+          "timeout_seconds": 120,
+          "max_subject_length": 72
+        }
       },
       "delegation": {
         "enabled": false,

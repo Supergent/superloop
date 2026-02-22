@@ -11,6 +11,8 @@ STATIC_ERR_DUPLICATE_LOOP_ID="DUPLICATE_LOOP_ID"
 STATIC_ERR_RLMS_INVALID="RLMS_INVALID"
 STATIC_ERR_TESTS_CONFIG_INVALID="TESTS_CONFIG_INVALID"
 STATIC_ERR_PREREQUISITES_CONFIG_INVALID="PREREQUISITES_CONFIG_INVALID"
+STATIC_ERR_LIFECYCLE_CONFIG_INVALID="LIFECYCLE_CONFIG_INVALID"
+STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID="GIT_COMMIT_MESSAGE_INVALID"
 STATIC_ERR_DEV_ENV_CONTRACT_INVALID="DEV_ENV_CONTRACT_INVALID"
 
 # Arrays to collect errors and warnings (initialized in validate_static)
@@ -449,6 +451,122 @@ check_prerequisites_gate_config() {
   return 0
 }
 
+# Ensure lifecycle gate configuration is deterministic and mandatory.
+# Usage: check_lifecycle_gate_config <loop_json> <location_prefix>
+check_lifecycle_gate_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local enabled
+  enabled=$(jq -r '.lifecycle.enabled // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  local require_on_completion
+  require_on_completion=$(jq -r '.lifecycle.require_on_completion // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  local strict
+  strict=$(jq -r '.lifecycle.strict // true' <<<"$loop_json" 2>/dev/null || echo "true")
+  local feature_prefix
+  feature_prefix=$(jq -r '.lifecycle.feature_prefix // "feat/"' <<<"$loop_json" 2>/dev/null || echo "feat/")
+  local main_ref
+  main_ref=$(jq -r '.lifecycle.main_ref // "origin/main"' <<<"$loop_json" 2>/dev/null || echo "origin/main")
+
+  if [[ "$enabled" != "true" ]]; then
+    static_add_error "$STATIC_ERR_LIFECYCLE_CONFIG_INVALID" \
+      "lifecycle.enabled must be true; lifecycle gate is mandatory for run." \
+      "$location_prefix.lifecycle.enabled"
+  fi
+
+  if [[ "$require_on_completion" != "true" ]]; then
+    static_add_error "$STATIC_ERR_LIFECYCLE_CONFIG_INVALID" \
+      "lifecycle.require_on_completion must be true; lifecycle gate is mandatory for completion." \
+      "$location_prefix.lifecycle.require_on_completion"
+  fi
+
+  if [[ "$strict" != "true" ]]; then
+    static_add_error "$STATIC_ERR_LIFECYCLE_CONFIG_INVALID" \
+      "lifecycle.strict must be true for deterministic lifecycle enforcement." \
+      "$location_prefix.lifecycle.strict"
+  fi
+
+  if [[ -z "$feature_prefix" || "$feature_prefix" == "null" ]]; then
+    static_add_error "$STATIC_ERR_LIFECYCLE_CONFIG_INVALID" \
+      "lifecycle.feature_prefix must be non-empty." \
+      "$location_prefix.lifecycle.feature_prefix"
+  fi
+
+  if [[ -z "$main_ref" || "$main_ref" == "null" ]]; then
+    static_add_error "$STATIC_ERR_LIFECYCLE_CONFIG_INVALID" \
+      "lifecycle.main_ref must be non-empty." \
+      "$location_prefix.lifecycle.main_ref"
+  fi
+
+  return 0
+}
+
+# Ensure git auto-commit uses LLM-authored commit messages when enabled.
+# Usage: check_git_commit_message_config <loop_json> <location_prefix>
+check_git_commit_message_config() {
+  local loop_json="$1"
+  local location_prefix="$2"
+
+  local commit_strategy
+  commit_strategy=$(jq -r '.git.commit_strategy // "never"' <<<"$loop_json" 2>/dev/null || echo "never")
+  if [[ "$commit_strategy" == "never" ]]; then
+    return 0
+  fi
+
+  local authoring
+  authoring=$(jq -r '.git.commit_message.authoring // "llm"' <<<"$loop_json" 2>/dev/null || echo "llm")
+  local author_role
+  author_role=$(jq -r '.git.commit_message.author_role // "reviewer"' <<<"$loop_json" 2>/dev/null || echo "reviewer")
+  local timeout_seconds
+  timeout_seconds=$(jq -r '.git.commit_message.timeout_seconds // 120' <<<"$loop_json" 2>/dev/null || echo "120")
+  local max_subject_length
+  max_subject_length=$(jq -r '.git.commit_message.max_subject_length // 72' <<<"$loop_json" 2>/dev/null || echo "72")
+
+  if [[ "$authoring" != "llm" ]]; then
+    static_add_error "$STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID" \
+      "git.commit_message.authoring must be 'llm' when git.commit_strategy is '$commit_strategy'." \
+      "$location_prefix.git.commit_message.authoring"
+  fi
+
+  case "$author_role" in
+    planner|implementer|tester|reviewer) ;;
+    *)
+      static_add_error "$STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID" \
+        "git.commit_message.author_role must be one of planner|implementer|tester|reviewer." \
+        "$location_prefix.git.commit_message.author_role"
+      ;;
+  esac
+
+  local role_present
+  role_present=$(jq -r --arg role "$author_role" '
+    if (.roles | type) == "array" then
+      ((.roles | index($role)) != null)
+    elif (.roles | type) == "object" then
+      (.roles | has($role))
+    else
+      true
+    end' <<<"$loop_json" 2>/dev/null || echo "true")
+  if [[ "$role_present" != "true" ]]; then
+    static_add_error "$STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID" \
+      "git.commit_message.author_role '$author_role' must be included in loop roles." \
+      "$location_prefix.git.commit_message.author_role"
+  fi
+
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 30 ]]; then
+    static_add_error "$STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID" \
+      "git.commit_message.timeout_seconds must be an integer >= 30." \
+      "$location_prefix.git.commit_message.timeout_seconds"
+  fi
+
+  if ! [[ "$max_subject_length" =~ ^[0-9]+$ ]] || [[ "$max_subject_length" -lt 40 ]]; then
+    static_add_error "$STATIC_ERR_GIT_COMMIT_MESSAGE_INVALID" \
+      "git.commit_message.max_subject_length must be an integer >= 40." \
+      "$location_prefix.git.commit_message.max_subject_length"
+  fi
+
+  return 0
+}
+
 # Validate target adapter manifest contract when explicitly required by config.
 # Usage: check_dev_env_contract_manifest <repo> <config_json>
 check_dev_env_contract_manifest() {
@@ -519,6 +637,8 @@ validate_static() {
   local repo="$1"
   local config_path="$2"
 
+  need_cmd jq
+
   # Reset globals
   STATIC_ERRORS=""
   STATIC_WARNINGS=""
@@ -573,6 +693,8 @@ validate_static() {
     # Check tests gate policy
     check_tests_gate_config "$loop_json" "loops[$i]"
     check_prerequisites_gate_config "$repo" "$loop_json" "loops[$i]"
+    check_lifecycle_gate_config "$loop_json" "loops[$i]"
+    check_git_commit_message_config "$loop_json" "loops[$i]"
 
     # Check test commands
     local test_commands

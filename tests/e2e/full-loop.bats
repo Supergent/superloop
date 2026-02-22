@@ -12,9 +12,12 @@ setup() {
 
   # Initialize git repo (required for some operations)
   cd "$TEST_REPO"
-  git init -q
+  git init -q -b main
   git config user.email "test@example.com"
   git config user.name "Test User"
+  echo "# e2e temp repo" > README.md
+  git add README.md
+  git commit -q -m "init"
 }
 
 teardown() {
