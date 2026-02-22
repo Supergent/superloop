@@ -68,6 +68,17 @@ Wave sequencing, entry/exit criteria, failure handling, and alias-removal policy
 
 - `docs/dev-env-rollout-v1.md`
 
+## Core Decoupling Guard
+
+Superloop core target-agnostic enforcement uses:
+
+- `scripts/check-core-decoupling.sh`
+- Denylist source: `scripts/decoupling-core-denylist.txt`
+
+The denylist path can be overridden for experiments with:
+
+- `SUPERLOOP_DECOUPLING_DENYLIST_FILE`
+
 ## Allowed Localhost Exceptions
 
 Hardcoded localhost fallbacks are allowed only for scripts that intentionally validate raw-port local runtime behavior.

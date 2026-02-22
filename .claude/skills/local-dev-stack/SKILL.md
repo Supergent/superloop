@@ -48,7 +48,8 @@ scripts/dev-<target>-verify.sh
 
 Prefer env-driven URLs over hardcoded ports.
 
-- Superloop UI: `SUPERLOOP_UI_URL` (default `http://superloop-ui.localhost:1355`)
+- Superloop UI (canonical): `SUPERLOOP_UI_BASE_URL` (default `http://superloop-ui.localhost:1355`)
+- Superloop UI compatibility alias: `SUPERLOOP_UI_URL` (fallback only)
 - Canonical app URL: `SUPERLOOP_DEV_BASE_URL` (profile default depends on target repo)
 - Canonical verify URL: `SUPERLOOP_VERIFY_BASE_URL` (profile default depends on target repo)
 - Canonical raw dev port (optional): `SUPERLOOP_DEV_PORT` (target-repo default often `5174`)
