@@ -257,6 +257,19 @@ Promotion baseline:
 - minimum autonomous sample: 20 execution events
 - all gates below must pass with evidence attached
 
+Automated evaluator (recommended):
+```bash
+scripts/ops-manager-promotion-gates.sh --repo /path/to/repo --pretty
+```
+CI enforcement mode:
+```bash
+scripts/ops-manager-promotion-gates.sh --repo /path/to/repo --fail-on-hold --pretty
+```
+Pass criteria:
+- `.summary.decision` is `promote`
+- `.summary.failedGates` is empty
+- `.summary.reasonCodes` is empty
+
 1. Governance gate (authority and review posture):
 ```bash
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty | jq '.autonomous.governance'
@@ -309,6 +322,18 @@ Pass criteria:
 ~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill kill switch halts autonomous execution and falls back to explicit manual handoff" tests/ops-manager-fleet.bats
 ~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill sprite_service outage triggers autonomous auto-pause and reason-coded manual fallback" tests/ops-manager-fleet.bats
 ~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill ambiguous autonomous outcomes are retry-guarded to prevent execution storms" tests/ops-manager-fleet.bats
+# record the latest drill run evidence used by promotion automation
+cat > .superloop/ops-manager/fleet/drills/promotion.v1.json <<'JSON'
+{
+  "schemaVersion": "v1",
+  "updatedAt": "2026-02-23T10:00:00Z",
+  "drills": [
+    {"id": "kill_switch", "status": "pass", "completedAt": "2026-02-23T10:00:00Z"},
+    {"id": "sprite_service_outage", "status": "pass", "completedAt": "2026-02-23T10:00:00Z"},
+    {"id": "ambiguous_retry_guard", "status": "pass", "completedAt": "2026-02-23T10:00:00Z"}
+  ]
+}
+JSON
 ```
 Pass criteria:
 - all three drills pass on the candidate commit
