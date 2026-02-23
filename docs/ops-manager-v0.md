@@ -396,6 +396,21 @@ Purpose:
 - Persists latest decision state and append-only promotion telemetry artifacts.
 - Supports CI enforcement mode via `--fail-on-hold` (non-zero exit when decision is `hold`).
 
+### Promotion CI Wrapper (Phase 10 / Phase 2)
+```bash
+scripts/ops-manager-promotion-ci.sh \
+  --repo /path/to/repo \
+  --skip-on-missing-evidence \
+  --summary-file /path/to/repo/.superloop/ops-manager/fleet/promotion-ci-summary.md \
+  --result-file /path/to/repo/.superloop/ops-manager/fleet/promotion-ci-result.json
+```
+
+Purpose:
+- Wraps `scripts/ops-manager-promotion-gates.sh` for CI-friendly execution and summary generation.
+- Emits machine-readable result JSON plus markdown summary suitable for job summaries and operator handoff.
+- Supports skip mode for missing evidence (`--skip-on-missing-evidence`) to avoid destructive scheduled failures in repos without live fleet telemetry.
+- Preserves strict gating behavior with `--fail-on-hold` when promotion checks should block pipeline progression.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -444,6 +459,8 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl` - immutable fleet policy governance change history.
 - `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` - fleet handoff plan/execution history.
 - `.superloop/ops-manager/fleet/telemetry/promotion.jsonl` - append-only guarded-autonomous promotion decision history.
+- `.superloop/ops-manager/fleet/promotion-ci-result.json` - latest CI wrapper JSON decision output (`promote|hold|skipped`).
+- `.superloop/ops-manager/fleet/promotion-ci-summary.md` - latest CI wrapper markdown summary for operator workflow/step summaries.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
