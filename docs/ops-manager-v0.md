@@ -230,7 +230,7 @@ Purpose:
 - Persists current drift state and appends drift history telemetry.
 - Emits `profile_drift_detected` escalations when drift transitions active.
 
-## Fleet Orchestration Commands (Phase 8 Baseline)
+## Fleet Orchestration Commands (Phase 8 + Phase 9 Baseline)
 
 ### Fleet Registry
 ```bash
@@ -241,8 +241,21 @@ scripts/ops-manager-fleet-registry.sh \
 
 Purpose:
 - Validates and normalizes `.superloop/ops-manager/fleet/registry.v1.json`.
-- Enforces fail-closed checks for loop metadata, transport settings, and policy suppressions.
+- Enforces fail-closed checks for loop metadata, transport settings, and policy contracts.
 - Supports loop-level inspection via `--loop <loop-id>`.
+
+Fleet policy contract fields:
+- `policy.mode`: `advisory` (default) or `guarded_auto`.
+- `policy.suppressions`: loop/global suppression category mappings (`reconcile_failed`, `health_critical`, `health_degraded`).
+- `policy.noiseControls.dedupeWindowSeconds`: advisory candidate cooldown window (default `300`).
+- `policy.autonomous.allow.categories`: autonomous candidate category allowlist (default `["reconcile_failed","health_critical"]`).
+- `policy.autonomous.allow.intents`: autonomous intent allowlist (default `["cancel"]`).
+- `policy.autonomous.thresholds.minSeverity`: minimum severity gate (`critical|warning|info`, default `critical`).
+- `policy.autonomous.thresholds.minConfidence`: minimum confidence gate (`high|medium|low`, default `high`).
+- `policy.autonomous.safety.maxActionsPerRun`: autonomous action cap per fleet run (default `1`).
+- `policy.autonomous.safety.maxActionsPerLoop`: autonomous action cap per loop (default `1`).
+- `policy.autonomous.safety.cooldownSeconds`: autonomous loop/category cooldown window (default `300`).
+- `policy.autonomous.safety.killSwitch`: hard-disable autonomous dispatch while preserving advisory/manual paths (default `false`).
 
 Registry schema reference:
 - `schema/ops-manager-fleet.registry.schema.json`
@@ -275,7 +288,8 @@ Purpose:
 - Evaluates fleet reconcile output and emits advisory candidates only.
 - Produces reason-coded candidates for `reconcile_failed`, `health_critical`, and `health_degraded`.
 - Applies suppression precedence (`loop` over global `*`) and records suppression scope/source.
-- Supports advisory cooldown dedupe using policy history (no automatic control execution).
+- Supports both `advisory` and `guarded_auto` policy modes at the contract layer.
+- Supports advisory cooldown dedupe using policy history.
 
 ### Fleet Status
 ```bash
@@ -311,7 +325,8 @@ Purpose:
 - Maps unsuppressed advisory candidates into explicit per-loop control intents.
 - Enforces explicit operator confirmation gate (`--execute` requires `--confirm`).
 - Propagates fleet trace/idempotency into loop-level control telemetry and invocation audit.
-- Persists handoff plan/execution artifacts and telemetry without autonomous remediation.
+- Persists handoff plan/execution artifacts and telemetry.
+- In phase 9 P1.1, `guarded_auto` mode is accepted as a validated policy contract while execution remains manual-only until auto-eligibility/dispatch phases are delivered.
 
 ## Sprite Service Transport
 Service implementation entrypoint:

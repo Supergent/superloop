@@ -84,6 +84,16 @@ validation_errors=$(jq -r '
     . == "reconcile_failed"
     or . == "health_critical"
     or . == "health_degraded";
+  def is_known_policy_intent:
+    . == "cancel";
+  def is_known_severity:
+    . == "critical"
+    or . == "warning"
+    or . == "info";
+  def is_known_confidence:
+    . == "high"
+    or . == "medium"
+    or . == "low";
 
   (
     if (.schemaVersion // "") != "v1" then ["schemaVersion must be \"v1\""] else [] end
@@ -190,8 +200,8 @@ validation_errors=$(jq -r '
     end
   )
   + (
-    if ((.policy.mode // "advisory") == "advisory") then []
-    else ["policy.mode must be \"advisory\" in phase 8 baseline"]
+    if ((.policy.mode // "advisory") == "advisory" or (.policy.mode // "advisory") == "guarded_auto") then []
+    else ["policy.mode must be advisory or guarded_auto"]
     end
   )
   + (
@@ -213,6 +223,134 @@ validation_errors=$(jq -r '
       []
     else
       ["policy.noiseControls.dedupeWindowSeconds must be an integer >= 0 when present"]
+    end
+  )
+  + (
+    if ((.policy.autonomous // {}) | type) != "object" then
+      ["policy.autonomous must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.allow // {}) | type) != "object" then
+      ["policy.autonomous.allow must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.allow.categories // null) == null) then
+      []
+    elif ((.policy.autonomous.allow.categories // null) | type) != "array" then
+      ["policy.autonomous.allow.categories must be an array when present"]
+    elif ([.policy.autonomous.allow.categories[] | type] | all(. == "string")) | not then
+      ["policy.autonomous.allow.categories entries must be strings"]
+    elif ([.policy.autonomous.allow.categories[] | select(is_known_policy_category | not)] | length) > 0 then
+      ["policy.autonomous.allow.categories contains unsupported categories"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.allow.intents // null) == null) then
+      []
+    elif ((.policy.autonomous.allow.intents // null) | type) != "array" then
+      ["policy.autonomous.allow.intents must be an array when present"]
+    elif ([.policy.autonomous.allow.intents[] | type] | all(. == "string")) | not then
+      ["policy.autonomous.allow.intents entries must be strings"]
+    elif ([.policy.autonomous.allow.intents[] | select(is_known_policy_intent | not)] | length) > 0 then
+      ["policy.autonomous.allow.intents contains unsupported intents"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.thresholds // {}) | type) != "object" then
+      ["policy.autonomous.thresholds must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.thresholds.minSeverity // null) == null) then
+      []
+    elif ((.policy.autonomous.thresholds.minSeverity // null) | type) != "string" then
+      ["policy.autonomous.thresholds.minSeverity must be a string when present"]
+    elif ((.policy.autonomous.thresholds.minSeverity // "") | is_known_severity | not) then
+      ["policy.autonomous.thresholds.minSeverity must be one of critical, warning, info"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.thresholds.minConfidence // null) == null) then
+      []
+    elif ((.policy.autonomous.thresholds.minConfidence // null) | type) != "string" then
+      ["policy.autonomous.thresholds.minConfidence must be a string when present"]
+    elif ((.policy.autonomous.thresholds.minConfidence // "") | is_known_confidence | not) then
+      ["policy.autonomous.thresholds.minConfidence must be one of high, medium, low"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.safety // {}) | type) != "object" then
+      ["policy.autonomous.safety must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.safety.maxActionsPerRun // null) == null
+      or (
+        ((.policy.autonomous.safety.maxActionsPerRun // null) | type) == "number"
+        and ((.policy.autonomous.safety.maxActionsPerRun // null) >= 0)
+        and ((.policy.autonomous.safety.maxActionsPerRun // null) == ((.policy.autonomous.safety.maxActionsPerRun // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.autonomous.safety.maxActionsPerRun must be an integer >= 0 when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.safety.maxActionsPerLoop // null) == null
+      or (
+        ((.policy.autonomous.safety.maxActionsPerLoop // null) | type) == "number"
+        and ((.policy.autonomous.safety.maxActionsPerLoop // null) >= 0)
+        and ((.policy.autonomous.safety.maxActionsPerLoop // null) == ((.policy.autonomous.safety.maxActionsPerLoop // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.autonomous.safety.maxActionsPerLoop must be an integer >= 0 when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.safety.cooldownSeconds // null) == null
+      or (
+        ((.policy.autonomous.safety.cooldownSeconds // null) | type) == "number"
+        and ((.policy.autonomous.safety.cooldownSeconds // null) >= 0)
+        and ((.policy.autonomous.safety.cooldownSeconds // null) == ((.policy.autonomous.safety.cooldownSeconds // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.autonomous.safety.cooldownSeconds must be an integer >= 0 when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.safety.killSwitch // null) == null
+      or ((.policy.autonomous.safety.killSwitch // null) | type) == "boolean"
+    ) then
+      []
+    else
+      ["policy.autonomous.safety.killSwitch must be boolean when present"]
     end
   )
   + (
@@ -287,6 +425,23 @@ normalized_json=$(jq -cn \
         suppressions: ($registry.policy.suppressions // {}),
         noiseControls: {
           dedupeWindowSeconds: ($registry.policy.noiseControls.dedupeWindowSeconds // 300)
+        },
+        autonomous: {
+          enabled: (($registry.policy.mode // "advisory") == "guarded_auto"),
+          allow: {
+            categories: ($registry.policy.autonomous.allow.categories // ["reconcile_failed", "health_critical"]),
+            intents: ($registry.policy.autonomous.allow.intents // ["cancel"])
+          },
+          thresholds: {
+            minSeverity: ($registry.policy.autonomous.thresholds.minSeverity // "critical"),
+            minConfidence: ($registry.policy.autonomous.thresholds.minConfidence // "high")
+          },
+          safety: {
+            maxActionsPerRun: ($registry.policy.autonomous.safety.maxActionsPerRun // 1),
+            maxActionsPerLoop: ($registry.policy.autonomous.safety.maxActionsPerLoop // 1),
+            cooldownSeconds: ($registry.policy.autonomous.safety.cooldownSeconds // 300),
+            killSwitch: ($registry.policy.autonomous.safety.killSwitch // false)
+          }
         }
       }
     }

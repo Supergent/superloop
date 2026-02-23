@@ -214,8 +214,8 @@ registry_json=$("$registry_script" --repo "$repo" --registry-file "$registry_fil
 policy_state_json=$(jq -c '.' "$policy_state_file" 2>/dev/null) || die "invalid policy state JSON: $policy_state_file"
 
 policy_mode="$(jq -r '.mode // "advisory"' <<<"$policy_state_json")"
-if [[ "$policy_mode" != "advisory" ]]; then
-  die "unsupported policy mode in phase 8 baseline: $policy_mode"
+if [[ "$policy_mode" != "advisory" && "$policy_mode" != "guarded_auto" ]]; then
+  die "unsupported policy mode: $policy_mode"
 fi
 
 if [[ -z "$trace_id" ]]; then

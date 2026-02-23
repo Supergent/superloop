@@ -156,8 +156,8 @@ if [[ -z "$trace_id" ]]; then
 fi
 
 policy_mode="$(jq -r '.policy.mode // "advisory"' <<<"$registry_json")"
-if [[ "$policy_mode" != "advisory" ]]; then
-  die "unsupported policy mode in phase 8 baseline: $policy_mode"
+if [[ "$policy_mode" != "advisory" && "$policy_mode" != "guarded_auto" ]]; then
+  die "unsupported policy mode: $policy_mode"
 fi
 
 if [[ "$flag_dedupe_window_seconds" != "1" ]]; then

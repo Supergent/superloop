@@ -124,6 +124,79 @@ JSON
   [[ "$output" == *"contains unknown categories"* ]]
 }
 
+@test "fleet registry accepts guarded_auto policy contract and normalizes autonomous controls" {
+  local repo="$TEMP_DIR/registry-guarded-auto"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"warning","minConfidence":"medium"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":2,"cooldownSeconds":120,"killSwitch":false}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local registry_json="$output"
+
+  run jq -r '.policy.mode' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "guarded_auto" ]
+
+  run jq -r '.policy.autonomous.enabled' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.policy.autonomous.allow.categories | join(",")' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "reconcile_failed,health_critical" ]
+
+  run jq -r '.policy.autonomous.thresholds.minSeverity' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "warning" ]
+
+  run jq -r '.policy.autonomous.safety.maxActionsPerRun' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+}
+
+@test "fleet registry fails closed on unsupported autonomous categories" {
+  local repo="$TEMP_DIR/registry-auto-category-invalid"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["health_critical","unknown_category"]}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.allow.categories contains unsupported categories"* ]]
+}
+
+@test "fleet registry fails closed on unsupported autonomous intents" {
+  local repo="$TEMP_DIR/registry-auto-intent-invalid"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"intents":["cancel","approve"]}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.allow.intents contains unsupported intents"* ]]
+}
+
+@test "fleet registry fails closed on invalid autonomous threshold and safety values" {
+  local repo="$TEMP_DIR/registry-auto-threshold-invalid"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"thresholds":{"minConfidence":"certain"},"safety":{"maxActionsPerRun":-1}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.thresholds.minConfidence must be one of high, medium, low"* ]]
+  [[ "$output" == *"policy.autonomous.safety.maxActionsPerRun must be an integer >= 0 when present"* ]]
+}
+
 @test "fleet reconcile captures partial failure with deterministic ordering and trace linkage" {
   local repo="$TEMP_DIR/fleet-partial"
   local now_ts
@@ -490,6 +563,31 @@ JSON
   run bash -lc "wc -l < '$history_file' | tr -d ' '"
   [ "$status" -eq 0 ]
   [ "$output" -ge 6 ]
+}
+
+@test "fleet policy supports guarded_auto mode while preserving advisory candidate semantics" {
+  local repo="$TEMP_DIR/fleet-policy-guarded-auto"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-guarded-auto","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T00:00:00Z","startedAt":"2026-02-22T23:59:50Z","fleetId":"fleet-policy-guarded-auto","traceId":"trace-fleet-policy-guarded-auto-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":1,"successCount":0,"failedCount":1,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T00:00:00Z","startedAt":"2026-02-22T23:59:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-guarded-auto-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.mode' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "guarded_auto" ]
+
+  run jq -r '.candidateCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
 }
 
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {
