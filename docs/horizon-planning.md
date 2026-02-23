@@ -66,10 +66,12 @@ After each run, update confidence and choose one action:
 Optional control-plane file:
 
 - `.superloop/horizons.json`
+- `.superloop/horizon-directory.json` (optional)
 
 Schema:
 
 - `schema/horizons.schema.json`
+- `schema/horizon-directory.schema.json`
 
 Loop linkage:
 
@@ -91,6 +93,18 @@ Optional strict schema validation (requires python `jsonschema` module):
 
 ```bash
 scripts/validate-horizons.sh --repo . --strict
+```
+
+Validate the optional directory file:
+
+```bash
+test ! -f .superloop/horizon-directory.json || scripts/validate-horizon-directory.sh --repo .
+```
+
+Strict directory validation:
+
+```bash
+test ! -f .superloop/horizon-directory.json || scripts/validate-horizon-directory.sh --repo . --strict
 ```
 
 ## Packet runtime (Phase 1)
@@ -186,6 +200,60 @@ Freshness and fail-closed behavior:
 2. Packets with expired TTL are blocked with `packet_ttl_expired`.
 3. Packets missing recipient fields are blocked with `packet_recipient_type_missing` / `packet_recipient_id_missing`.
 4. Adapter write failures force packet transition to `failed` with reason `adapter_write_failed`.
+5. In `--directory-mode required`, unknown recipients are blocked with `directory_contact_not_found`.
+
+Directory routing:
+
+1. In `optional` mode (default), orchestrator uses directory overrides when available and falls back to packet recipient routing when no contact exists.
+2. In `required` mode, dispatch fails closed for recipients not declared in `.superloop/horizon-directory.json`.
+
+## Delivery confirm + retry runtime (Phase 3)
+
+Use Phase 3 when you need deterministic delivery confirmation and bounded retry policy without coupling Horizon runtime to Ops Manager internals.
+
+Directory sample:
+
+```bash
+cat docs/examples/horizon-directory.example.json
+```
+
+Ingest delivery receipts:
+
+```bash
+scripts/horizon-ack.sh ingest \
+  --repo . \
+  --file /path/to/receipts.jsonl
+```
+
+Receipt contract fields:
+
+1. required: `schemaVersion`, `packetId`, `traceId`, `status`
+2. optional: `receiptId`, `by`, `reason`, `note`, `evidenceRefs`
+3. supported statuses: `acknowledged`, `failed`, `escalated`, `cancelled`
+
+Ack behavior:
+
+1. dedupe is keyed by `receiptId` (or deterministic hash fallback).
+2. successful `acknowledged` receipts transition `dispatched -> acknowledged`.
+3. acknowledged packets are removed from retry-state tracking.
+
+Run retry reconcile loop:
+
+```bash
+scripts/horizon-retry.sh reconcile \
+  --repo . \
+  --directory-mode optional \
+  --ack-timeout-seconds 600 \
+  --max-retries 3 \
+  --retry-backoff-seconds 120
+```
+
+Retry behavior:
+
+1. scans packets in `dispatched` status.
+2. if timeout elapsed and retries remain, emits `horizon_dispatch_retry` envelope and increments retry counter.
+3. if retry budget exhausted, transitions packet to `escalated` and appends dead-letter record.
+4. dry-run mode evaluates actions without mutating packet/state artifacts.
 
 Status model:
 
@@ -212,6 +280,11 @@ Artifacts:
 - `.superloop/horizons/telemetry/packets.jsonl`
 - `.superloop/horizons/telemetry/orchestrator.jsonl`
 - `.superloop/horizons/outbox/<recipient-type>/<recipient-id>.jsonl` (filesystem adapter)
+- `.superloop/horizons/ack-state.json`
+- `.superloop/horizons/telemetry/ack.jsonl`
+- `.superloop/horizons/retry-state.json`
+- `.superloop/horizons/telemetry/retry.jsonl`
+- `.superloop/horizons/telemetry/dead-letter.jsonl`
 
 Each packet artifact records:
 

@@ -119,10 +119,16 @@ Horizon contract files:
 
 - `.superloop/horizons.json` (control-plane state, optional)
 - `schema/horizons.schema.json` (validation schema)
+- `.superloop/horizon-directory.json` (optional recipient directory for dispatch + retry policy)
+- `schema/horizon-directory.schema.json` (directory validation schema)
 - `docs/horizon-planning.md` (operating model)
 - `docs/examples/horizons.example.json` (sample)
+- `docs/examples/horizon-directory.example.json` (directory sample)
 - `scripts/horizon-packet.sh` (packet lifecycle runtime for horizon dispatch tracking)
 - `scripts/horizon-orchestrate.sh` (packet planning/dispatch runtime with adapters)
+- `scripts/horizon-ack.sh` (delivery receipt ingest + deterministic ack transitions)
+- `scripts/horizon-retry.sh` (ack-timeout reconcile loop with retry + dead-letter handling)
+- `scripts/validate-horizon-directory.sh` (directory schema/invariant validation)
 
 Validate horizon control-plane state (when present):
 
@@ -134,6 +140,18 @@ Optional strict schema validation (requires python `jsonschema` module):
 
 ```bash
 test ! -f .superloop/horizons.json || scripts/validate-horizons.sh --repo . --strict
+```
+
+Validate Horizon directory contract (when present):
+
+```bash
+test ! -f .superloop/horizon-directory.json || scripts/validate-horizon-directory.sh --repo .
+```
+
+Optional strict directory validation:
+
+```bash
+test ! -f .superloop/horizon-directory.json || scripts/validate-horizon-directory.sh --repo . --strict
 ```
 
 Loop binding is optional via `horizon_ref`:
@@ -184,9 +202,26 @@ scripts/horizon-orchestrate.sh plan \
 scripts/horizon-orchestrate.sh dispatch \
   --repo . \
   --horizon-ref HZ-program-authn-v1 \
+  --directory-mode required \
+  --directory-file .superloop/horizon-directory.json \
   --adapter filesystem_outbox \
   --actor dispatcher \
   --reason "queued packet dispatch"
+```
+
+```bash
+scripts/horizon-ack.sh ingest \
+  --repo . \
+  --file /path/to/receipts.jsonl
+```
+
+```bash
+scripts/horizon-retry.sh reconcile \
+  --repo . \
+  --directory-mode optional \
+  --ack-timeout-seconds 600 \
+  --max-retries 3 \
+  --retry-backoff-seconds 120
 ```
 
 ## Config

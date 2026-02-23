@@ -177,3 +177,70 @@ create_packet() {
 
   [ ! -d "$REPO_DIR/.superloop/horizons/outbox" ]
 }
+
+@test "horizon orchestrate required directory blocks unknown recipients" {
+  create_packet pkt-dir-001 HZ-dir local_agent worker-dir "directory required"
+
+  local directory_file="$REPO_DIR/.superloop/horizon-directory.json"
+  cat > "$directory_file" <<'JSON'
+{
+  "version": 1,
+  "contacts": [
+    {
+      "recipient": {"type": "local_agent", "id": "different-worker"},
+      "dispatch": {"adapter": "filesystem_outbox", "target": "local_agent/different-worker.jsonl"}
+    }
+  ]
+}
+JSON
+
+  run "$PROJECT_ROOT/scripts/horizon-orchestrate.sh" plan \
+    --repo "$REPO_DIR" \
+    --directory-mode required \
+    --directory-file "$directory_file"
+  [ "$status" -eq 0 ]
+  local result_json="$output"
+
+  run jq -r '.summary.blockedByReason.directory_contact_not_found' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.items[0].dispatchable' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+}
+
+@test "horizon orchestrate directory contact can override dispatch adapter" {
+  create_packet pkt-dir-002 HZ-dir local_agent worker-dir-2 "directory override"
+
+  local directory_file="$REPO_DIR/.superloop/horizon-directory.json"
+  cat > "$directory_file" <<'JSON'
+{
+  "version": 1,
+  "contacts": [
+    {
+      "recipient": {"type": "local_agent", "id": "worker-dir-2"},
+      "dispatch": {"adapter": "stdout"},
+      "ack": {"timeout_seconds": 900, "max_retries": 5, "retry_backoff_seconds": 120}
+    }
+  ]
+}
+JSON
+
+  run "$PROJECT_ROOT/scripts/horizon-orchestrate.sh" dispatch \
+    --repo "$REPO_DIR" \
+    --directory-mode required \
+    --directory-file "$directory_file"
+  [ "$status" -eq 0 ]
+  local result_json="$output"
+
+  run jq -r '.execution.results[0].adapter' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "stdout" ]
+
+  run jq -r '.items[0].ackPolicy.maxRetries' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "5" ]
+
+  [ ! -d "$REPO_DIR/.superloop/horizons/outbox" ]
+}
