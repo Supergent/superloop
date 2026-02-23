@@ -485,7 +485,7 @@ Purpose:
 - Emits orchestration JSON + markdown artifacts and appends summary content to `GITHUB_STEP_SUMMARY` when present.
 - Workflow integration: `.github/workflows/ops-manager-promotion-rollout.yml` exposes `workflow_dispatch` orchestration inputs.
 
-### Promotion Controller (Phase 12 / Phase 1)
+### Promotion Controller (Phase 12 / Phase 2)
 ```bash
 scripts/ops-manager-promotion-controller.sh \
   --repo /path/to/repo \
@@ -525,9 +525,11 @@ Purpose:
 - Defaults to `propose_only` (preview-only) and requires explicit governance metadata for `guarded_auto_apply`.
 - Uses promotion evidence freshness gates (`--decision-ttl-minutes`) and budget/rate controls (`--max-applies-per-window`, `--max-expand-step-per-window`, cooldown, optional freeze windows).
 - Executes post-apply verification and triggers deterministic rollback when verification fails.
+- Persists deterministic failed-run artifacts (`status=failed`) with stage-attributed failure metadata (`error.stage`, `error.reasonCode`, `error.exitCode`) when evaluate/apply/rollback command stages fail.
 - Persists controller state and append-only telemetry artifacts for run auditability.
 - Forwards additive seam metadata (`traceId`, `loopId`, `horizonRef`, `evidenceRefs`) into orchestration artifacts when present.
 - Maintains hard Phase 12 boundary: no Horizon runtime coupling; `horizonRef` is optional context only.
+- Workflow integration: `.github/workflows/ops-manager-promotion-controller.yml` supports recurring schedule and operator dispatch modes.
 
 ## Sprite Service Transport
 Service implementation entrypoint:

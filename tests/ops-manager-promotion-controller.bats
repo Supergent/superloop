@@ -114,6 +114,11 @@ if [[ -n "${ORCHESTRATE_STUB_LOG:-}" ]]; then
     '{mode:$mode,traceId:$trace_id,loopId:$loop_id,horizonRef:$horizon_ref,applyIntent:$apply_intent,expandStep:$expand_step,evidenceRefs:$evidence_refs}' >> "$ORCHESTRATE_STUB_LOG"
 fi
 
+if [[ "${ORCHESTRATE_FAIL_MODE:-}" == "$mode" ]]; then
+  echo "forced orchestrate failure mode=$mode" >&2
+  exit "${ORCHESTRATE_FAIL_CODE:-91}"
+fi
+
 preview_decision="${PREVIEW_DECISION:-promote}"
 preview_generated_at="${PREVIEW_GENERATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
@@ -219,6 +224,19 @@ import sys
 
 minutes = int(sys.argv[1])
 value = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minutes)
+print(value.replace(microsecond=0).isoformat().replace('+00:00', 'Z'))
+PY
+}
+
+iso_minutes_from_now() {
+  local minutes="$1"
+
+  python3 - "$minutes" <<'PY'
+import datetime
+import sys
+
+minutes = int(sys.argv[1])
+value = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
 print(value.replace(microsecond=0).isoformat().replace('+00:00', 'Z'))
 PY
 }
@@ -410,4 +428,136 @@ PY
   run jq -s 'length' "$ORCH_LOG"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+}
+
+@test "controller guarded_auto_apply blocks when active freeze window is present" {
+  local repo="$TEMP_DIR/repo-freeze"
+  local state_file="$TEMP_DIR/state-freeze.json"
+  local telemetry_file="$TEMP_DIR/telemetry-freeze.jsonl"
+  local freeze_file="$TEMP_DIR/freeze-windows.json"
+
+  mkdir -p "$repo"
+  cat > "$freeze_file" <<JSON
+{"windows":[{"start":"$(iso_minutes_ago 10)","end":"$(iso_minutes_from_now 120)","reason":"change-freeze"}]}
+JSON
+
+  run env OPS_MANAGER_PROMOTION_ORCHESTRATE_SCRIPT="$ORCHESTRATE_STUB" OPS_MANAGER_PROMOTION_CI_SCRIPT="$PROMOTION_CI_STUB" ORCHESTRATE_STUB_LOG="$ORCH_LOG" PREVIEW_DECISION="promote" \
+    "$PROJECT_ROOT/scripts/ops-manager-promotion-controller.sh" \
+    --repo "$repo" \
+    --mode guarded_auto_apply \
+    --freeze-windows-file "$freeze_file" \
+    --by ops-user \
+    --approval-ref CAB-1204 \
+    --rationale "phase12-freeze" \
+    --review-by "2099-01-01T00:00:00Z" \
+    --state-file "$state_file" \
+    --telemetry-file "$telemetry_file"
+
+  [ "$status" -eq 0 ]
+
+  run jq -r '.status' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "hold" ]
+
+  run jq -e '.decision.reasonCodes | index("controller_budget_freeze_window_active") != null' "$state_file"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.decision.budget.freezeWindowActive' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -s 'length' "$ORCH_LOG"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "controller records failed state when evaluate command stage fails" {
+  local repo="$TEMP_DIR/repo-evaluate-fail"
+  local state_file="$TEMP_DIR/state-evaluate-fail.json"
+  local telemetry_file="$TEMP_DIR/telemetry-evaluate-fail.jsonl"
+
+  mkdir -p "$repo"
+
+  run env OPS_MANAGER_PROMOTION_ORCHESTRATE_SCRIPT="$ORCHESTRATE_STUB" OPS_MANAGER_PROMOTION_CI_SCRIPT="$PROMOTION_CI_STUB" ORCHESTRATE_STUB_LOG="$ORCH_LOG" ORCHESTRATE_FAIL_MODE="dry_run" ORCHESTRATE_FAIL_CODE="71" \
+    "$PROJECT_ROOT/scripts/ops-manager-promotion-controller.sh" \
+    --repo "$repo" \
+    --mode propose_only \
+    --state-file "$state_file" \
+    --telemetry-file "$telemetry_file"
+
+  [ "$status" -eq 71 ]
+
+  run jq -r '.status' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "failed" ]
+
+  run jq -r '.error.stage' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "evaluate" ]
+
+  run jq -r '.error.reasonCode' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "controller_evaluate_command_failed" ]
+
+  run jq -r '.error.exitCode' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "71" ]
+
+  run jq -e '.decision.reasonCodes | index("controller_evaluate_command_failed") != null' "$state_file"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$telemetry_file'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "controller records failed state when rollback command stage fails after verification failure" {
+  local repo="$TEMP_DIR/repo-rollback-fail"
+  local state_file="$TEMP_DIR/state-rollback-fail.json"
+  local telemetry_file="$TEMP_DIR/telemetry-rollback-fail.jsonl"
+
+  mkdir -p "$repo"
+
+  run env OPS_MANAGER_PROMOTION_ORCHESTRATE_SCRIPT="$ORCHESTRATE_STUB" OPS_MANAGER_PROMOTION_CI_SCRIPT="$PROMOTION_CI_STUB" ORCHESTRATE_STUB_LOG="$ORCH_LOG" PREVIEW_DECISION="promote" VERIFY_DECISION="hold" ORCHESTRATE_FAIL_MODE="rollback" ORCHESTRATE_FAIL_CODE="73" \
+    "$PROJECT_ROOT/scripts/ops-manager-promotion-controller.sh" \
+    --repo "$repo" \
+    --mode guarded_auto_apply \
+    --by ops-user \
+    --approval-ref CAB-1205 \
+    --rationale "phase12-rollback-stage-fail" \
+    --review-by "2099-01-01T00:00:00Z" \
+    --state-file "$state_file" \
+    --telemetry-file "$telemetry_file"
+
+  [ "$status" -eq 73 ]
+
+  run jq -r '.status' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "failed" ]
+
+  run jq -r '.error.stage' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "rollback" ]
+
+  run jq -r '.error.reasonCode' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "controller_rollback_command_failed" ]
+
+  run jq -r '.execution.applyExecuted' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.execution.rollbackExecuted' "$state_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+
+  run jq -e '.decision.reasonCodes | index("controller_verification_failed") != null' "$state_file"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.decision.reasonCodes | index("controller_rollback_command_failed") != null' "$state_file"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.mode' "$ORCH_LOG"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'dry_run\napply\nrollback' ]
 }
