@@ -375,6 +375,54 @@ Triage guidance:
 - if result is `hold`, use `.summary.failedGates` and `.summary.reasonCodes` to drive remediation in the same order as gate priority (governance -> reliability -> backlog -> safety -> drills).
 - if result is `skipped`, verify fleet telemetry/drill evidence collection paths and rerun with valid artifact sources (or disable skip mode for strict environments).
 
+## Promotion Apply Workflow
+Use this after a promotion decision to mutate rollout posture in controlled, audited steps.
+
+Apply commands:
+```bash
+# expand canary rollout by fixed step (requires promotion decision promote)
+scripts/ops-manager-promotion-apply.sh \
+  --repo /path/to/repo \
+  --intent expand \
+  --expand-step 25 \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "guarded rollout expansion" \
+  --review-by <review-deadline-iso8601> \
+  --idempotency-key <key> \
+  --pretty
+
+# resume rollout without changing canary percent (requires promotion decision promote)
+scripts/ops-manager-promotion-apply.sh \
+  --repo /path/to/repo \
+  --intent resume \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "resume guarded rollout" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+
+# rollback to manual pause posture (safety-allowed even when decision is hold)
+scripts/ops-manager-promotion-apply.sh \
+  --repo /path/to/repo \
+  --intent rollback \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "incident rollback to manual pause" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Semantics:
+- `expand` and `resume` fail closed when latest promotion decision is not `promote`.
+- `rollback` is explicitly safety-allowed to force manual pause quickly.
+- governance fields are required for every apply operation.
+- idempotency key replay returns prior apply record and does not mutate registry again.
+
+Artifacts:
+- `.superloop/ops-manager/fleet/promotion-apply-state.json`
+- `.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl`
+
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
 
