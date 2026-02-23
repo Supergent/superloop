@@ -85,6 +85,9 @@ promotion_state_file=""
 expand_step=""
 idempotency_key=""
 trace_id=""
+loop_id=""
+horizon_ref=""
+evidence_refs=()
 actor=""
 approval_ref=""
 rationale=""
@@ -110,6 +113,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --trace-id)
       trace_id="${2:-}"
+      shift 2
+      ;;
+    --loop-id)
+      loop_id="${2:-}"
+      shift 2
+      ;;
+    --horizon-ref)
+      horizon_ref="${2:-}"
+      shift 2
+      ;;
+    --evidence-ref)
+      evidence_refs+=("${2:-}")
       shift 2
       ;;
     --by)
@@ -146,11 +161,16 @@ if [[ "$intent" != "rollback" && "$decision" != "promote" ]]; then
   exit 7
 fi
 
-if [[ -n "${APPLY_STUB_LOG:-}" ]]; then
-  jq -cn --arg intent "$intent" --arg decision "$decision" --arg expand_step "$expand_step" --arg idempotency_key "$idempotency_key" --arg trace_id "$trace_id" --arg promotion_state_file "$promotion_state_file" --arg actor "$actor" --arg approval_ref "$approval_ref" --arg rationale "$rationale" --arg review_by "$review_by" '{intent:$intent,decision:$decision,expandStep:$expand_step,idempotencyKey:$idempotency_key,traceId:$trace_id,promotionStateFile:$promotion_state_file,actor:$actor,approvalRef:$approval_ref,rationale:$rationale,reviewBy:$review_by}' >> "$APPLY_STUB_LOG"
+evidence_refs_json='[]'
+if [[ ${#evidence_refs[@]} -gt 0 ]]; then
+  evidence_refs_json="$(printf '%s\n' "${evidence_refs[@]}" | jq -Rsc 'split("\n")[:-1] | map(select(length > 0))')"
 fi
 
-jq -cn --arg intent "$intent" --arg decision "$decision" '{schemaVersion:"v1",status:"applied",intent:$intent,promotionDecision:$decision}'
+if [[ -n "${APPLY_STUB_LOG:-}" ]]; then
+  jq -cn --arg intent "$intent" --arg decision "$decision" --arg expand_step "$expand_step" --arg idempotency_key "$idempotency_key" --arg trace_id "$trace_id" --arg loop_id "$loop_id" --arg horizon_ref "$horizon_ref" --arg promotion_state_file "$promotion_state_file" --arg actor "$actor" --arg approval_ref "$approval_ref" --arg rationale "$rationale" --arg review_by "$review_by" --argjson evidence_refs "$evidence_refs_json" '{intent:$intent,decision:$decision,expandStep:$expand_step,idempotencyKey:$idempotency_key,traceId:$trace_id,loopId:$loop_id,horizonRef:$horizon_ref,evidenceRefs:$evidence_refs,promotionStateFile:$promotion_state_file,actor:$actor,approvalRef:$approval_ref,rationale:$rationale,reviewBy:$review_by}' >> "$APPLY_STUB_LOG"
+fi
+
+jq -cn --arg intent "$intent" --arg decision "$decision" --arg trace_id "$trace_id" --arg loop_id "$loop_id" --arg horizon_ref "$horizon_ref" --argjson evidence_refs "$evidence_refs_json" '{schemaVersion:"v1",status:"applied",intent:$intent,promotionDecision:$decision,traceId:(if ($trace_id | length) > 0 then $trace_id else null end),loopId:(if ($loop_id | length) > 0 then $loop_id else null end),horizonRef:(if ($horizon_ref | length) > 0 then $horizon_ref else null end),evidenceRefs:$evidence_refs}'
 STUB
   chmod +x "$PROMOTION_APPLY_STUB"
 }
@@ -195,6 +215,26 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "false" ]
 
+  run jq -r '.traceId == null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.loopId == null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.horizonRef == null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r --arg ref "$ci_result_file" '.evidenceRefs | index($ref) != null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r --arg ref "$ci_summary_file" '.evidenceRefs | index($ref) != null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
   [ ! -f "$APPLY_LOG" ]
 }
 
@@ -215,6 +255,9 @@ teardown() {
     --expand-step 30 \
     --idempotency-key idmp-01 \
     --trace-id trace-01 \
+    --loop-id loop-a \
+    --horizon-ref HZ-fleet-promo-v1 \
+    --evidence-ref "artifact://promotion-window" \
     --by ops-user \
     --approval-ref CAB-201 \
     --rationale "phase11p2-apply" \
@@ -238,6 +281,26 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "expand" ]
 
+  run jq -r '.traceId' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-01" ]
+
+  run jq -r '.loopId' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-a" ]
+
+  run jq -r '.horizonRef' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "HZ-fleet-promo-v1" ]
+
+  run jq -r '.evidenceRefs | index("artifact://promotion-window") != null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r --arg ref "$ci_result_file" '.evidenceRefs | index($ref) != null' "$result_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
   run bash -lc "wc -l < '$APPLY_LOG'"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
@@ -253,6 +316,18 @@ teardown() {
   run jq -r '.traceId' "$APPLY_LOG"
   [ "$status" -eq 0 ]
   [ "$output" = "trace-01" ]
+
+  run jq -r '.loopId' "$APPLY_LOG"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-a" ]
+
+  run jq -r '.horizonRef' "$APPLY_LOG"
+  [ "$status" -eq 0 ]
+  [ "$output" = "HZ-fleet-promo-v1" ]
+
+  run jq -r '.evidenceRefs | index("artifact://promotion-window") != null' "$APPLY_LOG"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 }
 
 @test "orchestrate apply propagates decision gating failure when decision is hold" {

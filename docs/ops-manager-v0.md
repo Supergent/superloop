@@ -417,6 +417,9 @@ scripts/ops-manager-promotion-apply.sh \
   --repo /path/to/repo \
   --intent expand \
   --expand-step 25 \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
   --by <operator> \
   --approval-ref <change-id> \
   --rationale "guarded rollout expansion" \
@@ -440,6 +443,7 @@ Purpose:
 - Couples promotion decision artifacts to explicit rollout mutation intents.
 - Enforces decision gating (`expand` and `resume` require promotion decision `promote`; `rollback` is safety-allowed).
 - Enforces governance mutation metadata for every apply action.
+- Supports optional seam fields for additive Horizon integration (`loopId`, `horizonRef`, `evidenceRefs`).
 - Re-validates mutated registry through `scripts/ops-manager-fleet-registry.sh` before write.
 - Persists state and append-only telemetry for rollout posture before/after snapshots.
 
@@ -462,6 +466,9 @@ scripts/ops-manager-promotion-orchestrate.sh \
   --expand-step 25 \
   --idempotency-key <key> \
   --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
   --by <operator> \
   --approval-ref <change-id> \
   --rationale "promotion rollout mutation" \
@@ -473,6 +480,7 @@ Purpose:
 - Executes promotion CI evaluation first (`scripts/ops-manager-promotion-ci.sh`) for deterministic gate outcomes.
 - Supports `dry_run` preview mode without mutating rollout policy.
 - For `apply` and `rollback`, forwards governed mutation intent to `scripts/ops-manager-promotion-apply.sh`.
+- Emits additive seam metadata (`traceId`, `loopId`, `horizonRef`, `evidenceRefs`) in orchestration/apply records.
 - Enforces governance metadata for non-preview modes and preserves fail-closed behavior on invalid mode/intent combinations.
 - Emits orchestration JSON + markdown artifacts and appends summary content to `GITHUB_STEP_SUMMARY` when present.
 - Workflow integration: `.github/workflows/ops-manager-promotion-rollout.yml` exposes `workflow_dispatch` orchestration inputs.

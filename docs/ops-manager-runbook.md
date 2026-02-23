@@ -391,6 +391,9 @@ scripts/ops-manager-promotion-apply.sh \
   --repo /path/to/repo \
   --intent expand \
   --expand-step 25 \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
   --by <operator> \
   --approval-ref <change-id> \
   --rationale "guarded rollout expansion" \
@@ -454,6 +457,9 @@ scripts/ops-manager-promotion-orchestrate.sh \
   --expand-step 25 \
   --idempotency-key <key> \
   --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
   --by <operator> \
   --approval-ref <change-id> \
   --rationale "promotion rollout mutation" \
@@ -467,6 +473,7 @@ Semantics:
 - `apply` executes `expand` or `resume` and requires promotion decision `promote` plus governance metadata.
 - `rollback` executes safety rollback (manual pause posture) and still requires governance metadata.
 - supports trace/idempotency forwarding to preserve audit continuity across CI + apply layers.
+- supports optional seam-field forwarding (`loopId`, `horizonRef`, `evidenceRefs`) for additive Horizon linkage.
 
 Artifacts:
 - `.superloop/ops-manager/fleet/promotion-orchestrate-result.json`
