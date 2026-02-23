@@ -27,7 +27,7 @@
 
 ## P2.5 Test Coverage
 1. [x] Extend `tests/ops-manager-fleet.bats` for rollout cohort gating, auto-pause behavior, governance validation, and incident drills.
-2. [ ] Add/extend parity regressions in `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` for rollout/autopause/governance semantics.
+2. [x] Add/extend parity regressions in `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` for rollout/autopause/governance semantics.
 3. [ ] Add regression tests for deterministic governance audit artifacts and reason-code stability under mixed success/ambiguity/failure runs.
 
 ## P2.6 Docs and Runbook

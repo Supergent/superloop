@@ -500,3 +500,71 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" = "control_confirmed" ]
 }
+
+@test "fleet status preserves rollout autopause and governance parity across local and sprite_service transports" {
+  local local_repo="$TEMP_DIR/fleet-status-local"
+  local service_repo="$TEMP_DIR/fleet-status-service"
+
+  mkdir -p "$local_repo/.superloop/ops-manager/fleet/telemetry"
+  mkdir -p "$service_repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-status-parity","loops":[{"loopId":"loop-target","transport":"local"},{"loopId":"loop-review","transport":"local"}]}
+JSON
+
+  cat > "$service_repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-status-parity","loops":[{"loopId":"loop-target","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}},{"loopId":"loop-review","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}}]}
+JSON
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-24T09:00:00Z","startedAt":"2026-02-24T08:59:40Z","fleetId":"fleet-status-parity","traceId":"trace-fleet-status-parity-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":2,"successCount":1,"failedCount":1,"skippedCount":0,"durationSeconds":20,"execution":{"maxParallel":2,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-24T09:00:00Z","startedAt":"2026-02-24T08:59:45Z","loopId":"loop-target","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-status-parity-1-loop-target","files":{"stateFile":"/tmp/loop-target/state.json","healthFile":"/tmp/loop-target/health.json","cursorFile":"/tmp/loop-target/cursor.json","reconcileTelemetryFile":"/tmp/loop-target/reconcile.jsonl"}},{"timestamp":"2026-02-24T09:00:00Z","startedAt":"2026-02-24T08:59:50Z","loopId":"loop-review","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":4,"traceId":"trace-fleet-status-parity-1-loop-review","files":{"stateFile":"/tmp/loop-review/state.json","healthFile":"/tmp/loop-review/health.json","cursorFile":"/tmp/loop-review/cursor.json","reconcileTelemetryFile":"/tmp/loop-review/reconcile.jsonl"}}]}
+JSON
+
+  cp "$local_repo/.superloop/ops-manager/fleet/state.json" "$service_repo/.superloop/ops-manager/fleet/state.json"
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-24T09:00:02Z","fleetId":"fleet-status-parity","traceId":"trace-fleet-status-parity-policy-1","mode":"guarded_auto","candidateCount":2,"unsuppressedCount":2,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":1,"summary":{"byAutonomyReason":{"category_not_allowlisted":1,"autonomous_max_actions_per_run_exceeded":1,"autonomous_rollout_paused_auto":1,"autonomous_autopause_ambiguous_spike":1}},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-701","rationale":"phase-2-5 parity drill","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z","reviewWindowDays":311,"authorityContextPresent":false},"controls":{"safety":{"killSwitch":false}},"rollout":{"canaryPercent":50,"scopeLoopIds":["loop-target","loop-review"],"selectorSalt":"fleet-autonomous-rollout-v1","candidateBuckets":{"inScopeCount":2,"inCohortCount":1,"outOfCohortCount":1},"pause":{"active":true,"reasons":["autonomous_rollout_paused_auto"],"manual":false,"auto":{"enabled":true,"active":true,"reasons":["autonomous_autopause_ambiguous_spike"],"lookbackExecutions":5,"minSampleSize":3,"ambiguityRateThreshold":0.4,"failureRateThreshold":0.4,"metrics":{"windowExecutionCount":5,"attemptedCount":3,"executedCount":2,"ambiguousCount":1,"failedCount":0,"ambiguityRate":0.3333,"failureRate":0}}}}},"reasonCodes":["fleet_action_required","fleet_auto_candidates_rollout_gated","fleet_auto_candidates_safety_blocked"],"candidates":[{"candidateId":"loop-target:reconcile_failed","loopId":"loop-target","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-review:health_critical","loopId":"loop-review","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted","autonomous_max_actions_per_run_exceeded"]}}]}
+JSON
+
+  cp "$local_repo/.superloop/ops-manager/fleet/policy-state.json" "$service_repo/.superloop/ops-manager/fleet/policy-state.json"
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/handoff-state.json" <<'JSON'
+{"schemaVersion":"v1","generatedAt":"2026-02-24T09:00:03Z","updatedAt":"2026-02-24T09:00:06Z","fleetId":"fleet-status-parity","traceId":"trace-fleet-status-parity-handoff-1","policyTraceId":"trace-fleet-status-parity-policy-1","mode":"guarded_auto","summary":{"intentCount":2,"autoEligibleIntentCount":1,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_confirmation_pending","fleet_handoff_executed","fleet_handoff_auto_eligible_intents"],"intents":[{"intentId":"loop-target:reconcile_failed:cancel","loopId":"loop-target","intent":"cancel","status":"executed","transport":"local","autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"intentId":"loop-review:health_critical:cancel","loopId":"loop-review","intent":"cancel","status":"pending_operator_confirmation","transport":"local","autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted","autonomous_max_actions_per_run_exceeded"]}}],"execution":{"mode":"autonomous","requestedBy":"ops-bot","requestedAt":"2026-02-24T09:00:04Z","completedAt":"2026-02-24T09:00:06Z","requestedIntentCount":1,"executedIntentCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0,"results":[{"intentId":"loop-target:reconcile_failed:cancel","loopId":"loop-target","status":"executed","reasonCode":"control_confirmed"}]}}
+JSON
+
+  cat > "$service_repo/.superloop/ops-manager/fleet/handoff-state.json" <<'JSON'
+{"schemaVersion":"v1","generatedAt":"2026-02-24T09:00:03Z","updatedAt":"2026-02-24T09:00:06Z","fleetId":"fleet-status-parity","traceId":"trace-fleet-status-parity-handoff-1","policyTraceId":"trace-fleet-status-parity-policy-1","mode":"guarded_auto","summary":{"intentCount":2,"autoEligibleIntentCount":1,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_confirmation_pending","fleet_handoff_executed","fleet_handoff_auto_eligible_intents"],"intents":[{"intentId":"loop-target:reconcile_failed:cancel","loopId":"loop-target","intent":"cancel","status":"executed","transport":"sprite_service","autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"intentId":"loop-review:health_critical:cancel","loopId":"loop-review","intent":"cancel","status":"pending_operator_confirmation","transport":"sprite_service","autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted","autonomous_max_actions_per_run_exceeded"]}}],"execution":{"mode":"autonomous","requestedBy":"ops-bot","requestedAt":"2026-02-24T09:00:04Z","completedAt":"2026-02-24T09:00:06Z","requestedIntentCount":1,"executedIntentCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0,"results":[{"intentId":"loop-target:reconcile_failed:cancel","loopId":"loop-target","status":"executed","reasonCode":"control_confirmed"}]}}
+JSON
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" <<'JSONL'
+{"timestamp":"2026-02-24T09:00:06Z","category":"fleet_handoff_execute","fleetId":"fleet-status-parity","traceId":"trace-fleet-status-parity-handoff-1","execution":{"mode":"autonomous","requestedIntentCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"summary":{"summary":{"intentCount":2,"autoEligibleIntentCount":1,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"pendingManualOnlyCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_executed"]}}
+JSONL
+
+  cp "$local_repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" "$service_repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-status.sh" --repo "$local_repo"
+  [ "$status" -eq 0 ]
+  local local_status_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-status.sh" --repo "$service_repo"
+  [ "$status" -eq 0 ]
+  local service_status_json="$output"
+
+  local local_projection
+  local service_projection
+  local_projection="$(jq -c '{governance: (.autonomous.governance | {changedBy, changedAt, why, until, posture, blocksAutonomous, reasonCodes: ((.reasonCodes // []) | sort)}), rollout: (.autonomous.rollout | {candidateBuckets, state, autopause}), outcomeRollup: .autonomous.outcomeRollup, byPath: (.autonomous.safetyGateDecisions.byPath | {policyGated, rolloutGated, governanceGated}), suppressionReasonCodes: ((.autonomous.safetyGateDecisions.suppressionReasonCodes // []) | sort), handoffRollup: .handoff.summary.autonomousOutcomeRollup, telemetryRollup: .latestHandoffTelemetry.autonomousOutcomeRollup}' <<<"$local_status_json")"
+  service_projection="$(jq -c '{governance: (.autonomous.governance | {changedBy, changedAt, why, until, posture, blocksAutonomous, reasonCodes: ((.reasonCodes // []) | sort)}), rollout: (.autonomous.rollout | {candidateBuckets, state, autopause}), outcomeRollup: .autonomous.outcomeRollup, byPath: (.autonomous.safetyGateDecisions.byPath | {policyGated, rolloutGated, governanceGated}), suppressionReasonCodes: ((.autonomous.safetyGateDecisions.suppressionReasonCodes // []) | sort), handoffRollup: .handoff.summary.autonomousOutcomeRollup, telemetryRollup: .latestHandoffTelemetry.autonomousOutcomeRollup}' <<<"$service_status_json")"
+  [ "$local_projection" = "$service_projection" ]
+
+  run jq -r '.autonomous.governance.posture' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "authority_missing" ]
+
+  run jq -r '.autonomous.rollout.autopause.active' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.transportGated.blockedCount' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+}
