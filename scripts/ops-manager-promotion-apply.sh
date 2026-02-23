@@ -15,6 +15,9 @@ Options:
   --expand-step <n>               Expand step percentage for intent=expand (default: 25)
   --idempotency-key <key>         Optional idempotency key. Replay returns prior result without mutation.
   --trace-id <id>                 Apply trace id override.
+  --loop-id <id>                  Optional loop identifier for seam tracking.
+  --horizon-ref <id>              Optional horizon reference for seam tracking.
+  --evidence-ref <ref>            Optional evidence reference. May be repeated.
   --by <actor>                    Governance actor identity for mutation.
   --approval-ref <id>             Governance approval/change reference.
   --rationale <text>              Governance rationale.
@@ -70,6 +73,9 @@ intent=""
 expand_step="25"
 idempotency_key=""
 trace_id=""
+loop_id=""
+horizon_ref=""
+evidence_refs=()
 actor=""
 approval_ref=""
 rationale=""
@@ -112,6 +118,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --trace-id)
       trace_id="${2:-}"
+      shift 2
+      ;;
+    --loop-id)
+      loop_id="${2:-}"
+      shift 2
+      ;;
+    --horizon-ref)
+      horizon_ref="${2:-}"
+      shift 2
+      ;;
+    --evidence-ref)
+      evidence_refs+=("${2:-}")
       shift 2
       ;;
     --by)
@@ -186,6 +204,15 @@ if [[ -z "$apply_telemetry_file" ]]; then
   apply_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl"
 fi
 
+custom_evidence_refs_json='[]'
+if [[ ${#evidence_refs[@]} -gt 0 ]]; then
+  custom_evidence_refs_json="$(printf '%s\n' "${evidence_refs[@]}" | jq -Rsc 'split("\n")[:-1] | map(select(length > 0))')"
+fi
+evidence_refs_json="$(jq -cn \
+  --arg promotion_state_file "$promotion_state_file" \
+  --argjson custom_refs "$custom_evidence_refs_json" \
+  '($custom_refs + [$promotion_state_file]) | map(select(type == "string" and length > 0)) | unique')"
+
 if [[ -z "$trace_id" && -n "${OPS_MANAGER_TRACE_ID:-}" ]]; then
   trace_id="$OPS_MANAGER_TRACE_ID"
 fi
@@ -219,7 +246,18 @@ fi
 if [[ -n "$idempotency_key" && -f "$apply_telemetry_file" ]]; then
   prior_record="$(jq -cs --arg key "$idempotency_key" '[.[] | select((.idempotencyKey // "") == $key)] | last // empty' "$apply_telemetry_file" 2>/dev/null || true)"
   if [[ -n "$prior_record" ]]; then
-    replay_json="$(jq -c '. + {replayed: true}' <<<"$prior_record")"
+    replay_json="$(jq -c \
+      --arg loop_id "$loop_id" \
+      --arg horizon_ref "$horizon_ref" \
+      --argjson evidence_refs "$evidence_refs_json" \
+      '
+      . + {
+        replayed: true,
+        loopId: (.loopId // (if ($loop_id | length) > 0 then $loop_id else null end)),
+        horizonRef: (.horizonRef // (if ($horizon_ref | length) > 0 then $horizon_ref else null end)),
+        evidenceRefs: (.evidenceRefs // $evidence_refs)
+      }
+      ' <<<"$prior_record")"
     jq -c '.' <<<"$replay_json" > "$apply_state_file"
     if [[ "$pretty" == "1" ]]; then
       jq '.' <<<"$replay_json"
@@ -291,7 +329,10 @@ apply_record_json=$(jq -cn \
   --arg timestamp "$changed_at" \
   --arg fleet_id "$fleet_id" \
   --arg trace_id "$trace_id" \
+  --arg loop_id "$loop_id" \
+  --arg horizon_ref "$horizon_ref" \
   --arg idempotency_key "$idempotency_key" \
+  --argjson evidence_refs "$evidence_refs_json" \
   --arg intent "$intent" \
   --arg decision "$promotion_decision" \
   --arg actor "$actor" \
@@ -313,6 +354,9 @@ apply_record_json=$(jq -cn \
     category: "promotion_apply",
     fleetId: $fleet_id,
     traceId: $trace_id,
+    loopId: (if ($loop_id | length) > 0 then $loop_id else null end),
+    horizonRef: (if ($horizon_ref | length) > 0 then $horizon_ref else null end),
+    evidenceRefs: $evidence_refs,
     idempotencyKey: (if ($idempotency_key | length) > 0 then $idempotency_key else null end),
     status: "applied",
     intent: $intent,

@@ -89,6 +89,22 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" = "false" ]
 
+  run jq -r '.traceId | type' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "string" ]
+
+  run jq -r '.loopId == null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.horizonRef == null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r --arg ref "$repo/.superloop/ops-manager/fleet/promotion-state.json" '.evidenceRefs | index($ref) != null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
   run jq -r '.policy.autonomous.rollout.canaryPercent' "$repo/.superloop/ops-manager/fleet/registry.v1.json"
   [ "$status" -eq 0 ]
   [ "$output" = "50" ]
@@ -107,6 +123,47 @@ JSON
   run bash -lc "wc -l < '$repo/.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl'"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+}
+
+@test "promotion apply accepts optional seam fields and records them" {
+  local repo="$TEMP_DIR/repo-seam-fields"
+  write_registry_guarded_auto "$repo" 15 false
+  write_promotion_state "$repo" promote
+
+  run "$PROJECT_ROOT/scripts/ops-manager-promotion-apply.sh" \
+    --repo "$repo" \
+    --intent resume \
+    --loop-id loop-a \
+    --horizon-ref HZ-fleet-promo-v1 \
+    --evidence-ref "artifact://promotion-window" \
+    --evidence-ref "artifact://fleet-health" \
+    --by ops-user \
+    --approval-ref CAB-111A \
+    --rationale "phase12-seam-fields" \
+    --review-by "2099-01-01T00:00:00Z"
+
+  [ "$status" -eq 0 ]
+  local result_json="$output"
+
+  run jq -r '.loopId' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-a" ]
+
+  run jq -r '.horizonRef' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "HZ-fleet-promo-v1" ]
+
+  run jq -r '.evidenceRefs | index("artifact://promotion-window") != null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.evidenceRefs | index("artifact://fleet-health") != null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r --arg ref "$repo/.superloop/ops-manager/fleet/promotion-state.json" '.evidenceRefs | index($ref) != null' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 }
 
 @test "promotion apply expand fails when promotion decision is hold" {

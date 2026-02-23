@@ -31,6 +31,9 @@ Options:
 
   --idempotency-key <key>          Forwarded to promotion apply.
   --trace-id <id>                  Forwarded to promotion CI/apply.
+  --loop-id <id>                   Optional loop identifier for seam tracking.
+  --horizon-ref <id>               Optional horizon reference for seam tracking.
+  --evidence-ref <ref>             Optional evidence reference. May be repeated.
   --by <actor>                     Governance actor for apply/rollback.
   --approval-ref <id>              Governance approval reference for apply/rollback.
   --rationale <text>               Governance rationale for apply/rollback.
@@ -81,6 +84,9 @@ summary_file=""
 
 idempotency_key=""
 trace_id=""
+loop_id=""
+horizon_ref=""
+evidence_refs=()
 actor=""
 approval_ref=""
 rationale=""
@@ -176,6 +182,18 @@ while [[ $# -gt 0 ]]; do
       trace_id="${2:-}"
       shift 2
       ;;
+    --loop-id)
+      loop_id="${2:-}"
+      shift 2
+      ;;
+    --horizon-ref)
+      horizon_ref="${2:-}"
+      shift 2
+      ;;
+    --evidence-ref)
+      evidence_refs+=("${2:-}")
+      shift 2
+      ;;
     --by)
       actor="${2:-}"
       shift 2
@@ -246,6 +264,11 @@ if [[ -z "$result_file" ]]; then
 fi
 if [[ -z "$summary_file" ]]; then
   summary_file="$repo/.superloop/ops-manager/fleet/promotion-orchestrate-summary.md"
+fi
+
+custom_evidence_refs_json='[]'
+if [[ ${#evidence_refs[@]} -gt 0 ]]; then
+  custom_evidence_refs_json="$(printf '%s\n' "${evidence_refs[@]}" | jq -Rsc 'split("\n")[:-1] | map(select(length > 0))')"
 fi
 
 mkdir -p "$(dirname "$result_file")"
@@ -322,6 +345,17 @@ if [[ "$mode" == "apply" || "$mode" == "rollback" ]]; then
   if [[ -n "$trace_id" ]]; then
     apply_cmd+=(--trace-id "$trace_id")
   fi
+  if [[ -n "$loop_id" ]]; then
+    apply_cmd+=(--loop-id "$loop_id")
+  fi
+  if [[ -n "$horizon_ref" ]]; then
+    apply_cmd+=(--horizon-ref "$horizon_ref")
+  fi
+  if [[ ${#evidence_refs[@]} -gt 0 ]]; then
+    for evidence_ref in "${evidence_refs[@]}"; do
+      apply_cmd+=(--evidence-ref "$evidence_ref")
+    done
+  fi
 
   set +e
   apply_output="$(${apply_cmd[@]} 2>&1)"
@@ -342,12 +376,45 @@ if [[ "$mode" == "apply" || "$mode" == "rollback" ]]; then
   fi
 fi
 
+orchestrate_trace_id="$trace_id"
+if [[ -z "$orchestrate_trace_id" ]]; then
+  orchestrate_trace_id="$(jq -r '.traceId // empty' <<<"$apply_record_json" 2>/dev/null || true)"
+fi
+orchestrate_loop_id="$loop_id"
+if [[ -z "$orchestrate_loop_id" ]]; then
+  orchestrate_loop_id="$(jq -r '.loopId // empty' <<<"$apply_record_json" 2>/dev/null || true)"
+fi
+orchestrate_horizon_ref="$horizon_ref"
+if [[ -z "$orchestrate_horizon_ref" ]]; then
+  orchestrate_horizon_ref="$(jq -r '.horizonRef // empty' <<<"$apply_record_json" 2>/dev/null || true)"
+fi
+orchestrate_evidence_refs_json="$(jq -cn \
+  --arg promotion_ci_result_file "$promotion_ci_result_file" \
+  --arg promotion_ci_summary_file "$promotion_ci_summary_file" \
+  --argjson custom_refs "$custom_evidence_refs_json" \
+  --argjson apply_record "$apply_record_json" \
+  '
+  ($apply_record.evidenceRefs // []) as $apply_refs
+  | ($apply_record.files // {}) as $files
+  | (
+      $custom_refs
+      + [$promotion_ci_result_file, $promotion_ci_summary_file, ($files.promotionStateFile // null), ($files.applyStateFile // null)]
+      + $apply_refs
+    )
+  | map(select(type == "string" and length > 0))
+  | unique
+  ')"
+
 orchestrate_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg timestamp "$(timestamp)" \
   --arg mode "$mode" \
   --arg status "$action_status" \
   --arg decision "$decision" \
+  --arg trace_id "$orchestrate_trace_id" \
+  --arg loop_id "$orchestrate_loop_id" \
+  --arg horizon_ref "$orchestrate_horizon_ref" \
+  --argjson evidence_refs "$orchestrate_evidence_refs_json" \
   --arg result_file "$result_file" \
   --arg summary_file "$summary_file" \
   --arg promotion_ci_result_file "$promotion_ci_result_file" \
@@ -365,6 +432,10 @@ orchestrate_json=$(jq -cn \
     mode: $mode,
     status: $status,
     decision: $decision,
+    traceId: (if ($trace_id | length) > 0 then $trace_id else null end),
+    loopId: (if ($loop_id | length) > 0 then $loop_id else null end),
+    horizonRef: (if ($horizon_ref | length) > 0 then $horizon_ref else null end),
+    evidenceRefs: $evidence_refs,
     summary: {
       failedGates: ($ci_result.summary.failedGates // []),
       reasonCodes: ($ci_result.summary.reasonCodes // [])
