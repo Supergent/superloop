@@ -343,6 +343,38 @@ Promotion decision:
 - include accountable approver and rollback owner
 - if any gate fails, remain in guarded dogfood mode and remediate before re-evaluation
 
+## Promotion CI Workflow
+Use this when you want recurring or manual promotion checks from GitHub Actions.
+
+Workflow file:
+- `.github/workflows/ops-manager-promotion-gates.yml`
+
+Execution modes:
+- `workflow_dispatch`: operator-triggered checks with explicit thresholds and enforcement flags.
+- `schedule`: recurring checks (defaults to skip-on-missing-evidence to avoid noisy failures in repos without live fleet artifacts).
+
+Wrapper command used by workflow:
+```bash
+scripts/ops-manager-promotion-ci.sh \
+  --repo /path/to/repo \
+  --skip-on-missing-evidence \
+  --result-file .superloop/ops-manager/fleet/promotion-ci-result.json \
+  --summary-file .superloop/ops-manager/fleet/promotion-ci-summary.md
+```
+
+Decision semantics:
+- `promote`: all gates pass.
+- `hold`: one or more gates fail (optional non-zero exit with `--fail-on-hold`).
+- `skipped`: required evidence files are missing and skip mode is enabled.
+
+Artifacts:
+- `.superloop/ops-manager/fleet/promotion-ci-result.json`
+- `.superloop/ops-manager/fleet/promotion-ci-summary.md`
+
+Triage guidance:
+- if result is `hold`, use `.summary.failedGates` and `.summary.reasonCodes` to drive remediation in the same order as gate priority (governance -> reliability -> backlog -> safety -> drills).
+- if result is `skipped`, verify fleet telemetry/drill evidence collection paths and rerun with valid artifact sources (or disable skip mode for strict environments).
+
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
 

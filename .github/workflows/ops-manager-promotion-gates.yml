@@ -1,0 +1,115 @@
+name: Ops Manager Promotion Gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_path:
+        description: Repository path containing .superloop ops-manager artifacts
+        required: false
+        default: .
+      skip_on_missing_evidence:
+        description: Skip with success when evidence files are missing
+        type: boolean
+        required: false
+        default: true
+      fail_on_hold:
+        description: Fail job when promotion decision is hold
+        type: boolean
+        required: false
+        default: false
+      window_executions:
+        description: Window size for autonomous execution reliability gate
+        required: false
+        default: "20"
+      min_sample_size:
+        description: Minimum autonomous sample size required for promotion
+        required: false
+        default: "20"
+      max_ambiguity_rate:
+        description: Maximum ambiguity rate threshold
+        required: false
+        default: "0.2"
+      max_failure_rate:
+        description: Maximum failure rate threshold
+        required: false
+        default: "0.2"
+      max_manual_backlog:
+        description: Maximum manual backlog threshold
+        required: false
+        default: "5"
+      max_drill_age_hours:
+        description: Maximum drill evidence age in hours
+        required: false
+        default: "168"
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-manager-promotion-gates-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promotion-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Evaluate guarded-auto promotion gates
+        env:
+          INPUT_REPO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.repo_path || '.' }}
+          INPUT_SKIP_MISSING: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_on_missing_evidence || 'true' }}
+          INPUT_FAIL_ON_HOLD: ${{ github.event_name == 'workflow_dispatch' && inputs.fail_on_hold || 'false' }}
+          INPUT_WINDOW_EXECUTIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.window_executions || '20' }}
+          INPUT_MIN_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_sample_size || '20' }}
+          INPUT_MAX_AMBIGUITY_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguity_rate || '0.2' }}
+          INPUT_MAX_FAILURE_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_failure_rate || '0.2' }}
+          INPUT_MAX_MANUAL_BACKLOG: ${{ github.event_name == 'workflow_dispatch' && inputs.max_manual_backlog || '5' }}
+          INPUT_MAX_DRILL_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_drill_age_hours || '168' }}
+        run: |
+          set -euo pipefail
+
+          cmd=(
+            scripts/ops-manager-promotion-ci.sh
+            --repo "${INPUT_REPO_PATH}"
+            --window-executions "${INPUT_WINDOW_EXECUTIONS}"
+            --min-sample-size "${INPUT_MIN_SAMPLE_SIZE}"
+            --max-ambiguity-rate "${INPUT_MAX_AMBIGUITY_RATE}"
+            --max-failure-rate "${INPUT_MAX_FAILURE_RATE}"
+            --max-manual-backlog "${INPUT_MAX_MANUAL_BACKLOG}"
+            --max-drill-age-hours "${INPUT_MAX_DRILL_AGE_HOURS}"
+            --result-file .superloop/ops-manager/fleet/promotion-ci-result.json
+            --summary-file .superloop/ops-manager/fleet/promotion-ci-summary.md
+          )
+
+          if [ "${INPUT_SKIP_MISSING}" = "true" ]; then
+            cmd+=(--skip-on-missing-evidence)
+          fi
+          if [ "${INPUT_FAIL_ON_HOLD}" = "true" ]; then
+            cmd+=(--fail-on-hold)
+          fi
+
+          "${cmd[@]}"
+
+      - name: Show promotion CI artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f .superloop/ops-manager/fleet/promotion-ci-result.json ]; then
+            echo "--- promotion-ci-result.json ---"
+            cat .superloop/ops-manager/fleet/promotion-ci-result.json
+          else
+            echo "promotion-ci-result.json not found"
+          fi
+
+          if [ -f .superloop/ops-manager/fleet/promotion-ci-summary.md ]; then
+            echo "--- promotion-ci-summary.md ---"
+            cat .superloop/ops-manager/fleet/promotion-ci-summary.md
+          else
+            echo "promotion-ci-summary.md not found"
+          fi
