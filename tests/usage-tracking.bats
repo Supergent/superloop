@@ -349,6 +349,11 @@ EOF
   [ "$result" = "xyz" ]
 }
 
+@test "usage: extract_thread_id_from_filename preserves dashed UUID thread IDs" {
+  result=$(extract_thread_id_from_filename "rollout-2026-02-18T20-18-16-019c7379-ed87-7320-8162-a71a386c08f7.jsonl")
+  [ "$result" = "019c7379-ed87-7320-8162-a71a386c08f7" ]
+}
+
 @test "usage: extract_thread_id_from_filename returns error for invalid format" {
   run extract_thread_id_from_filename "not-a-rollout-file.jsonl"
   [ "$status" -eq 1 ]
