@@ -531,6 +531,37 @@ Purpose:
 - Maintains hard Phase 12 boundary: no Horizon runtime coupling; `horizonRef` is optional context only.
 - Workflow integration: `.github/workflows/ops-manager-promotion-controller.yml` supports recurring schedule and operator dispatch modes.
 
+### Horizon Outbox Bridge Adapter (Phase 13 / Phase 1)
+```bash
+scripts/ops-manager-horizon-bridge.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-horizon-bridge.sh \
+  --repo /path/to/repo \
+  --outbox-dir /path/to/repo/.superloop/horizons/outbox \
+  --claims-dir /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-claims \
+  --queue-file /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-queue.json \
+  --state-file /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-state.json \
+  --telemetry-file /path/to/repo/.superloop/ops-manager/fleet/telemetry/horizon-bridge.jsonl \
+  --max-files 25 \
+  --trace-id <trace-id> \
+  --pretty
+```
+
+Purpose:
+- Consumes Horizon outbox envelopes into Ops Manager-side queue artifacts only.
+- Enforces frozen v1 contract required fields and fail-closed behavior for missing/invalid required fields.
+- Ignores unknown/additive envelope fields (fail-open extras).
+- Uses atomic file claim (`outbox -> claims/inflight`) before parse for safer concurrent consumption.
+- Uses replay-safe dedupe key `packetId + traceId` to avoid duplicate queueing across reruns.
+- Projects intents as `pending_operator_confirmation` with manual-only autonomous posture.
+- Persists bridge state + queue + append-only telemetry artifacts for operator audit.
+- Maintains strict boundary: no Horizon orchestration/runtime mutations and no implicit autonomous execution.
+- Contract reference: `docs/horizon-envelope-contract-v1.md`.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -597,6 +628,12 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/promotion-controller-apply-summary.md` - controller apply orchestration summary.
 - `.superloop/ops-manager/fleet/promotion-controller-rollback-result.json` - controller rollback orchestration record (when triggered).
 - `.superloop/ops-manager/fleet/promotion-controller-rollback-summary.md` - controller rollback orchestration summary (when triggered).
+- `.superloop/ops-manager/fleet/horizon-bridge-queue.json` - latest bridge-projected pending operator-confirmation queue from Horizon envelopes.
+- `.superloop/ops-manager/fleet/horizon-bridge-state.json` - latest bridge ingestion state, reason codes, and dedupe index.
+- `.superloop/ops-manager/fleet/telemetry/horizon-bridge.jsonl` - append-only bridge file/run telemetry.
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/inflight/**` - atomically claimed outbox files awaiting bridge parse.
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/processed/**` - claimed outbox files successfully processed by bridge.
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/rejected/**` - claimed outbox files rejected due contract failures.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.

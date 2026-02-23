@@ -581,6 +581,56 @@ Controller triage guidance:
 - `status=rolled_back`: treat as safety event and review verify result + rollback result artifacts before another apply.
 - `status=failed`: inspect `.error.stage`, `.error.reasonCode`, `.error.exitCode`, and `.error.stderr`; remediate the failing stage then rerun `propose_only` before any guarded apply.
 
+## Horizon Outbox Bridge Workflow (Phase 13 / Phase 1)
+Use this when you need to ingest Horizon outbox envelopes into Ops Manager queue artifacts without autonomous execution.
+
+Bridge command:
+```bash
+scripts/ops-manager-horizon-bridge.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+Custom-path command:
+```bash
+scripts/ops-manager-horizon-bridge.sh \
+  --repo /path/to/repo \
+  --outbox-dir /path/to/repo/.superloop/horizons/outbox \
+  --claims-dir /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-claims \
+  --queue-file /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-queue.json \
+  --state-file /path/to/repo/.superloop/ops-manager/fleet/horizon-bridge-state.json \
+  --telemetry-file /path/to/repo/.superloop/ops-manager/fleet/telemetry/horizon-bridge.jsonl \
+  --max-files 25 \
+  --trace-id <trace-id> \
+  --pretty
+```
+
+Execution semantics:
+- bridge-only boundary: no Horizon runtime/orchestrator mutation logic.
+- consumes outbox files through atomic claim (`outbox -> claims/inflight`) before parse.
+- required envelope fields fail closed (`schemaVersion`, `traceId`, `packet.packetId`, `packet.recipient.type`, `packet.recipient.id`, `packet.intent`, `evidenceRefs`).
+- unknown extra envelope fields fail open and are ignored.
+- dedupe is replay-safe by `packetId + traceId`.
+- queue intents are always `pending_operator_confirmation` and manual-only.
+- no implicit autonomous execution is allowed in bridge flow.
+
+Bridge artifacts:
+- `.superloop/ops-manager/fleet/horizon-bridge-queue.json`
+- `.superloop/ops-manager/fleet/horizon-bridge-state.json`
+- `.superloop/ops-manager/fleet/telemetry/horizon-bridge.jsonl`
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/inflight/**`
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/processed/**`
+- `.superloop/ops-manager/fleet/horizon-bridge-claims/rejected/**`
+
+Contract reference:
+- `docs/horizon-envelope-contract-v1.md`
+
+Bridge triage guidance:
+- `status=ok`: inspect queue summary and route pending intents through explicit operator workflow.
+- `status=failed_contract_validation`: inspect `reasonCodes` and rejected claim files; repair producer payloads and replay via outbox.
+- high duplicate counts: inspect dedupe key collisions (`packetId + traceId`) and producer replay behavior.
+- persistent rejected files: coordinate contract changes via explicit review handshake only (additive-only fields allowed).
+
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
 
