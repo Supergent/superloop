@@ -487,6 +487,86 @@ Triage guidance:
 - for `apply`/`rollback` input failures, fix governance metadata (`--by`, `--approval-ref`, `--rationale`, `--review-by`) and rerun.
 - for `skipped` promotion CI decisions, either provide evidence artifacts or disable skip mode for strict environments.
 
+## Promotion Controller Workflow (Phase 12 / Phase 1)
+Use this when you want a guarded controller loop over promotion evidence and rollout mutation posture.
+
+Controller commands:
+```bash
+# propose_only (default): evaluate + decide, no rollout mutation
+scripts/ops-manager-promotion-controller.sh \
+  --repo /path/to/repo \
+  --mode propose_only \
+  --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
+  --pretty
+
+# guarded_auto_apply: apply when freshness/budget/governance gates pass
+scripts/ops-manager-promotion-controller.sh \
+  --repo /path/to/repo \
+  --mode guarded_auto_apply \
+  --apply-intent expand \
+  --expand-step 25 \
+  --decision-ttl-minutes 60 \
+  --budget-window-hours 24 \
+  --max-applies-per-window 1 \
+  --max-expand-step-per-window 25 \
+  --cooldown-minutes 60 \
+  --freeze-windows-file /path/to/repo/.superloop/ops-manager/fleet/promotion-freeze-windows.json \
+  --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "guarded promotion controller run" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Execution semantics:
+- deterministic stages: `observe -> evaluate -> decide -> apply/propose -> verify -> rollback/hold`.
+- `propose_only` produces preview-only control output and never mutates rollout policy.
+- `guarded_auto_apply` requires governance metadata and enforces freshness + budget gates before apply.
+- verification runs after successful apply; failed verification triggers deterministic rollback.
+- rollback remains explicitly safety-allowed and deterministic.
+- seam fields are additive only: `traceId`, `loopId`, optional `horizonRef`, `evidenceRefs`.
+- hard boundary: controller does not call Horizon runtime internals; `horizonRef` is contextual metadata only.
+
+Controller artifacts:
+- `.superloop/ops-manager/fleet/promotion-controller-state.json`
+- `.superloop/ops-manager/fleet/telemetry/promotion-controller.jsonl`
+- `.superloop/ops-manager/fleet/promotion-controller-ci-result.json`
+- `.superloop/ops-manager/fleet/promotion-controller-ci-summary.md`
+- `.superloop/ops-manager/fleet/promotion-controller-verify-ci-result.json`
+- `.superloop/ops-manager/fleet/promotion-controller-verify-ci-summary.md`
+- `.superloop/ops-manager/fleet/promotion-controller-preview-result.json`
+- `.superloop/ops-manager/fleet/promotion-controller-preview-summary.md`
+- `.superloop/ops-manager/fleet/promotion-controller-apply-result.json`
+- `.superloop/ops-manager/fleet/promotion-controller-apply-summary.md`
+- `.superloop/ops-manager/fleet/promotion-controller-rollback-result.json`
+- `.superloop/ops-manager/fleet/promotion-controller-rollback-summary.md`
+
+Freeze windows file shape:
+```json
+{
+  "windows": [
+    {
+      "start": "2026-02-25T00:00:00Z",
+      "end": "2026-02-25T08:00:00Z",
+      "reason": "change-freeze"
+    }
+  ]
+}
+```
+
+Controller triage guidance:
+- `status=proposed`: review decision/budget/freshness reason codes and execute explicit mutation if desired.
+- `status=hold`: remediate `decision.reasonCodes` and rerun in propose-only first.
+- `status=applied`: verify `verification.status=pass` and watch next scheduled run for drift.
+- `status=rolled_back`: treat as safety event and review verify result + rollback result artifacts before another apply.
+
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
 
