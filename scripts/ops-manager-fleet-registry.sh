@@ -80,6 +80,10 @@ registry_raw=$(jq -c '.' "$registry_file" 2>/dev/null) || die "invalid fleet reg
 validation_errors=$(jq -r '
   def is_non_empty_string: (type == "string" and (.|length) > 0);
   def loop_error($idx; $msg): "loops[\($idx)]: \($msg)";
+  def is_known_policy_category:
+    . == "reconcile_failed"
+    or . == "health_critical"
+    or . == "health_degraded";
 
   (
     if (.schemaVersion // "") != "v1" then ["schemaVersion must be \"v1\""] else [] end
@@ -191,18 +195,48 @@ validation_errors=$(jq -r '
     end
   )
   + (
+    if ((.policy.noiseControls // {}) | type) != "object" then
+      ["policy.noiseControls must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if (
+      (.policy.noiseControls.dedupeWindowSeconds // null) == null
+      or (
+        ((.policy.noiseControls.dedupeWindowSeconds // null) | type) == "number"
+        and ((.policy.noiseControls.dedupeWindowSeconds // null) >= 0)
+        and ((.policy.noiseControls.dedupeWindowSeconds // null) == ((.policy.noiseControls.dedupeWindowSeconds // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.noiseControls.dedupeWindowSeconds must be an integer >= 0 when present"]
+    end
+  )
+  + (
     if ((.policy.suppressions // {}) | type) != "object" then
       ["policy.suppressions must be an object mapping loopId to category arrays"]
     else
-      [ (.policy.suppressions // {}) | to_entries[]?
-        | if (.value | type) != "array" then
-            "policy.suppressions.\(.key) must be an array"
-          elif ([.value[] | type] | all(. == "string")) then
-            empty
-          else
-            "policy.suppressions.\(.key) entries must be strings"
-          end
-      ]
+      (
+        (.loops // []) as $loops
+        | ([ $loops[]? | .loopId // empty ] | map(select(type == "string" and length > 0)) | unique) as $declared_loop_ids
+        | [ (.policy.suppressions // {}) | to_entries[]?
+            | .key as $supp_key
+            | if ($supp_key != "*" and (($declared_loop_ids | index($supp_key)) == null)) then
+                "policy.suppressions.\($supp_key) key must reference a declared loopId or *"
+              elif (.value | type) != "array" then
+                "policy.suppressions.\($supp_key) must be an array"
+              elif ([.value[] | type] | all(. == "string")) | not then
+                "policy.suppressions.\($supp_key) entries must be strings"
+              elif ([.value[] | select(is_known_policy_category | not)] | length) > 0 then
+                "policy.suppressions.\($supp_key) contains unknown categories"
+              else
+                empty
+              end
+          ]
+      )
     end
   )
   | .[]
@@ -250,7 +284,10 @@ normalized_json=$(jq -cn \
       ),
       policy: {
         mode: ($registry.policy.mode // "advisory"),
-        suppressions: ($registry.policy.suppressions // {})
+        suppressions: ($registry.policy.suppressions // {}),
+        noiseControls: {
+          dedupeWindowSeconds: ($registry.policy.noiseControls.dedupeWindowSeconds // 300)
+        }
       }
     }
   | .loopCount = (.loops | length)

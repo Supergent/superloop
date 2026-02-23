@@ -88,6 +88,19 @@ JSON
   [[ "$output" == *"sprite_service loops require service.baseUrl or sprite.serviceBaseUrl"* ]]
 }
 
+@test "fleet registry fails closed on unknown suppression categories" {
+  local repo="$TEMP_DIR/registry-policy-invalid"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"suppressions":{"*":["health_critical","unknown_category"]}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"contains unknown categories"* ]]
+}
+
 @test "fleet reconcile captures partial failure with deterministic ordering and trace linkage" {
   local repo="$TEMP_DIR/fleet-partial"
   local now_ts
@@ -285,4 +298,58 @@ JSONL
   run jq -r '.loops[] | select(.loopId == "loop-red") | .artifacts.stateFile' <<<"$status_json"
   [ "$status" -eq 0 ]
   [ "$output" = "/tmp/loop-red/state.json" ]
+}
+
+@test "fleet policy enforces suppression precedence and advisory cooldown dedupe" {
+  local repo="$TEMP_DIR/fleet-policy-hardening"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-hardening","loops":[{"loopId":"loop-red"},{"loopId":"loop-blue"},{"loopId":"loop-green"}],"policy":{"mode":"advisory","suppressions":{"*":["health_critical"],"loop-red":["health_critical"]},"noiseControls":{"dedupeWindowSeconds":3600}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-22T18:00:00Z","startedAt":"2026-02-22T17:59:40Z","fleetId":"fleet-policy-hardening","traceId":"trace-fleet-policy-hardening-1","status":"partial_failure","reasonCodes":["fleet_partial_failure","fleet_health_critical"],"loopCount":3,"successCount":3,"failedCount":0,"skippedCount":0,"durationSeconds":20,"execution":{"maxParallel":2,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-22T18:00:00Z","startedAt":"2026-02-22T17:59:45Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-hardening-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}},{"timestamp":"2026-02-22T18:00:00Z","startedAt":"2026-02-22T17:59:50Z","loopId":"loop-blue","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["ingest_stale"],"durationSeconds":4,"traceId":"trace-fleet-policy-hardening-1-loop-blue","files":{"stateFile":"/tmp/loop-blue/state.json","healthFile":"/tmp/loop-blue/health.json","cursorFile":"/tmp/loop-blue/cursor.json","reconcileTelemetryFile":"/tmp/loop-blue/reconcile.jsonl"}},{"timestamp":"2026-02-22T18:00:00Z","startedAt":"2026-02-22T17:59:52Z","loopId":"loop-green","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"degraded","healthReasonCodes":["ingest_stale"],"durationSeconds":4,"traceId":"trace-fleet-policy-hardening-1-loop-green","files":{"stateFile":"/tmp/loop-green/state.json","healthFile":"/tmp/loop-green/health.json","cursorFile":"/tmp/loop-green/cursor.json","reconcileTelemetryFile":"/tmp/loop-green/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-policy-hardening-1"
+  [ "$status" -eq 0 ]
+  local first_policy_json="$output"
+
+  run jq -r '.candidates[] | select(.loopId == "loop-red" and .category == "health_critical") | .suppressionScope' <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop" ]
+
+  run jq -r '.candidates[] | select(.loopId == "loop-blue" and .category == "health_critical") | .suppressionScope' <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "global" ]
+
+  run jq -r '.candidates[] | select(.loopId == "loop-green" and .category == "health_degraded") | .suppressed' <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-policy-hardening-2"
+  [ "$status" -eq 0 ]
+  local second_policy_json="$output"
+
+  run jq -r '.candidates[] | select(.loopId == "loop-green" and .category == "health_degraded") | .suppressionReason' <<<"$second_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "advisory_cooldown_active" ]
+
+  run jq -r '.candidates[] | select(.loopId == "loop-green" and .category == "health_degraded") | .suppressionScope' <<<"$second_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cooldown" ]
+
+  run jq -e '.reasonCodes | index("fleet_actions_deduped") != null' <<<"$second_policy_json"
+  [ "$status" -eq 0 ]
+
+  local history_file="$repo/.superloop/ops-manager/fleet/telemetry/policy-history.jsonl"
+  [ -f "$history_file" ]
+  run bash -lc "wc -l < '$history_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 6 ]
 }
