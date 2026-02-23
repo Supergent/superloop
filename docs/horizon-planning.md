@@ -93,6 +93,80 @@ Optional strict schema validation (requires python `jsonschema` module):
 scripts/validate-horizons.sh --repo . --strict
 ```
 
+## Packet runtime (Phase 1)
+
+Use horizon packets for atomic dispatch/work tracking above loop execution.
+
+Command:
+
+```bash
+scripts/horizon-packet.sh <create|transition|show|list> --repo .
+```
+
+Create a packet:
+
+```bash
+scripts/horizon-packet.sh create \
+  --repo . \
+  --packet-id pkt-001 \
+  --horizon-ref HZ-program-authn-v1 \
+  --sender planner \
+  --recipient-type local_agent \
+  --recipient-id implementer \
+  --intent "implement auth slice" \
+  --loop-id auth-loop \
+  --evidence-ref artifact://run-summary
+```
+
+Transition a packet:
+
+```bash
+scripts/horizon-packet.sh transition \
+  --repo . \
+  --packet-id pkt-001 \
+  --to-status dispatched \
+  --by dispatcher \
+  --reason "recipient selected"
+```
+
+List packets:
+
+```bash
+scripts/horizon-packet.sh list --repo . --horizon-ref HZ-program-authn-v1
+```
+
+Status model:
+
+1. `queued`
+2. `dispatched`
+3. `acknowledged`
+4. `in_progress`
+5. `completed`
+6. `failed`
+7. `escalated`
+8. `cancelled`
+
+Primary allowed flow:
+
+1. `queued -> dispatched -> acknowledged -> in_progress -> completed`
+
+Safety flow:
+
+1. `queued|dispatched|acknowledged|in_progress -> failed|escalated|cancelled`
+
+Artifacts:
+
+- `.superloop/horizons/packets/<packet-id>.json`
+- `.superloop/horizons/telemetry/packets.jsonl`
+
+Each packet artifact records:
+
+1. `traceId`
+2. `loopId` (optional)
+3. `horizonRef`
+4. `evidenceRefs`
+5. transition history with actor/reason/note
+
 ## Operational rules
 
 1. A loop may execute without any horizon binding.
