@@ -416,6 +416,91 @@ trim_events_to_single_line() {
   [ "$output" = "trace-vis-parity-1" ]
 }
 
+@test "visibility invocation audit preserves autonomous no-confirm parity across local and sprite_service transports" {
+  local loop_id="demo-loop"
+  local now_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local local_repo="$TEMP_DIR/visibility-autonomous-local"
+  local service_repo="$TEMP_DIR/visibility-autonomous-service"
+  mkdir -p "$local_repo" "$service_repo"
+
+  write_runtime_artifacts "$local_repo" "$loop_id" "$now_ts"
+  write_runtime_artifacts "$service_repo" "$loop_id" "$now_ts"
+
+  local local_stub="$TEMP_DIR/stub-superloop-autonomous-local.sh"
+  local service_stub="$TEMP_DIR/stub-superloop-autonomous-service.sh"
+  write_stub_superloop "$local_stub"
+  write_stub_superloop "$service_stub"
+  start_service "$service_repo" "$SERVICE_TOKEN" "$service_stub"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --trace-id "trace-vis-autonomous-1" \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --trace-id "trace-vis-autonomous-1" \
+    --degraded-ingest-lag-seconds 999999 \
+    --critical-ingest-lag-seconds 9999999
+  [ "$status" -eq 0 ]
+
+  run env SUPERLOOP_BIN="$local_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-control.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --intent cancel \
+    --trace-id "trace-vis-autonomous-1" \
+    --no-confirm
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-control.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --intent cancel \
+    --trace-id "trace-vis-autonomous-1" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --idempotency-key "vis-autonomous-cancel-1" \
+    --no-confirm
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$local_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local local_status_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$service_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local service_status_json="$output"
+
+  local local_projection
+  local service_projection
+  local_projection="$(jq -c '{invocationAudit: (.visibility.invocationAudit | {intent, executionStatus, confirmationStatus, outcomeStatus}), trace: (.visibility.trace | {controlInvocationTraceId, sharedTraceId})}' <<<"$local_status_json")"
+  service_projection="$(jq -c '{invocationAudit: (.visibility.invocationAudit | {intent, executionStatus, confirmationStatus, outcomeStatus}), trace: (.visibility.trace | {controlInvocationTraceId, sharedTraceId})}' <<<"$service_status_json")"
+  [ "$local_projection" = "$service_projection" ]
+
+  run jq -r '.visibility.invocationAudit.confirmationStatus' <<<"$local_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "skipped" ]
+
+  run jq -r '.visibility.invocationAudit.outcomeStatus' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "executed_unconfirmed" ]
+
+  run jq -r '.visibility.trace.controlInvocationTraceId' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-vis-autonomous-1" ]
+}
+
 @test "status preserves reason-surface parity after failed local and sprite_service reconciles" {
   local loop_id="demo-loop"
   local local_repo="$TEMP_DIR/visibility-failure-local"

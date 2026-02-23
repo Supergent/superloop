@@ -94,8 +94,9 @@ scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
 ```
 
-6. Execute explicit operator-approved actions from handoff (manual only):
+6. Execute remediations from handoff:
 ```bash
+# Manual operator-approved execution
 scripts/ops-manager-fleet-handoff.sh \
   --repo /path/to/repo \
   --execute \
@@ -103,6 +104,15 @@ scripts/ops-manager-fleet-handoff.sh \
   --intent-id <intent-id> \
   --by <operator-name> \
   --note "incident-<id>: remediation"
+```
+
+```bash
+# Guarded autonomous execution (eligible intents only; guarded_auto mode required)
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --autonomous-execute \
+  --by ops-manager \
+  --note "incident-<id>: guarded_auto_dispatch"
 ```
 
 7. Verify post-action state:
@@ -120,15 +130,49 @@ Expected fleet outputs:
 - suppression precedence (`loop` over global `*`) and suppression source details
 - advisory cooldown suppression behavior (`advisory_cooldown_active`) for repeated candidates
 - handoff summary of pending/confirmed/failed operator intents
-- explicit confirmation gate (`--execute` requires `--confirm`; no autonomous remediation)
+- explicit confirmation gate for manual execution (`--execute` requires `--confirm`)
+- guarded autonomous outcomes and safety-gate decisions from `scripts/ops-manager-fleet-status.sh` (`autonomous.*`, `handoff.*`)
 - trace-linked pointers to loop-level state/health/cursor/telemetry artifacts
 
 Expected handoff reason codes in this workflow:
 - `fleet_handoff_action_required`
+- `fleet_handoff_auto_eligible_intents`
 - `fleet_handoff_confirmation_pending`
 - `fleet_handoff_executed`
 - `fleet_handoff_execution_ambiguous`
 - `fleet_handoff_execution_failed`
+
+## Guarded Autonomous Governance
+Use this policy when enabling or disabling `guarded_auto` execution.
+
+Enable when:
+- suppression and allowlist policy are reviewed and current
+- autonomous safety controls are set (`maxActionsPerRun`, `maxActionsPerLoop`, `cooldownSeconds`)
+- on-call owner is available to monitor `fleet-status` and handoff telemetry
+
+Disable when:
+- incident requires strict human approval for all remediations
+- autonomous dispatch shows repeated ambiguous/failed outcomes
+- kill-switch drill is active or service transport is unstable
+
+Hard-disable autonomous dispatch (kill switch):
+```bash
+jq '.policy.autonomous.safety.killSwitch = true' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+```
+
+Fallback to explicit manual handoff:
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --execute \
+  --confirm \
+  --intent-id <intent-id> \
+  --by <operator-name>
+```
 
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.

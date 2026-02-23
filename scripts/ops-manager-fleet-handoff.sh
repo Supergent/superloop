@@ -14,6 +14,7 @@ Options:
   --trace-id <id>                Handoff trace id override. Default: policy trace id or generated.
   --idempotency-prefix <value>   Idempotency prefix for generated intents (default: fleet-handoff)
   --execute                      Execute selected pending intents via ops-manager-control.sh.
+  --autonomous-execute           Execute only autonomous-eligible pending intents (no --confirm required).
   --confirm                      Required with --execute (explicit operator confirmation gate).
   --loop <id>                    Filter execution to a loop id (repeatable).
   --intent-id <id>               Filter execution to an intent id (repeatable).
@@ -67,6 +68,7 @@ handoff_telemetry_file=""
 trace_id=""
 idempotency_prefix="fleet-handoff"
 execute="0"
+autonomous_execute="0"
 confirm_execute="0"
 by="${USER:-unknown}"
 note=""
@@ -110,6 +112,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --execute)
       execute="1"
+      shift
+      ;;
+    --autonomous-execute)
+      autonomous_execute="1"
       shift
       ;;
     --confirm)
@@ -170,6 +176,12 @@ fi
 if [[ ! "$timeout_seconds" =~ ^[0-9]+$ || ! "$interval_seconds" =~ ^[0-9]+$ ]]; then
   die "timeout and interval must be non-negative integers"
 fi
+if [[ "$execute" == "1" && "$autonomous_execute" == "1" ]]; then
+  die "--execute and --autonomous-execute are mutually exclusive"
+fi
+if [[ "$confirm_execute" == "1" && "$execute" != "1" ]]; then
+  die "--confirm can only be used with --execute"
+fi
 if [[ "$execute" == "1" && "$confirm_execute" != "1" ]]; then
   die "--execute requires --confirm to enforce explicit operator confirmation"
 fi
@@ -216,6 +228,9 @@ policy_state_json=$(jq -c '.' "$policy_state_file" 2>/dev/null) || die "invalid 
 policy_mode="$(jq -r '.mode // "advisory"' <<<"$policy_state_json")"
 if [[ "$policy_mode" != "advisory" && "$policy_mode" != "guarded_auto" ]]; then
   die "unsupported policy mode: $policy_mode"
+fi
+if [[ "$autonomous_execute" == "1" && "$policy_mode" != "guarded_auto" ]]; then
+  die "--autonomous-execute requires policy mode guarded_auto"
 fi
 
 if [[ -z "$trace_id" ]]; then
@@ -372,9 +387,27 @@ jq -cn \
     summary: $summary
   }' >> "$handoff_telemetry_file"
 
-if [[ "$execute" == "1" ]]; then
+if [[ "$execute" == "1" || "$autonomous_execute" == "1" ]]; then
+  execution_mode="manual"
+  if [[ "$autonomous_execute" == "1" ]]; then
+    execution_mode="autonomous"
+  fi
+
   selected_loops_json="$(printf '%s\n' "${selected_loops[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   selected_intent_ids_json="$(printf '%s\n' "${selected_intent_ids[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+
+  target_pool_json="$(jq -cn \
+    --argjson handoff "$handoff_state_json" \
+    --arg execution_mode "$execution_mode" \
+    '
+    ($handoff.intents // [])
+    | map(select((.status // "") == "pending_operator_confirmation"))
+    | if $execution_mode == "autonomous" then
+        map(select((.autonomous.eligible // false) == true))
+      else
+        .
+      end
+    ')"
 
   unmatched_loop_filters="$(jq -r \
     --argjson loops "$selected_loops_json" \
@@ -382,13 +415,13 @@ if [[ "$execute" == "1" ]]; then
     if ($loops | length) == 0 then
       []
     else
-      ([ .intents[]?.loopId ] | unique) as $available
+      ([ .[]?.loopId ] | unique) as $available
       | [ $loops[] | select(($available | index(.)) == null) ]
     end
     | .[]?
-    ' <<<"$handoff_state_json")"
+    ' <<<"$target_pool_json")"
   if [[ -n "$unmatched_loop_filters" ]]; then
-    die "loop filter not found in handoff intents: $(tr '\n' ',' <<<"$unmatched_loop_filters" | sed 's/,$//')"
+    die "loop filter not found in ${execution_mode} execution intents: $(tr '\n' ',' <<<"$unmatched_loop_filters" | sed 's/,$//')"
   fi
 
   unmatched_intent_filters="$(jq -r \
@@ -397,22 +430,21 @@ if [[ "$execute" == "1" ]]; then
     if ($intent_ids | length) == 0 then
       []
     else
-      ([ .intents[]?.intentId ] | unique) as $available
+      ([ .[]?.intentId ] | unique) as $available
       | [ $intent_ids[] | select(($available | index(.)) == null) ]
     end
     | .[]?
-    ' <<<"$handoff_state_json")"
+    ' <<<"$target_pool_json")"
   if [[ -n "$unmatched_intent_filters" ]]; then
-    die "intent filter not found in handoff intents: $(tr '\n' ',' <<<"$unmatched_intent_filters" | sed 's/,$//')"
+    die "intent filter not found in ${execution_mode} execution intents: $(tr '\n' ',' <<<"$unmatched_intent_filters" | sed 's/,$//')"
   fi
 
   execution_targets_json="$(jq -cn \
-    --argjson handoff "$handoff_state_json" \
+    --argjson targets "$target_pool_json" \
     --argjson loops "$selected_loops_json" \
     --argjson intent_ids "$selected_intent_ids_json" \
     '
-    ($handoff.intents // [])
-    | map(select((.status // "") == "pending_operator_confirmation"))
+    ($targets // [])
     | (if ($loops | length) > 0 then map(select(($loops | index(.loopId)) != null)) else . end)
     | (if ($intent_ids | length) > 0 then map(select(($intent_ids | index(.intentId)) != null)) else . end)
     ' )"
@@ -429,6 +461,7 @@ if [[ "$execute" == "1" ]]; then
       loop_id="$(jq -r '.loopId' <<<"$target_line")"
       intent_value="$(jq -r '.intent' <<<"$target_line")"
       intent_id="$(jq -r '.intentId' <<<"$target_line")"
+      autonomous_eligible="$(jq -r '.autonomous.eligible // false' <<<"$target_line")"
       transport="$(jq -r '.transport // "local"' <<<"$target_line")"
       idempotency_key="$(jq -r '.idempotencyKey // empty' <<<"$target_line")"
       service_base_url="$(jq -r '.service.baseUrl // empty' <<<"$target_line")"
@@ -436,9 +469,9 @@ if [[ "$execute" == "1" ]]; then
       retry_attempts="$(jq -r '.service.retryAttempts // 3' <<<"$target_line")"
       retry_backoff_seconds="$(jq -r '.service.retryBackoffSeconds // 1' <<<"$target_line")"
 
-      effective_note="fleet_handoff:$intent_id"
+      effective_note="fleet_handoff:${execution_mode}:$intent_id"
       if [[ -n "$note" ]]; then
-        effective_note="$note | fleet_handoff:$intent_id"
+        effective_note="$note | fleet_handoff:${execution_mode}:$intent_id"
       fi
 
       control_trace_id="$trace_id"
@@ -451,7 +484,9 @@ if [[ "$execute" == "1" ]]; then
       control_json='null'
       action_reason="control_failed_command"
 
-      if [[ "$transport" == "sprite_service" && -z "$service_base_url" ]]; then
+      if [[ "$execution_mode" == "autonomous" && "$autonomous_eligible" != "true" ]]; then
+        action_reason="autonomous_intent_not_eligible"
+      elif [[ "$transport" == "sprite_service" && -z "$service_base_url" ]]; then
         action_reason="missing_service_base_url"
       else
         cmd=(
@@ -503,6 +538,11 @@ if [[ "$execute" == "1" ]]; then
         fi
       fi
 
+      autonomous_eligible_json="false"
+      if [[ "$autonomous_eligible" == "true" ]]; then
+        autonomous_eligible_json="true"
+      fi
+
       jq -cn \
         --arg intent_id "$intent_id" \
         --arg loop_id "$loop_id" \
@@ -513,6 +553,8 @@ if [[ "$execute" == "1" ]]; then
         --arg executed_at "$(timestamp)" \
         --arg status "$action_status" \
         --arg reason "$action_reason" \
+        --arg execution_mode "$execution_mode" \
+        --argjson autonomous_eligible "$autonomous_eligible_json" \
         --argjson control_exit_code "$control_exit_code" \
         --argjson control "$control_json" \
         '{
@@ -525,6 +567,8 @@ if [[ "$execute" == "1" ]]; then
           executedAt: $executed_at,
           status: $status,
           reasonCode: $reason,
+          executionMode: $execution_mode,
+          autonomousEligible: $autonomous_eligible,
           controlExitCode: $control_exit_code,
           control: (if $control == null then null else $control end)
         } | with_entries(select(.value != null))' >> "$results_file"
@@ -541,12 +585,14 @@ if [[ "$execute" == "1" ]]; then
     --arg started_at "$execution_started_at" \
     --arg completed_at "$execution_completed_at" \
     --arg requested_by "$by" \
+    --arg execution_mode "$execution_mode" \
     --arg note "$note" \
     '
     ($results | map({key: .intentId, value: .}) | from_entries) as $result_map
     | $handoff
     | .updatedAt = $completed_at
     | .execution = {
+        mode: $execution_mode,
         requestedBy: $requested_by,
         requestedAt: $started_at,
         completedAt: $completed_at,
@@ -574,12 +620,14 @@ if [[ "$execute" == "1" ]]; then
                     end
                   ),
                   execution: {
+                    mode: ($result.executionMode // null),
                     executedAt: ($result.executedAt // null),
                     requestedBy: ($result.requestedBy // null),
                     status: ($result.status // null),
                     reasonCode: ($result.reasonCode // null),
                     traceId: ($result.traceId // null),
                     idempotencyKey: ($result.idempotencyKey // null),
+                    autonomousEligible: ($result.autonomousEligible // null),
                     controlExitCode: ($result.controlExitCode // null),
                     controlStatus: ($result.control.status // null),
                     confirmed: ($result.control.confirmed // null)
@@ -592,6 +640,8 @@ if [[ "$execute" == "1" ]]; then
         candidateCount: (.summary.candidateCount // 0),
         unsuppressedCandidateCount: (.summary.unsuppressedCandidateCount // 0),
         intentCount: (.intents | length),
+        autoEligibleIntentCount: ([ .intents[] | select((.autonomous.eligible // false) == true) ] | length),
+        manualOnlyIntentCount: ([ .intents[] | select((.autonomous.manualOnly // false) == true) ] | length),
         pendingConfirmationCount: ([ .intents[] | select(.status == "pending_operator_confirmation") ] | length),
         executedCount: ([ .intents[] | select(.status == "executed") ] | length),
         ambiguousCount: ([ .intents[] | select(.status == "execution_ambiguous") ] | length),
@@ -603,7 +653,10 @@ if [[ "$execute" == "1" ]]; then
           (if .summary.pendingConfirmationCount > 0 then "fleet_handoff_confirmation_pending" else empty end),
           (if .summary.executedCount > 0 then "fleet_handoff_executed" else empty end),
           (if .summary.ambiguousCount > 0 then "fleet_handoff_execution_ambiguous" else empty end),
-          (if .summary.failedCount > 0 then "fleet_handoff_execution_failed" else empty end)
+          (if .summary.failedCount > 0 then "fleet_handoff_execution_failed" else empty end),
+          (if .summary.intentCount < .summary.unsuppressedCandidateCount then "fleet_handoff_partial_mapping" else empty end),
+          (if .summary.unsuppressedCandidateCount > 0 and .summary.intentCount == 0 then "fleet_handoff_unmapped_candidates" else empty end),
+          (if .summary.autoEligibleIntentCount > 0 then "fleet_handoff_auto_eligible_intents" else empty end)
         ]
         | unique
       )
