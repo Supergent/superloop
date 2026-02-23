@@ -290,6 +290,8 @@ Purpose:
 - Applies suppression precedence (`loop` over global `*`) and records suppression scope/source.
 - Supports both `advisory` and `guarded_auto` policy modes at the contract layer.
 - Supports advisory cooldown dedupe using policy history.
+- Classifies unsuppressed candidates as `autonomous.eligible` vs `autonomous.manualOnly` with explicit rejection reasons from allowlist/threshold gates.
+- Persists autonomous eligibility state into policy artifacts and policy history telemetry.
 
 ### Fleet Status
 ```bash
@@ -326,7 +328,8 @@ Purpose:
 - Enforces explicit operator confirmation gate (`--execute` requires `--confirm`).
 - Propagates fleet trace/idempotency into loop-level control telemetry and invocation audit.
 - Persists handoff plan/execution artifacts and telemetry.
-- In phase 9 P1.1, `guarded_auto` mode is accepted as a validated policy contract while execution remains manual-only until auto-eligibility/dispatch phases are delivered.
+- Preserves policy autonomous eligibility classification on generated intents (`autoEligibleIntentCount`, `manualOnlyIntentCount`).
+- In phase 9 P1.2, `guarded_auto` mode adds eligibility shaping only; control execution remains manual-only until autonomous dispatch phases are delivered.
 
 ## Sprite Service Transport
 Service implementation entrypoint:
@@ -400,11 +403,14 @@ Fleet state/policy/status artifacts may include:
 - `fleet_actions_suppressed`
 - `fleet_actions_policy_suppressed`
 - `fleet_actions_deduped`
+- `fleet_auto_candidates_eligible`
+- `fleet_auto_candidates_blocked`
 - `fleet_handoff_action_required`
 - `fleet_handoff_no_action`
 - `fleet_handoff_confirmation_pending`
 - `fleet_handoff_partial_mapping`
 - `fleet_handoff_unmapped_candidates`
+- `fleet_handoff_auto_eligible_intents`
 - `fleet_handoff_executed`
 - `fleet_handoff_execution_ambiguous`
 - `fleet_handoff_execution_failed`

@@ -272,7 +272,9 @@ handoff_state_json=$(jq -cn \
         | map(
             . as $candidate
             | ($loop_map[$candidate.loopId] // {}) as $loop
-            | (if ($candidate.category // "") == "reconcile_failed" then "cancel"
+            | (($candidate.recommendedIntent // null)) as $recommended_intent
+            | (if $recommended_intent != null then $recommended_intent
+               elif ($candidate.category // "") == "reconcile_failed" then "cancel"
                elif ($candidate.category // "") == "health_critical" then "cancel"
                elif ($candidate.category // "") == "health_degraded" then "cancel"
                else null
@@ -288,11 +290,22 @@ handoff_state_json=$(jq -cn \
                 rationale: ($candidate.rationale // null),
                 signal: ($candidate.signal // null),
                 intent: $intent,
+                recommendedIntent: ($candidate.recommendedIntent // null),
                 status: "pending_operator_confirmation",
                 requiresOperatorConfirmation: true,
                 fleetTraceId: $trace_id,
                 policyTraceId: $policy_trace_id,
                 candidateTraceId: ($candidate.traceId // null),
+                autonomous: {
+                  eligible: ($candidate.autonomous.eligible // false),
+                  manualOnly: (
+                    if ($candidate.autonomous.manualOnly // null) == true then true
+                    elif ($candidate.autonomous.eligible // false) == true then false
+                    else true
+                    end
+                  ),
+                  reasons: ($candidate.autonomous.reasons // [])
+                },
                 idempotencyKey: (
                   [
                     ($idempotency_prefix | slug),
@@ -325,6 +338,8 @@ handoff_state_json=$(jq -cn \
       candidateCount: ($all_candidates | length),
       unsuppressedCandidateCount: ($unsuppressed | length),
       intentCount: (.intents | length),
+      autoEligibleIntentCount: ([ .intents[] | select((.autonomous.eligible // false) == true) ] | length),
+      manualOnlyIntentCount: ([ .intents[] | select((.autonomous.manualOnly // false) == true) ] | length),
       pendingConfirmationCount: ([ .intents[] | select(.status == "pending_operator_confirmation") ] | length),
       executedCount: ([ .intents[] | select(.status == "executed") ] | length),
       ambiguousCount: ([ .intents[] | select(.status == "execution_ambiguous") ] | length),
@@ -335,7 +350,8 @@ handoff_state_json=$(jq -cn \
         (if .summary.intentCount > 0 then "fleet_handoff_action_required" else "fleet_handoff_no_action" end),
         (if .summary.pendingConfirmationCount > 0 then "fleet_handoff_confirmation_pending" else empty end),
         (if .summary.intentCount < .summary.unsuppressedCandidateCount then "fleet_handoff_partial_mapping" else empty end),
-        (if .summary.unsuppressedCandidateCount > 0 and .summary.intentCount == 0 then "fleet_handoff_unmapped_candidates" else empty end)
+        (if .summary.unsuppressedCandidateCount > 0 and .summary.intentCount == 0 then "fleet_handoff_unmapped_candidates" else empty end),
+        (if .summary.autoEligibleIntentCount > 0 then "fleet_handoff_auto_eligible_intents" else empty end)
       ]
       | unique
     )

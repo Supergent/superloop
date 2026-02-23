@@ -11,9 +11,9 @@
 3. [x] Update `docs/ops-manager-v0.md` contract notes for new policy fields and compatibility defaults.
 
 ## P1.2 Auto-Eligibility Evaluation
-1. [ ] Extend fleet policy/handoff shaping to classify unsuppressed candidates as auto-eligible vs manual-only with explicit rejection reasons.
-2. [ ] Gate auto eligibility by category/intent allowlists plus severity/confidence thresholds.
-3. [ ] Persist auto-eligibility artifacts/telemetry so operators can audit why candidates were or were not auto-executed.
+1. [x] Extend fleet policy/handoff shaping to classify unsuppressed candidates as auto-eligible vs manual-only with explicit rejection reasons.
+2. [x] Gate auto eligibility by category/intent allowlists plus severity/confidence thresholds.
+3. [x] Persist auto-eligibility artifacts/telemetry so operators can audit why candidates were or were not auto-executed.
 
 ## P1.3 Safety Rails and Circuit Breakers
 1. [ ] Enforce per-run and per-loop autonomous action caps before dispatch.
@@ -36,6 +36,6 @@
 3. [ ] Add regressions for deterministic reason-code behavior under partial autonomous execution failures.
 
 ## P1.V Validation
-1. [ ] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats` passes.
-2. [ ] All new/changed scripts pass `bash -n` syntax checks.
+1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats` passes.
+2. [x] All new/changed scripts pass `bash -n` syntax checks.
 3. [ ] Updated docs/runbook match implemented autonomous policy fields, execution semantics, and operator workflow.
