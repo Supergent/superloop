@@ -121,6 +121,7 @@ Horizon contract files:
 - `schema/horizons.schema.json` (validation schema)
 - `docs/horizon-planning.md` (operating model)
 - `docs/examples/horizons.example.json` (sample)
+- `scripts/horizon-packet.sh` (packet lifecycle runtime for horizon dispatch tracking)
 
 Validate horizon control-plane state (when present):
 
@@ -147,6 +148,28 @@ Loop binding is optional via `horizon_ref`:
 ```
 
 This keeps waterfall tension bounded: horizons are hypotheses that evolve from run evidence.
+
+Packet runtime quick examples:
+
+```bash
+scripts/horizon-packet.sh create \
+  --repo . \
+  --packet-id pkt-001 \
+  --horizon-ref HZ-program-authn-v1 \
+  --sender planner \
+  --recipient-type local_agent \
+  --recipient-id implementer \
+  --intent "implement auth slice"
+```
+
+```bash
+scripts/horizon-packet.sh transition \
+  --repo . \
+  --packet-id pkt-001 \
+  --to-status dispatched \
+  --by dispatcher \
+  --reason "recipient selected"
+```
 
 ## Config
 
