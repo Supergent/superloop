@@ -6,9 +6,9 @@
 3. [x] Link this phase packet from the issue and include prior PR/issue context (`#79`, `#74`).
 
 ## P1.1 Policy Mode and Contract Extension
-1. [ ] Extend fleet registry policy contract to support explicit autonomous remediation controls (`mode`, thresholds, caps, cooldowns, allowlists).
-2. [ ] Enforce fail-closed validation for unsupported auto categories/intents and invalid threshold/cap values.
-3. [ ] Update `docs/ops-manager-v0.md` contract notes for new policy fields and compatibility defaults.
+1. [x] Extend fleet registry policy contract to support explicit autonomous remediation controls (`mode`, thresholds, caps, cooldowns, allowlists).
+2. [x] Enforce fail-closed validation for unsupported auto categories/intents and invalid threshold/cap values.
+3. [x] Update `docs/ops-manager-v0.md` contract notes for new policy fields and compatibility defaults.
 
 ## P1.2 Auto-Eligibility Evaluation
 1. [ ] Extend fleet policy/handoff shaping to classify unsuppressed candidates as auto-eligible vs manual-only with explicit rejection reasons.

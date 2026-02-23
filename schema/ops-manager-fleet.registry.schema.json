@@ -58,7 +58,8 @@
         "mode": {
           "type": "string",
           "enum": [
-            "advisory"
+            "advisory",
+            "guarded_auto"
           ]
         },
         "suppressions": {
@@ -82,6 +83,81 @@
             "dedupeWindowSeconds": {
               "type": "integer",
               "minimum": 0
+            }
+          }
+        },
+        "autonomous": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "categories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "reconcile_failed",
+                      "health_critical",
+                      "health_degraded"
+                    ]
+                  }
+                },
+                "intents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "cancel"
+                    ]
+                  }
+                }
+              }
+            },
+            "thresholds": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "minSeverity": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "warning",
+                    "info"
+                  ]
+                },
+                "minConfidence": {
+                  "type": "string",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                }
+              }
+            },
+            "safety": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "maxActionsPerRun": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "maxActionsPerLoop": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cooldownSeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "killSwitch": {
+                  "type": "boolean"
+                }
+              }
             }
           }
         }
