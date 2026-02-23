@@ -819,6 +819,135 @@ JSON
   [ "$status" -eq 0 ]
 }
 
+@test "incident drill kill switch halts autonomous execution and falls back to explicit manual handoff" {
+  local repo="$TEMP_DIR/fleet-drill-kill-switch-fallback"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-drill-kill-switch-fallback","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-900","rationale":"kill switch drill","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":2,"maxActionsPerLoop":2,"cooldownSeconds":0,"killSwitch":true}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T01:10:00Z","startedAt":"2026-02-23T01:09:50Z","fleetId":"fleet-drill-kill-switch-fallback","traceId":"trace-fleet-drill-kill-switch-fallback-policy-1","status":"success","reasonCodes":[],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T01:10:00Z","startedAt":"2026-02-23T01:09:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-drill-kill-switch-fallback-policy-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-drill-kill-switch-fallback-policy-1"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.manualOnlyCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_kill_switch_enabled") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  local control_log="$TEMP_DIR/fleet-drill-kill-switch-fallback-control-log.jsonl"
+  local control_stub="$TEMP_DIR/fleet-drill-kill-switch-fallback-control-stub.sh"
+  cat > "$control_stub" <<BASH
+#!/usr/bin/env bash
+set -euo pipefail
+
+loop_id=""
+trace_id=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --loop)
+      loop_id="\${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="\${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+jq -cn --arg loop_id "\$loop_id" --arg trace_id "\$trace_id" '{loopId: \$loop_id, traceId: \$trace_id}' >> "$control_log"
+jq -cn --arg status "confirmed" --argjson confirmed true '{status: \$status, confirmed: \$confirmed}'
+BASH
+  chmod +x "$control_stub"
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-drill-kill-switch-fallback-handoff-auto-1" \
+    --autonomous-execute \
+    --by "ops-bot"
+  [ "$status" -eq 0 ]
+  local autonomous_handoff="$output"
+
+  run jq -r '.execution.mode' <<<"$autonomous_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous" ]
+
+  run jq -r '.execution.requestedIntentCount' <<<"$autonomous_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$autonomous_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_confirmation_pending") != null' <<<"$autonomous_handoff"
+  [ "$status" -eq 0 ]
+
+  if [[ -f "$control_log" ]]; then
+    run bash -lc "wc -l < '$control_log' | tr -d ' '"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+  fi
+
+  local intent_id
+  intent_id="$(jq -r '.intents[0].intentId' <<<"$autonomous_handoff")"
+  [[ -n "$intent_id" && "$intent_id" != "null" ]]
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-drill-kill-switch-fallback-handoff-manual-1" \
+    --execute \
+    --confirm \
+    --intent-id "$intent_id" \
+    --by "oncall-operator"
+  [ "$status" -eq 0 ]
+  local manual_handoff="$output"
+
+  run jq -r '.execution.mode' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "manual" ]
+
+  run jq -r '.execution.requestedIntentCount' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.executedCount' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.intents[] | select(.intentId == "'"$intent_id"'") | .status' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "executed" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_executed") != null' <<<"$manual_handoff"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$control_log' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
 @test "fleet policy guarded_auto enforces per-run and per-loop autonomous action caps" {
   local repo="$TEMP_DIR/fleet-policy-caps"
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
@@ -1099,6 +1228,103 @@ JSONL
   run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_json"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+}
+
+@test "incident drill sprite_service outage triggers autonomous auto-pause and reason-coded manual fallback" {
+  local repo="$TEMP_DIR/fleet-drill-sprite-outage-autopause"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-drill-sprite-outage-autopause","loops":[{"loopId":"loop-sprite","transport":"sprite_service","service":{"baseUrl":"http://sprite-outage.local"}}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-901","rationale":"sprite outage drill","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["reconcile_failed"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":false},"autoPause":{"enabled":true,"lookbackExecutions":3,"minSampleSize":2,"ambiguityRateThreshold":0.9,"failureRateThreshold":0.5}}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T05:10:00Z","startedAt":"2026-02-23T05:09:50Z","fleetId":"fleet-drill-sprite-outage-autopause","traceId":"trace-fleet-drill-sprite-outage-policy-1","status":"partial_failure","reasonCodes":["fleet_partial_failure","fleet_reconcile_failed"],"loopCount":1,"successCount":0,"failedCount":1,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T05:10:00Z","startedAt":"2026-02-23T05:09:55Z","loopId":"loop-sprite","transport":"sprite_service","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"degraded","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-drill-sprite-outage-policy-1-loop-sprite","files":{"stateFile":"/tmp/loop-sprite/state.json","healthFile":"/tmp/loop-sprite/health.json","cursorFile":"/tmp/loop-sprite/cursor.json","reconcileTelemetryFile":"/tmp/loop-sprite/reconcile.jsonl"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" <<'JSONL'
+{"timestamp":"2026-02-23T05:00:00Z","category":"fleet_handoff_execute","fleetId":"fleet-drill-sprite-outage-autopause","traceId":"trace-fleet-drill-sprite-outage-auto-1","execution":{"mode":"autonomous","requestedIntentCount":1,"executedCount":0,"ambiguousCount":0,"failedCount":1}}
+{"timestamp":"2026-02-23T05:01:00Z","category":"fleet_handoff_execute","fleetId":"fleet-drill-sprite-outage-autopause","traceId":"trace-fleet-drill-sprite-outage-auto-2","execution":{"mode":"autonomous","requestedIntentCount":1,"executedCount":0,"ambiguousCount":0,"failedCount":1}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-drill-sprite-outage-policy-1"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autonomous.rollout.pause.auto.active' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.rollout.pause.auto.metrics.attemptedCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.autonomous.rollout.pause.auto.metrics.failureRate' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_rollout_paused_auto") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_autopause_failure_spike") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_paused") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_autopause_triggered") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" --repo "$repo" --trace-id "trace-fleet-drill-sprite-outage-handoff-plan-1"
+  [ "$status" -eq 0 ]
+  local handoff_plan="$output"
+
+  run jq -r '.summary.autoEligibleIntentCount' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -e '.intents[] | .autonomous.reasons | index("autonomous_autopause_failure_spike") != null' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+
+  local control_log="$TEMP_DIR/fleet-drill-sprite-outage-control-log.jsonl"
+  local control_stub="$TEMP_DIR/fleet-drill-sprite-outage-control-stub.sh"
+  cat > "$control_stub" <<BASH
+#!/usr/bin/env bash
+set -euo pipefail
+jq -cn '{called: true}' >> "$control_log"
+jq -cn --arg status "confirmed" --argjson confirmed true '{status: \$status, confirmed: \$confirmed}'
+BASH
+  chmod +x "$control_stub"
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-drill-sprite-outage-handoff-auto-1" \
+    --autonomous-execute \
+    --by "ops-bot"
+  [ "$status" -eq 0 ]
+  local handoff_auto="$output"
+
+  run jq -r '.execution.requestedIntentCount' <<<"$handoff_auto"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_auto"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_confirmation_pending") != null' <<<"$handoff_auto"
+  [ "$status" -eq 0 ]
+
+  if [[ -f "$control_log" ]]; then
+    run bash -lc "wc -l < '$control_log' | tr -d ' '"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
+  fi
 }
 
 @test "fleet policy emits immutable governance audit events for autonomous initialization mutation and mode toggles" {
@@ -1494,6 +1720,115 @@ BASH
   run jq -r '.loopId' "$control_log"
   [ "$status" -eq 0 ]
   [ "$output" = "loop-red" ]
+}
+
+@test "incident drill ambiguous autonomous outcomes are retry-guarded to prevent execution storms" {
+  local repo="$TEMP_DIR/fleet-drill-ambiguous-retry-guard"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-drill-ambiguous-retry-guard","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-902","rationale":"ambiguous retry guard drill","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T12:30:00Z","fleetId":"fleet-drill-ambiguous-retry-guard","traceId":"trace-fleet-drill-ambiguous-retry-guard-policy-1","mode":"guarded_auto","candidateCount":1,"unsuppressedCount":1,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":0,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+  local control_log="$TEMP_DIR/fleet-drill-ambiguous-retry-guard-control-log.jsonl"
+  local control_stub="$TEMP_DIR/fleet-drill-ambiguous-retry-guard-control-stub.sh"
+  cat > "$control_stub" <<BASH
+#!/usr/bin/env bash
+set -euo pipefail
+
+loop_id=""
+trace_id=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --loop)
+      loop_id="\${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="\${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+jq -cn --arg loop_id "\$loop_id" --arg trace_id "\$trace_id" '{loopId: \$loop_id, traceId: \$trace_id}' >> "$control_log"
+jq -cn --arg status "ambiguous" --argjson confirmed false '{status: \$status, confirmed: \$confirmed}'
+exit 2
+BASH
+  chmod +x "$control_stub"
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-drill-ambiguous-retry-guard-handoff-1" \
+    --autonomous-execute \
+    --by "ops-bot"
+  [ "$status" -eq 0 ]
+  local first_handoff="$output"
+
+  run jq -r '.execution.requestedIntentCount' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.ambiguousCount' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_execution_ambiguous") != null' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$control_log' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-drill-ambiguous-retry-guard-handoff-2" \
+    --autonomous-execute \
+    --by "ops-bot"
+  [ "$status" -eq 0 ]
+  local second_handoff="$output"
+
+  run jq -r '.execution.requestedIntentCount' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.ambiguousCount' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.intents[0].status' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "pending_operator_confirmation" ]
+
+  run jq -r '.intents[0].autonomous.manualOnly' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e '.intents[0].autonomous.reasons | index("autonomous_retry_guard_ambiguous") != null' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_retry_guarded") != null' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_confirmation_pending") != null' <<<"$second_handoff"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$control_log' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
 }
 
 @test "fleet handoff autonomous execute preserves deterministic status mapping across transports" {

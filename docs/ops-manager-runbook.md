@@ -141,6 +141,7 @@ Expected handoff reason codes in this workflow:
 - `fleet_handoff_action_required`
 - `fleet_handoff_auto_eligible_intents`
 - `fleet_handoff_confirmation_pending`
+- `fleet_handoff_retry_guarded`
 - `fleet_handoff_executed`
 - `fleet_handoff_execution_ambiguous`
 - `fleet_handoff_execution_failed`
@@ -313,23 +314,65 @@ Use when `sprite_service` loops fail due transport/service outages.
 jq '.results[] | select(.transport == "sprite_service" and .status != "success") | {loopId, reasonCode, healthStatus}' .superloop/ops-manager/fleet/state.json
 ```
 
-3. For urgent intervention, run local fallback control per loop:
+3. Verify autonomous auto-pause posture and operator fallback reasons:
+```bash
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+jq '{autoPauseActive: .autonomous.rollout.pause.auto.active, autoPauseReasons: .autonomous.rollout.pause.auto.reasons, reasonCodes: .reasonCodes}' .superloop/ops-manager/fleet/policy-state.json
+jq '.candidates[] | {loopId, candidateId, autonomousReasons: .autonomous.reasons, manualOnly: .autonomous.manualOnly}' .superloop/ops-manager/fleet/policy-state.json
+```
+
+Expected signals:
+- `autonomous.rollout.pause.auto.active = true`
+- candidate reasons include `autonomous_rollout_paused_auto` and `autonomous_autopause_failure_spike`
+- policy reason codes include `fleet_auto_candidates_paused` and `fleet_auto_candidates_autopause_triggered`
+
+4. For urgent intervention, run local fallback control per loop:
 ```bash
 scripts/ops-manager-control.sh --repo /path/to/repo --loop <loop-id> --intent cancel --transport local
 ```
 
-4. Replay affected loops locally to recover observability signal:
+5. Replay affected loops locally to recover observability signal:
 ```bash
 scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --transport local --from-start --pretty
 ```
 
-5. After service recovery, restore declared transport in registry, then re-run full fleet workflow and handoff verification:
+6. After service recovery, restore declared transport in registry, then re-run full fleet workflow and handoff verification:
 ```bash
 scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
 scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+```
+
+## Fleet Ambiguous Outcome Retry-Storm Drill
+Use when autonomous execution returns repeated `ambiguous` or `failed_command` outcomes.
+
+1. Inspect latest autonomous execution outcomes:
+```bash
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+jq '.execution.results[] | {intentId, status, reasonCode}' .superloop/ops-manager/fleet/handoff-state.json
+```
+
+2. Re-run autonomous execution and verify retry guard blocks storm retries:
+```bash
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --autonomous-execute --by ops-manager --pretty
+```
+
+Expected signals:
+- `execution.requestedIntentCount = 0` for guarded intents
+- `summary.pendingConfirmationCount` remains > 0
+- handoff reason codes include `fleet_handoff_retry_guarded` and `fleet_handoff_confirmation_pending`
+- guarded intents include `autonomous_retry_guard_ambiguous` or `autonomous_retry_guard_failed`
+
+3. Execute guarded intents only via explicit manual confirmation:
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --execute \
+  --confirm \
+  --intent-id <intent-id> \
+  --by <operator-name>
 ```
 
 ## Fleet Transport Parity Checks

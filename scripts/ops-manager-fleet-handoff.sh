@@ -224,6 +224,10 @@ mkdir -p "$(dirname "$handoff_telemetry_file")"
 
 registry_json=$("$registry_script" --repo "$repo" --registry-file "$registry_file")
 policy_state_json=$(jq -c '.' "$policy_state_file" 2>/dev/null) || die "invalid policy state JSON: $policy_state_file"
+prior_handoff_state_json='null'
+if [[ -f "$handoff_state_file" ]]; then
+  prior_handoff_state_json=$(jq -c '.' "$handoff_state_file" 2>/dev/null) || die "invalid existing handoff state JSON: $handoff_state_file"
+fi
 
 policy_mode="$(jq -r '.mode // "advisory"' <<<"$policy_state_json")"
 if [[ "$policy_mode" != "advisory" && "$policy_mode" != "guarded_auto" ]]; then
@@ -254,6 +258,7 @@ handoff_state_json=$(jq -cn \
   --arg idempotency_prefix "$idempotency_prefix" \
   --argjson registry "$registry_json" \
   --argjson policy "$policy_state_json" \
+  --argjson prior_handoff "$prior_handoff_state_json" \
   '
   def slug:
     tostring
@@ -261,8 +266,32 @@ handoff_state_json=$(jq -cn \
     | gsub("[^a-z0-9._-]"; "-")
     | gsub("-+"; "-")
     | gsub("(^-)|(-$)"; "");
+  def has_retry_guard_reason:
+    ((.autonomous.reasons // []) | map(startswith("autonomous_retry_guard_")) | any);
 
   ($registry.loops // [] | map({key: .loopId, value: .}) | from_entries) as $loop_map
+  | (
+      ($prior_handoff.intents // [])
+      | map(
+          select(
+            (.intentId // null) != null
+            and (
+              (.status // "") == "execution_ambiguous"
+              or (.status // "") == "execution_failed"
+            )
+          )
+          | {
+              key: .intentId,
+              value: (
+                if (.status // "") == "execution_ambiguous"
+                then "autonomous_retry_guard_ambiguous"
+                else "autonomous_retry_guard_failed"
+                end
+              )
+            }
+        )
+      | from_entries
+    ) as $retry_guard_reasons
   | ($policy.candidates // []) as $all_candidates
   | ($all_candidates | map(select((.suppressed // false) == false))) as $unsuppressed
   | ($policy.traceId // $trace_id) as $policy_trace_id
@@ -344,6 +373,14 @@ handoff_state_json=$(jq -cn \
                 ),
                 metadata: ($loop.metadata // {})
               }
+            | ($retry_guard_reasons[.intentId] // null) as $retry_guard_reason
+            | if $retry_guard_reason == null then
+                .
+              else
+                .autonomous.eligible = false
+                | .autonomous.manualOnly = true
+                | .autonomous.reasons = (((.autonomous.reasons // []) + [$retry_guard_reason]) | unique)
+              end
             | with_entries(select(.value != null))
           )
         | sort_by(.loopId, .category, .intent)
@@ -366,6 +403,7 @@ handoff_state_json=$(jq -cn \
         (if .summary.pendingConfirmationCount > 0 then "fleet_handoff_confirmation_pending" else empty end),
         (if .summary.intentCount < .summary.unsuppressedCandidateCount then "fleet_handoff_partial_mapping" else empty end),
         (if .summary.unsuppressedCandidateCount > 0 and .summary.intentCount == 0 then "fleet_handoff_unmapped_candidates" else empty end),
+        (if ([ .intents[] | select(has_retry_guard_reason) ] | length) > 0 then "fleet_handoff_retry_guarded" else empty end),
         (if .summary.autoEligibleIntentCount > 0 then "fleet_handoff_auto_eligible_intents" else empty end)
       ]
       | unique
@@ -445,8 +483,8 @@ if [[ "$execute" == "1" || "$autonomous_execute" == "1" ]]; then
     --argjson intent_ids "$selected_intent_ids_json" \
     '
     ($targets // [])
-    | (if ($loops | length) > 0 then map(select(($loops | index(.loopId)) != null)) else . end)
-    | (if ($intent_ids | length) > 0 then map(select(($intent_ids | index(.intentId)) != null)) else . end)
+    | (if ($loops | length) > 0 then map(. as $target | select(($loops | index($target.loopId)) != null)) else . end)
+    | (if ($intent_ids | length) > 0 then map(. as $target | select(($intent_ids | index($target.intentId)) != null)) else . end)
     ' )"
 
   target_count="$(jq -r 'length' <<<"$execution_targets_json")"
@@ -656,6 +694,7 @@ if [[ "$execute" == "1" || "$autonomous_execute" == "1" ]]; then
           (if .summary.failedCount > 0 then "fleet_handoff_execution_failed" else empty end),
           (if .summary.intentCount < .summary.unsuppressedCandidateCount then "fleet_handoff_partial_mapping" else empty end),
           (if .summary.unsuppressedCandidateCount > 0 and .summary.intentCount == 0 then "fleet_handoff_unmapped_candidates" else empty end),
+          (if ([ .intents[] | select(((.autonomous.reasons // []) | map(startswith("autonomous_retry_guard_")) | any)) ] | length) > 0 then "fleet_handoff_retry_guarded" else empty end),
           (if .summary.autoEligibleIntentCount > 0 then "fleet_handoff_auto_eligible_intents" else empty end)
         ]
         | unique
