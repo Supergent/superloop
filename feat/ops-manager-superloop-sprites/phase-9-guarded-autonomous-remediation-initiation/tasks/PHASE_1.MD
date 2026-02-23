@@ -16,9 +16,9 @@
 3. [x] Persist auto-eligibility artifacts/telemetry so operators can audit why candidates were or were not auto-executed.
 
 ## P1.3 Safety Rails and Circuit Breakers
-1. [ ] Enforce per-run and per-loop autonomous action caps before dispatch.
-2. [ ] Enforce cooldown windows to prevent repeated autonomous controls for the same loop/category.
-3. [ ] Add a global autonomous remediation kill switch that hard-disables auto dispatch without breaking advisory/manual flows.
+1. [x] Enforce per-run and per-loop autonomous action caps before dispatch.
+2. [x] Enforce cooldown windows to prevent repeated autonomous controls for the same loop/category.
+3. [x] Add a global autonomous remediation kill switch that hard-disables auto dispatch without breaking advisory/manual flows.
 
 ## P1.4 Autonomous Dispatch Workflow
 1. [ ] Add an autonomous execution path that dispatches only eligible intents via existing `ops-manager-control.sh` behavior.
@@ -31,7 +31,7 @@
 3. [ ] Document operator governance expectations for when autonomous mode should be enabled/disabled.
 
 ## P1.6 Test Coverage
-1. [ ] Extend `tests/ops-manager-fleet.bats` for autonomous mode contract, eligibility gating, cap/cooldown rails, and kill-switch behavior.
+1. [x] Extend `tests/ops-manager-fleet.bats` for autonomous mode contract, eligibility gating, cap/cooldown rails, and kill-switch behavior.
 2. [ ] Add/extend transport parity regressions in `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` for autonomous execution semantics.
 3. [ ] Add regressions for deterministic reason-code behavior under partial autonomous execution failures.
 

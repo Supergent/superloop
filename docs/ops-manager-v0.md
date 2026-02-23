@@ -291,6 +291,7 @@ Purpose:
 - Supports both `advisory` and `guarded_auto` policy modes at the contract layer.
 - Supports advisory cooldown dedupe using policy history.
 - Classifies unsuppressed candidates as `autonomous.eligible` vs `autonomous.manualOnly` with explicit rejection reasons from allowlist/threshold gates.
+- Enforces autonomous safety rails before eligibility (`killSwitch`, `maxActionsPerRun`, `maxActionsPerLoop`, `cooldownSeconds`).
 - Persists autonomous eligibility state into policy artifacts and policy history telemetry.
 
 ### Fleet Status
@@ -405,6 +406,8 @@ Fleet state/policy/status artifacts may include:
 - `fleet_actions_deduped`
 - `fleet_auto_candidates_eligible`
 - `fleet_auto_candidates_blocked`
+- `fleet_auto_kill_switch_enabled`
+- `fleet_auto_candidates_safety_blocked`
 - `fleet_handoff_action_required`
 - `fleet_handoff_no_action`
 - `fleet_handoff_confirmation_pending`
