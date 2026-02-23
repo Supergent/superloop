@@ -1,0 +1,193 @@
+name: Ops Manager Promotion Rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_path:
+        description: Repository path containing .superloop ops-manager artifacts
+        required: false
+        default: .
+      mode:
+        description: Orchestration mode
+        type: choice
+        required: true
+        default: dry_run
+        options:
+          - dry_run
+          - apply
+          - rollback
+      apply_intent:
+        description: Apply intent used when mode=apply
+        type: choice
+        required: false
+        default: expand
+        options:
+          - expand
+          - resume
+      expand_step:
+        description: Expand step percentage (mode=apply and apply_intent=expand)
+        required: false
+        default: "25"
+      skip_on_missing_evidence:
+        description: Skip with success when promotion evidence files are missing
+        type: boolean
+        required: false
+        default: true
+      fail_on_hold:
+        description: Fail orchestration when promotion decision is hold
+        type: boolean
+        required: false
+        default: false
+      window_executions:
+        description: Window size for autonomous execution reliability gate
+        required: false
+        default: "20"
+      min_sample_size:
+        description: Minimum autonomous sample size required for promotion
+        required: false
+        default: "20"
+      max_ambiguity_rate:
+        description: Maximum ambiguity rate threshold
+        required: false
+        default: "0.2"
+      max_failure_rate:
+        description: Maximum failure rate threshold
+        required: false
+        default: "0.2"
+      max_manual_backlog:
+        description: Maximum manual backlog threshold
+        required: false
+        default: "5"
+      max_drill_age_hours:
+        description: Maximum drill evidence age in hours
+        required: false
+        default: "168"
+      idempotency_key:
+        description: Optional idempotency key for apply/rollback mutation replay protection
+        required: false
+        default: ""
+      trace_id:
+        description: Optional trace id forwarded across promotion CI and apply
+        required: false
+        default: ""
+      by:
+        description: Governance actor identity (required for apply/rollback)
+        required: false
+        default: ""
+      approval_ref:
+        description: Governance approval/change reference (required for apply/rollback)
+        required: false
+        default: ""
+      rationale:
+        description: Governance rationale (required for apply/rollback)
+        required: false
+        default: ""
+      review_by:
+        description: Governance review deadline ISO-8601 (required for apply/rollback)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-manager-promotion-rollout-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promotion-rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Orchestrate promotion rollout transition
+        env:
+          INPUT_REPO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.repo_path || '.' }}
+          INPUT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'dry_run' }}
+          INPUT_APPLY_INTENT: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_intent || 'expand' }}
+          INPUT_EXPAND_STEP: ${{ github.event_name == 'workflow_dispatch' && inputs.expand_step || '25' }}
+          INPUT_SKIP_MISSING: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_on_missing_evidence || 'true' }}
+          INPUT_FAIL_ON_HOLD: ${{ github.event_name == 'workflow_dispatch' && inputs.fail_on_hold || 'false' }}
+          INPUT_WINDOW_EXECUTIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.window_executions || '20' }}
+          INPUT_MIN_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_sample_size || '20' }}
+          INPUT_MAX_AMBIGUITY_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguity_rate || '0.2' }}
+          INPUT_MAX_FAILURE_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_failure_rate || '0.2' }}
+          INPUT_MAX_MANUAL_BACKLOG: ${{ github.event_name == 'workflow_dispatch' && inputs.max_manual_backlog || '5' }}
+          INPUT_MAX_DRILL_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_drill_age_hours || '168' }}
+          INPUT_IDEMPOTENCY_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.idempotency_key || '' }}
+          INPUT_TRACE_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.trace_id || '' }}
+          INPUT_BY: ${{ github.event_name == 'workflow_dispatch' && inputs.by || '' }}
+          INPUT_APPROVAL_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.approval_ref || '' }}
+          INPUT_RATIONALE: ${{ github.event_name == 'workflow_dispatch' && inputs.rationale || '' }}
+          INPUT_REVIEW_BY: ${{ github.event_name == 'workflow_dispatch' && inputs.review_by || '' }}
+        run: |
+          set -euo pipefail
+
+          cmd=(
+            scripts/ops-manager-promotion-orchestrate.sh
+            --repo "${INPUT_REPO_PATH}"
+            --mode "${INPUT_MODE}"
+            --apply-intent "${INPUT_APPLY_INTENT}"
+            --expand-step "${INPUT_EXPAND_STEP}"
+            --window-executions "${INPUT_WINDOW_EXECUTIONS}"
+            --min-sample-size "${INPUT_MIN_SAMPLE_SIZE}"
+            --max-ambiguity-rate "${INPUT_MAX_AMBIGUITY_RATE}"
+            --max-failure-rate "${INPUT_MAX_FAILURE_RATE}"
+            --max-manual-backlog "${INPUT_MAX_MANUAL_BACKLOG}"
+            --max-drill-age-hours "${INPUT_MAX_DRILL_AGE_HOURS}"
+            --promotion-ci-result-file .superloop/ops-manager/fleet/promotion-ci-result.json
+            --promotion-ci-summary-file .superloop/ops-manager/fleet/promotion-ci-summary.md
+            --result-file .superloop/ops-manager/fleet/promotion-orchestrate-result.json
+            --summary-file .superloop/ops-manager/fleet/promotion-orchestrate-summary.md
+            --pretty
+          )
+
+          if [ "${INPUT_SKIP_MISSING}" = "true" ]; then
+            cmd+=(--skip-on-missing-evidence)
+          fi
+          if [ "${INPUT_FAIL_ON_HOLD}" = "true" ]; then
+            cmd+=(--fail-on-hold)
+          fi
+          if [ -n "${INPUT_TRACE_ID}" ]; then
+            cmd+=(--trace-id "${INPUT_TRACE_ID}")
+          fi
+          if [ -n "${INPUT_IDEMPOTENCY_KEY}" ]; then
+            cmd+=(--idempotency-key "${INPUT_IDEMPOTENCY_KEY}")
+          fi
+
+          if [ "${INPUT_MODE}" != "dry_run" ]; then
+            [ -n "${INPUT_BY}" ] || { echo "::error::input 'by' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_APPROVAL_REF}" ] || { echo "::error::input 'approval_ref' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_RATIONALE}" ] || { echo "::error::input 'rationale' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_REVIEW_BY}" ] || { echo "::error::input 'review_by' is required for mode=${INPUT_MODE}"; exit 1; }
+
+            cmd+=(
+              --by "${INPUT_BY}"
+              --approval-ref "${INPUT_APPROVAL_REF}"
+              --rationale "${INPUT_RATIONALE}"
+              --review-by "${INPUT_REVIEW_BY}"
+            )
+          fi
+
+          "${cmd[@]}"
+
+      - name: Show promotion rollout artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          for path in \
+            .superloop/ops-manager/fleet/promotion-orchestrate-result.json \
+            .superloop/ops-manager/fleet/promotion-orchestrate-summary.md \
+            .superloop/ops-manager/fleet/promotion-ci-result.json \
+            .superloop/ops-manager/fleet/promotion-ci-summary.md
+          do
+            if [ -f "$path" ]; then
+              echo "--- $path ---"
+              cat "$path"
+            else
+              echo "$path not found"
+            fi
+          done

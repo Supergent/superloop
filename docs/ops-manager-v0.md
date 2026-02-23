@@ -443,6 +443,40 @@ Purpose:
 - Re-validates mutated registry through `scripts/ops-manager-fleet-registry.sh` before write.
 - Persists state and append-only telemetry for rollout posture before/after snapshots.
 
+### Promotion Rollout Orchestration (Phase 11 / Phase 2)
+```bash
+scripts/ops-manager-promotion-orchestrate.sh \
+  --repo /path/to/repo \
+  --mode dry_run \
+  --skip-on-missing-evidence \
+  --result-file /path/to/repo/.superloop/ops-manager/fleet/promotion-orchestrate-result.json \
+  --summary-file /path/to/repo/.superloop/ops-manager/fleet/promotion-orchestrate-summary.md \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-promotion-orchestrate.sh \
+  --repo /path/to/repo \
+  --mode apply \
+  --apply-intent expand \
+  --expand-step 25 \
+  --idempotency-key <key> \
+  --trace-id <trace-id> \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "promotion rollout mutation" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Purpose:
+- Executes promotion CI evaluation first (`scripts/ops-manager-promotion-ci.sh`) for deterministic gate outcomes.
+- Supports `dry_run` preview mode without mutating rollout policy.
+- For `apply` and `rollback`, forwards governed mutation intent to `scripts/ops-manager-promotion-apply.sh`.
+- Enforces governance metadata for non-preview modes and preserves fail-closed behavior on invalid mode/intent combinations.
+- Emits orchestration JSON + markdown artifacts and appends summary content to `GITHUB_STEP_SUMMARY` when present.
+- Workflow integration: `.github/workflows/ops-manager-promotion-rollout.yml` exposes `workflow_dispatch` orchestration inputs.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -495,6 +529,8 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl` - append-only promotion apply mutation history.
 - `.superloop/ops-manager/fleet/promotion-ci-result.json` - latest CI wrapper JSON decision output (`promote|hold|skipped`).
 - `.superloop/ops-manager/fleet/promotion-ci-summary.md` - latest CI wrapper markdown summary for operator workflow/step summaries.
+- `.superloop/ops-manager/fleet/promotion-orchestrate-result.json` - latest orchestration JSON output (`dry_run|apply|rollback` execution outcome).
+- `.superloop/ops-manager/fleet/promotion-orchestrate-summary.md` - latest orchestration markdown summary for operator triage and workflow summaries.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
@@ -543,6 +579,7 @@ Fleet state/policy/status artifacts may include:
 
 ## Promotion Gate Reason Codes
 Promotion decision artifacts may include:
+- `promotion_ci_missing_evidence`
 - `promotion_policy_mode_not_guarded_auto`
 - `promotion_governance_posture_not_active`
 - `promotion_governance_blocks_autonomous`

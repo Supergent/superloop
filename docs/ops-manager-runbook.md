@@ -34,6 +34,12 @@ Operational procedures for manager core behavior across local and sprite-service
 - fleet policy history: `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl`
 - fleet governance audit telemetry: `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl`
 - fleet handoff telemetry: `.superloop/ops-manager/fleet/telemetry/handoff.jsonl`
+- fleet promotion state: `.superloop/ops-manager/fleet/promotion-state.json`
+- fleet promotion apply state: `.superloop/ops-manager/fleet/promotion-apply-state.json`
+- fleet promotion apply telemetry: `.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl`
+- fleet promotion CI result: `.superloop/ops-manager/fleet/promotion-ci-result.json`
+- fleet promotion orchestration result: `.superloop/ops-manager/fleet/promotion-orchestrate-result.json`
+- fleet promotion orchestration summary: `.superloop/ops-manager/fleet/promotion-orchestrate-summary.md`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
@@ -422,6 +428,57 @@ Semantics:
 Artifacts:
 - `.superloop/ops-manager/fleet/promotion-apply-state.json`
 - `.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl`
+
+## Promotion Rollout Orchestration Workflow
+Use this when you want one controlled entrypoint for promotion decision evaluation and rollout mutation (`dry_run`, `apply`, `rollback`).
+
+Workflow file:
+- `.github/workflows/ops-manager-promotion-rollout.yml`
+
+Orchestration command:
+```bash
+scripts/ops-manager-promotion-orchestrate.sh \
+  --repo /path/to/repo \
+  --mode dry_run \
+  --skip-on-missing-evidence \
+  --result-file .superloop/ops-manager/fleet/promotion-orchestrate-result.json \
+  --summary-file .superloop/ops-manager/fleet/promotion-orchestrate-summary.md \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-promotion-orchestrate.sh \
+  --repo /path/to/repo \
+  --mode apply \
+  --apply-intent expand \
+  --expand-step 25 \
+  --idempotency-key <key> \
+  --trace-id <trace-id> \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "promotion rollout mutation" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Semantics:
+- always executes `scripts/ops-manager-promotion-ci.sh` first and uses that decision as mutation gate input.
+- `dry_run` emits preview artifacts only; no policy mutation.
+- `apply` executes `expand` or `resume` and requires promotion decision `promote` plus governance metadata.
+- `rollback` executes safety rollback (manual pause posture) and still requires governance metadata.
+- supports trace/idempotency forwarding to preserve audit continuity across CI + apply layers.
+
+Artifacts:
+- `.superloop/ops-manager/fleet/promotion-orchestrate-result.json`
+- `.superloop/ops-manager/fleet/promotion-orchestrate-summary.md`
+- `.superloop/ops-manager/fleet/promotion-ci-result.json`
+- `.superloop/ops-manager/fleet/promotion-ci-summary.md`
+
+Triage guidance:
+- if orchestration succeeds, inspect `.status`, `.decision`, `.summary.failedGates`, `.summary.reasonCodes`, and `.apply.record`.
+- if orchestration fails before result write, inspect stderr plus promotion CI artifacts (if present) to identify gate/evidence failures.
+- for `apply`/`rollback` input failures, fix governance metadata (`--by`, `--approval-ref`, `--rationale`, `--review-by`) and rerun.
+- for `skipped` promotion CI decisions, either provide evidence artifacts or disable skip mode for strict environments.
 
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
