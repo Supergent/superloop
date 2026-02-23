@@ -122,6 +122,18 @@ Horizon contract files:
 - `docs/horizon-planning.md` (operating model)
 - `docs/examples/horizons.example.json` (sample)
 
+Validate horizon control-plane state (when present):
+
+```bash
+test ! -f .superloop/horizons.json || scripts/validate-horizons.sh --repo .
+```
+
+Optional strict schema validation (requires python `jsonschema` module):
+
+```bash
+test ! -f .superloop/horizons.json || scripts/validate-horizons.sh --repo . --strict
+```
+
 Loop binding is optional via `horizon_ref`:
 
 ```json

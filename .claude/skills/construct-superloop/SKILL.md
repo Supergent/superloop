@@ -152,6 +152,7 @@ Optional files:
 - `.superloop/horizons.json` (control-plane state)
 - `schema/horizons.schema.json` (schema)
 - `docs/horizon-planning.md` (operating model)
+- `scripts/validate-horizons.sh` (horizon contract validator)
 
 ### Delegation Execution Model
 
@@ -1214,7 +1215,7 @@ Before handoff, always run:
 ```bash
 ./superloop.sh validate --repo . --schema schema/config.schema.json
 ./superloop.sh run --repo . --loop <loop-id> --dry-run
-test ! -f .superloop/horizons.json || jq -e '.version == 1 and (.horizons | type == "array")' .superloop/horizons.json >/dev/null
+test ! -f .superloop/horizons.json || scripts/validate-horizons.sh --repo .
 ```
 
 If delegation is enabled in the generated config, require explicit verification targets in notes:

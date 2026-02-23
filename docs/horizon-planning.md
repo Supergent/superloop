@@ -75,6 +75,24 @@ Loop linkage:
 
 - In `.superloop/config.json`, set `loops[].horizon_ref` to a horizon ID when a loop is executing a specific horizon slice.
 
+Validation:
+
+```bash
+scripts/validate-horizons.sh --repo .
+```
+
+Validate an example or alternate file:
+
+```bash
+scripts/validate-horizons.sh --repo . --file docs/examples/horizons.example.json
+```
+
+Optional strict schema validation (requires python `jsonschema` module):
+
+```bash
+scripts/validate-horizons.sh --repo . --strict
+```
+
 ## Operational rules
 
 1. A loop may execute without any horizon binding.
