@@ -135,6 +135,58 @@ List packets:
 scripts/horizon-packet.sh list --repo . --horizon-ref HZ-program-authn-v1
 ```
 
+## Orchestrator runtime (Phase 2)
+
+Use the orchestrator when you need deterministic packet selection + adapter-backed dispatch from the queued horizon backlog.
+
+Command:
+
+```bash
+scripts/horizon-orchestrate.sh <plan|dispatch> --repo .
+```
+
+Plan queued dispatches without mutation:
+
+```bash
+scripts/horizon-orchestrate.sh plan \
+  --repo . \
+  --horizon-ref HZ-program-authn-v1 \
+  --adapter filesystem_outbox \
+  --limit 20
+```
+
+Execute dispatch:
+
+```bash
+scripts/horizon-orchestrate.sh dispatch \
+  --repo . \
+  --horizon-ref HZ-program-authn-v1 \
+  --adapter filesystem_outbox \
+  --actor dispatcher \
+  --reason "queued packet dispatch"
+```
+
+Preview dispatch behavior without mutation:
+
+```bash
+scripts/horizon-orchestrate.sh dispatch \
+  --repo . \
+  --horizon-ref HZ-program-authn-v1 \
+  --dry-run
+```
+
+Adapters:
+
+1. `filesystem_outbox` (default): writes one JSON envelope per dispatch to `.superloop/horizons/outbox/<recipient-type>/<recipient-id>.jsonl`.
+2. `stdout`: includes dispatch envelopes directly in command JSON output (`execution.results[].envelope`).
+
+Freshness and fail-closed behavior:
+
+1. Packets with invalid `createdAt` are blocked with `packet_created_at_invalid`.
+2. Packets with expired TTL are blocked with `packet_ttl_expired`.
+3. Packets missing recipient fields are blocked with `packet_recipient_type_missing` / `packet_recipient_id_missing`.
+4. Adapter write failures force packet transition to `failed` with reason `adapter_write_failed`.
+
 Status model:
 
 1. `queued`
@@ -158,6 +210,8 @@ Artifacts:
 
 - `.superloop/horizons/packets/<packet-id>.json`
 - `.superloop/horizons/telemetry/packets.jsonl`
+- `.superloop/horizons/telemetry/orchestrator.jsonl`
+- `.superloop/horizons/outbox/<recipient-type>/<recipient-id>.jsonl` (filesystem adapter)
 
 Each packet artifact records:
 
