@@ -21,9 +21,9 @@
 3. [x] Add ambiguous-outcome drill coverage preventing retry storms and preserving deterministic escalation/reason semantics.
 
 ## P2.4 Operator Visibility and SLO Surfaces
-1. [ ] Extend fleet status projection with rollout/autopause state and governance posture surfaces (`who changed`, `when`, `why`, `until`).
-2. [ ] Add autonomous outcome rollups (`attempted`, `executed`, `ambiguous`, `failed`, `manual_backlog`) to fleet status and telemetry summaries.
-3. [ ] Ensure reason-code surfaces distinguish policy-gated, rollout-gated, governance-gated, and transport-gated autonomous suppression paths.
+1. [x] Extend fleet status projection with rollout/autopause state and governance posture surfaces (`who changed`, `when`, `why`, `until`).
+2. [x] Add autonomous outcome rollups (`attempted`, `executed`, `ambiguous`, `failed`, `manual_backlog`) to fleet status and telemetry summaries.
+3. [x] Ensure reason-code surfaces distinguish policy-gated, rollout-gated, governance-gated, and transport-gated autonomous suppression paths.
 
 ## P2.5 Test Coverage
 1. [x] Extend `tests/ops-manager-fleet.bats` for rollout cohort gating, auto-pause behavior, governance validation, and incident drills.

@@ -327,6 +327,9 @@ Purpose:
 - Surfaces policy summary and top advisory candidates.
 - Surfaces handoff execution outcomes plus autonomous safety-gate decisions/reason counts.
 - Surfaces rollout posture (`autonomous.rollout.*`) including cohort buckets and pause/auto-pause metrics.
+- Surfaces governance posture (`autonomous.governance.*`) including who changed policy (`changedBy`), when (`changedAt`), why (`why`), and until when (`until`).
+- Adds autonomous outcome rollups (`attempted`, `executed`, `ambiguous`, `failed`, `manual_backlog`) across status and latest handoff telemetry summaries.
+- Distinguishes suppression-path buckets (`policyGated`, `rolloutGated`, `governanceGated`, `transportGated`) under `autonomous.safetyGateDecisions.byPath` plus normalized `suppressionReasonCodes`.
 - Includes trace linkage and per-loop drill-down pointers to loop-level artifacts.
 
 ### Fleet Handoff (Operator Control Planning/Execution)

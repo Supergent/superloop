@@ -169,10 +169,124 @@ status_json=$(jq -cn \
   --argjson last_telemetry "$latest_fleet_telemetry" \
   --argjson last_handoff_telemetry "$latest_handoff_telemetry" \
   '
+  def reason_counts_for($counts; $keys):
+    ($counts
+      | to_entries
+      | map(select(. as $entry | (($keys | index($entry.key)) != null)))
+      | from_entries
+    );
+
+  def reason_count_total($counts):
+    ([ $counts[] ] | add // 0);
+
   ($fleet.results // []) as $results
   | ($handoff.execution // {}) as $handoff_execution
   | ($handoff_execution.results // []) as $handoff_results
+  | ($handoff.intents // []) as $handoff_intents
+  | ($handoff_intents | map({key: (.intentId // ""), value: (.transport // "local")}) | from_entries) as $handoff_transport_by_intent
   | ($policy.summary.byAutonomyReason // {}) as $policy_autonomy_reasons
+  | ($policy.autonomous.governance // {}) as $policy_governance
+  | ($generated_at | fromdateiso8601?) as $generated_epoch
+  | (($policy_governance.reviewBy // null) | (fromdateiso8601? // null)) as $governance_review_epoch
+  | (
+      (($policy_governance.actor // null) != null)
+      and (($policy_governance.approvalRef // null) != null)
+      and (($policy_governance.rationale // null) != null)
+      and (($policy_governance.changedAt // null) != null)
+      and (($policy_governance.reviewBy // null) != null)
+    ) as $governance_fields_present
+  | (
+      if (($policy_governance | type) == "object" and ($policy_governance | has("authorityContextPresent"))) then
+        (($policy_governance.authorityContextPresent // false) == true)
+      else
+        $governance_fields_present
+      end
+    ) as $governance_authority_context_present
+  | (($governance_review_epoch != null) and ($generated_epoch != null) and ($governance_review_epoch <= $generated_epoch)) as $governance_review_expired
+  | (($governance_review_epoch != null) and ($generated_epoch != null) and ($governance_review_epoch > $generated_epoch) and (($governance_review_epoch - $generated_epoch) <= 604800)) as $governance_review_due_soon
+  | ([
+      (if ($policy != null and ($policy.mode // "advisory") == "guarded_auto" and ($governance_authority_context_present | not)) then "autonomous_governance_authority_missing" else empty end),
+      (if ($policy != null and ($policy.mode // "advisory") == "guarded_auto" and (($policy_governance.reviewBy // null) == null)) then "autonomous_governance_review_deadline_missing" else empty end),
+      (if ($policy != null and ($policy.mode // "advisory") == "guarded_auto" and $governance_review_expired) then "autonomous_governance_review_expired" else empty end),
+      (if ($policy != null and ($policy.mode // "advisory") == "guarded_auto" and $governance_review_due_soon and ($governance_review_expired | not)) then "autonomous_governance_review_due_soon" else empty end)
+    ] | unique) as $governance_reason_codes
+  | (reason_counts_for($policy_autonomy_reasons; [
+      "policy_mode_not_guarded_auto",
+      "candidate_suppressed",
+      "category_not_allowlisted",
+      "intent_not_allowlisted",
+      "no_recommended_intent",
+      "severity_below_threshold",
+      "confidence_below_threshold",
+      "autonomous_kill_switch_enabled",
+      "autonomous_cooldown_active",
+      "autonomous_max_actions_per_run_exceeded",
+      "autonomous_max_actions_per_loop_exceeded"
+    ])) as $policy_gate_reason_counts
+  | (reason_counts_for($policy_autonomy_reasons; [
+      "autonomous_rollout_scope_excluded",
+      "autonomous_rollout_canary_excluded",
+      "autonomous_rollout_paused_manual",
+      "autonomous_rollout_paused_auto",
+      "autonomous_autopause_ambiguous_spike",
+      "autonomous_autopause_failure_spike"
+    ])) as $rollout_gate_reason_counts
+  | (
+      reduce (
+        $handoff_results[]?
+        | select((($handoff_transport_by_intent[.intentId] // "local") == "sprite_service"))
+        | select((.status // "") == "failed" or (.status // "") == "ambiguous")
+        | (.reasonCode // "transport_execution_blocked")
+      ) as $reason ({};
+        .[$reason] = ((.[$reason] // 0) + 1)
+      )
+    ) as $transport_gate_reason_counts
+  | (reason_count_total($policy_gate_reason_counts)) as $policy_gate_count
+  | (reason_count_total($rollout_gate_reason_counts)) as $rollout_gate_count
+  | (reason_count_total($transport_gate_reason_counts)) as $transport_gate_count
+  | (
+      ($policy != null and ($policy.mode // "advisory") == "guarded_auto")
+      and (($governance_reason_codes | length) > 0)
+    ) as $governance_gate_active
+  | (
+      if $governance_gate_active then
+        (if $policy == null then 0 else ($policy.unsuppressedCount // 0) end)
+      else
+        0
+      end
+    ) as $governance_gate_count
+  | ({
+      attempted: (
+        if ($handoff_execution.mode // "") == "autonomous" then ($handoff_execution.requestedIntentCount // 0)
+        else 0
+        end
+      ),
+      executed: (
+        if ($handoff_execution.mode // "") == "autonomous" then ($handoff_execution.executedCount // 0)
+        else 0
+        end
+      ),
+      ambiguous: (
+        if ($handoff_execution.mode // "") == "autonomous" then ($handoff_execution.ambiguousCount // 0)
+        else 0
+        end
+      ),
+      failed: (
+        if ($handoff_execution.mode // "") == "autonomous" then ($handoff_execution.failedCount // 0)
+        else 0
+        end
+      ),
+      manual_backlog: (
+        if $handoff != null then
+          [ $handoff_intents[] | select((.status // "") == "pending_operator_confirmation" and (.autonomous.manualOnly // false) == true) ]
+          | length
+        elif $policy != null then
+          ($policy.manualOnlyCount // 0)
+        else
+          0
+        end
+      )
+    }) as $autonomous_outcome_rollup
   | {
       schemaVersion: $schema_version,
       generatedAt: $generated_at,
@@ -242,7 +356,8 @@ status_json=$(jq -cn \
             pendingConfirmationCount: ($handoff.summary.pendingConfirmationCount // 0),
             executedCount: ($handoff.summary.executedCount // 0),
             ambiguousCount: ($handoff.summary.ambiguousCount // 0),
-            failedCount: ($handoff.summary.failedCount // 0)
+            failedCount: ($handoff.summary.failedCount // 0),
+            autonomousOutcomeRollup: $autonomous_outcome_rollup
           },
           execution: {
             mode: ($handoff_execution.mode // null),
@@ -293,8 +408,59 @@ status_json=$(jq -cn \
           handoffReasonCodes: (if $handoff == null then [] else ($handoff.reasonCodes // []) end),
           eligibleCandidateCount: (if $policy == null then 0 else ($policy.autoEligibleCount // 0) end),
           manualOnlyCandidateCount: (if $policy == null then 0 else ($policy.manualOnlyCount // 0) end),
+          outcomeRollup: $autonomous_outcome_rollup,
+          governance: (
+            if $policy == null then null
+            else {
+              changedBy: ($policy_governance.actor // null),
+              changedAt: ($policy_governance.changedAt // null),
+              approvalRef: ($policy_governance.approvalRef // null),
+              why: ($policy_governance.rationale // null),
+              until: ($policy_governance.reviewBy // null),
+              reviewWindowDays: ($policy_governance.reviewWindowDays // null),
+              authorityContextPresent: $governance_authority_context_present,
+              posture: (
+                if ($policy.mode // "advisory") != "guarded_auto" then "not_required"
+                elif $governance_authority_context_present == false then "authority_missing"
+                elif (($policy_governance.reviewBy // null) == null) then "review_deadline_missing"
+                elif $governance_review_expired then "review_expired"
+                elif $governance_review_due_soon then "review_due_soon"
+                else "active"
+                end
+              ),
+              reasonCodes: $governance_reason_codes,
+              blocksAutonomous: $governance_gate_active
+            } | with_entries(select(.value != null))
+            end
+          ),
           safetyGateDecisions: {
             byReason: $policy_autonomy_reasons,
+            byPath: {
+              policyGated: {
+                blockedCount: $policy_gate_count,
+                byReason: $policy_gate_reason_counts
+              },
+              rolloutGated: {
+                blockedCount: $rollout_gate_count,
+                byReason: $rollout_gate_reason_counts
+              },
+              governanceGated: {
+                blockedCount: $governance_gate_count,
+                reasonCodes: $governance_reason_codes
+              },
+              transportGated: {
+                blockedCount: $transport_gate_count,
+                byReason: $transport_gate_reason_counts
+              }
+            },
+            suppressionReasonCodes: (
+              [
+                (if $policy_gate_count > 0 then "autonomous_suppression_policy_gated" else empty end),
+                (if $rollout_gate_count > 0 then "autonomous_suppression_rollout_gated" else empty end),
+                (if $governance_gate_count > 0 then "autonomous_suppression_governance_gated" else empty end),
+                (if $transport_gate_count > 0 then "autonomous_suppression_transport_gated" else empty end)
+              ] | unique
+            ),
             blockedCount: (
               ($policy_autonomy_reasons.autonomous_rollout_scope_excluded // 0)
               + ($policy_autonomy_reasons.autonomous_rollout_canary_excluded // 0)
@@ -324,13 +490,34 @@ status_json=$(jq -cn \
                 inCohortCount: ($policy.autonomous.rollout.candidateBuckets.inCohortCount // 0),
                 outOfCohortCount: ($policy.autonomous.rollout.candidateBuckets.outOfCohortCount // 0)
               },
+              state: {
+                active: ($policy.autonomous.rollout.pause.active // false),
+                manualPauseActive: ($policy.autonomous.rollout.pause.manual // false),
+                autoPauseActive: ($policy.autonomous.rollout.pause.auto.active // false),
+                reasonCodes: ($policy.autonomous.rollout.pause.reasons // [])
+              },
+              autopause: {
+                enabled: ($policy.autonomous.rollout.pause.auto.enabled // true),
+                active: ($policy.autonomous.rollout.pause.auto.active // false),
+                reasons: ($policy.autonomous.rollout.pause.auto.reasons // []),
+                lookbackExecutions: ($policy.autonomous.rollout.pause.auto.lookbackExecutions // null),
+                minSampleSize: ($policy.autonomous.rollout.pause.auto.minSampleSize // null),
+                ambiguityRateThreshold: ($policy.autonomous.rollout.pause.auto.ambiguityRateThreshold // null),
+                failureRateThreshold: ($policy.autonomous.rollout.pause.auto.failureRateThreshold // null),
+                metrics: ($policy.autonomous.rollout.pause.auto.metrics // {})
+              },
               pause: {
                 active: ($policy.autonomous.rollout.pause.active // false),
                 reasons: ($policy.autonomous.rollout.pause.reasons // []),
                 manual: ($policy.autonomous.rollout.pause.manual // false),
                 auto: {
+                  enabled: ($policy.autonomous.rollout.pause.auto.enabled // true),
                   active: ($policy.autonomous.rollout.pause.auto.active // false),
                   reasons: ($policy.autonomous.rollout.pause.auto.reasons // []),
+                  lookbackExecutions: ($policy.autonomous.rollout.pause.auto.lookbackExecutions // null),
+                  minSampleSize: ($policy.autonomous.rollout.pause.auto.minSampleSize // null),
+                  ambiguityRateThreshold: ($policy.autonomous.rollout.pause.auto.ambiguityRateThreshold // null),
+                  failureRateThreshold: ($policy.autonomous.rollout.pause.auto.failureRateThreshold // null),
                   metrics: ($policy.autonomous.rollout.pause.auto.metrics // {})
                 }
               }
@@ -350,6 +537,7 @@ status_json=$(jq -cn \
               executedCount: ($handoff_execution.executedCount // 0),
               ambiguousCount: ($handoff_execution.ambiguousCount // 0),
               failedCount: ($handoff_execution.failedCount // 0),
+              outcomeRollup: $autonomous_outcome_rollup,
               outcomeReasonCodes: (
                 reduce ($handoff_results[] | .reasonCode // empty) as $code ({};
                   .[$code] = ((.[$code] // 0) + 1)
@@ -419,6 +607,45 @@ status_json=$(jq -cn \
             ambiguousCount: ($last_handoff_telemetry.execution.ambiguousCount // null),
             failedCount: ($last_handoff_telemetry.execution.failedCount // null)
           } | with_entries(select(.value != null)),
+          summary: {
+            intentCount: ($last_handoff_telemetry.summary.summary.intentCount // null),
+            autoEligibleIntentCount: ($last_handoff_telemetry.summary.summary.autoEligibleIntentCount // null),
+            manualOnlyIntentCount: ($last_handoff_telemetry.summary.summary.manualOnlyIntentCount // null),
+            pendingConfirmationCount: ($last_handoff_telemetry.summary.summary.pendingConfirmationCount // null),
+            pendingManualOnlyCount: ($last_handoff_telemetry.summary.summary.pendingManualOnlyCount // null),
+            executedCount: ($last_handoff_telemetry.summary.summary.executedCount // null),
+            ambiguousCount: ($last_handoff_telemetry.summary.summary.ambiguousCount // null),
+            failedCount: ($last_handoff_telemetry.summary.summary.failedCount // null)
+          } | with_entries(select(.value != null)),
+          autonomousOutcomeRollup: {
+            attempted: (
+              if ($last_handoff_telemetry.execution.mode // "") == "autonomous" then ($last_handoff_telemetry.execution.requestedIntentCount // 0)
+              else 0
+              end
+            ),
+            executed: (
+              if ($last_handoff_telemetry.execution.mode // "") == "autonomous" then ($last_handoff_telemetry.execution.executedCount // 0)
+              else 0
+              end
+            ),
+            ambiguous: (
+              if ($last_handoff_telemetry.execution.mode // "") == "autonomous" then ($last_handoff_telemetry.execution.ambiguousCount // 0)
+              else 0
+              end
+            ),
+            failed: (
+              if ($last_handoff_telemetry.execution.mode // "") == "autonomous" then ($last_handoff_telemetry.execution.failedCount // 0)
+              else 0
+              end
+            ),
+            manual_backlog: (
+              if ($last_handoff_telemetry.summary.summary.pendingManualOnlyCount // null) != null then
+                ($last_handoff_telemetry.summary.summary.pendingManualOnlyCount // 0)
+              else
+                ($autonomous_outcome_rollup.manual_backlog // 0)
+              end
+            )
+          },
           reasonCodes: ($last_handoff_telemetry.summary.reasonCodes // [])
         } | with_entries(select(.value != null))
         end
