@@ -415,3 +415,70 @@ trim_events_to_single_line() {
   [ "$status" -eq 0 ]
   [ "$output" = "trace-vis-parity-1" ]
 }
+
+@test "status preserves reason-surface parity after failed local and sprite_service reconciles" {
+  local loop_id="demo-loop"
+  local local_repo="$TEMP_DIR/visibility-failure-local"
+  local service_repo="$TEMP_DIR/visibility-failure-service"
+  mkdir -p "$local_repo" "$service_repo"
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --trace-id "trace-vis-failure-parity-1"
+  [ "$status" -ne 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --trace-id "trace-vis-failure-parity-1"
+  [ "$status" -ne 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$local_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local local_status_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-status.sh" --repo "$service_repo" --loop "$loop_id"
+  [ "$status" -eq 0 ]
+  local service_status_json="$output"
+
+  run jq -r '.health.status' <<<"$local_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -r '.health.status' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  local local_reason_codes
+  local service_reason_codes
+  local_reason_codes="$(jq -c '.health.reasonCodes | sort' <<<"$local_status_json")"
+  service_reason_codes="$(jq -c '.health.reasonCodes | sort' <<<"$service_status_json")"
+  [ "$local_reason_codes" = "$service_reason_codes" ]
+
+  run jq -e '.health.reasonCodes | index("transport_unreachable") != null' <<<"$local_status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.health.reasonCodes | index("transport_unreachable") != null' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.reconcile.lastStatus' <<<"$local_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "failed" ]
+
+  run jq -r '.reconcile.lastStatus' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "failed" ]
+
+  run jq -r '.visibility.trace.reconcileTraceId' <<<"$local_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-vis-failure-parity-1" ]
+
+  run jq -r '.visibility.trace.reconcileTraceId' <<<"$service_status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-vis-failure-parity-1" ]
+}
