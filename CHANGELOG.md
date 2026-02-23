@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2 - 2026-02-23
+
+### Added
+- **Horizon control-plane contract**: Added `docs/horizon-planning.md` and `schema/horizons.schema.json` to define optional horizon planning above Superloop loops.
+- **Horizon example artifact**: Added `docs/examples/horizons.example.json` to show practical horizon/slice linkage.
+- **Horizon validator script**: Added `scripts/validate-horizons.sh` for reusable horizon control-plane validation (base schema checks + invariant checks, with optional strict JSON Schema mode).
+
+### Changed
+- **Loop schema linkage**: Added optional `loops[].horizon_ref` in `schema/config.schema.json` to bind a loop to a horizon when needed.
+- **Constructor guidance**: Updated `construct-superloop` skill to support optional horizon-aware authoring and verification while keeping non-horizon loops valid.
+- **Docs and handoff verification**: Replaced ad-hoc horizon `jq` checks in guidance with `scripts/validate-horizons.sh` for a single validation path.
+
 ## 0.6.1 - 2026-02-20
 
 ### Changed

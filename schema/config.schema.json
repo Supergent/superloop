@@ -192,6 +192,10 @@
         "type": "object",
         "properties": {
           "id": {"type": "string"},
+          "horizon_ref": {
+            "type": "string",
+            "description": "Optional horizon ID from .superloop/horizons.json to link this loop to a higher-level planning horizon."
+          },
           "spec_file": {"type": "string"},
           "max_iterations": {"type": "integer"},
           "completion_promise": {"type": "string"},

@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "organization": {
+    "id": "org-supergent",
+    "name": "Supergent",
+    "charter": "Build a governed multi-agent software delivery organization."
+  },
+  "horizons": [
+    {
+      "id": "HZ-program-authn-v1",
+      "title": "Authn/Authz program hardening",
+      "level": "H2",
+      "status": "active",
+      "cadence_domain": "program",
+      "thesis": "A policy-gated agent communication layer reduces blocked engineering time without compromising governance.",
+      "success_signals": [
+        "blocked_role_time_reduction >= 25%",
+        "100% outbound contacts have policy decision refs",
+        "no unapproved recipient contacts"
+      ],
+      "kill_signals": [
+        "repeated governance bypass",
+        "no measurable cycle-time improvement after 3 completed slices"
+      ],
+      "constraints": [
+        "No unrestricted direct model-to-network sends",
+        "All external contacts must route through policy gate"
+      ],
+      "review_cadence": "per_completed_slice",
+      "owner": "planner",
+      "confidence": 0.62,
+      "execution_slices": [
+        {
+          "id": "slice-contact-policy-gate",
+          "loop_id": "contact-policy-gate",
+          "spec_file": ".superloop/specs/contact-policy-gate.md",
+          "status": "active",
+          "entry_criteria": [
+            "contact_intent schema frozen",
+            "policy matrix approved"
+          ],
+          "exit_criteria": [
+            "policy gate enforced for all outbound contact actions",
+            "audit refs emitted in events stream"
+          ],
+          "run_ids": [],
+          "evidence_refs": []
+        }
+      ],
+      "transitions": [
+        {
+          "at": "2026-02-23T00:00:00Z",
+          "from_level": "H3",
+          "to_level": "H2",
+          "reason": "Discovery completed and implementation constraints are now explicit.",
+          "evidence_refs": [
+            "docs/horizon-planning.md"
+          ]
+        }
+      ]
+    }
+  ]
+}

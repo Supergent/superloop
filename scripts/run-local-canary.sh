@@ -63,6 +63,8 @@ jq '
     prompt_mode: "stdin"
   }
   | (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.runner) = "local-shell"
+  | (.loops[] | select(.id == "rlms-canary") | .lifecycle.feature_prefix) = "feat/rlms-canary/"
+  | (.loops[] | select(.id == "rlms-canary") | .lifecycle.no_fetch) = true
   | del(
       (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.model),
       (.loops[] | select(.id == "rlms-canary") | .roles.reviewer.thinking)
