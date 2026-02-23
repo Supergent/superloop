@@ -6,9 +6,9 @@
 3. [ ] Link this phase packet from the issue and include prior PR context (`#85`, `#84`, `#83`, `#82`, `#81`).
 
 ## P2.1 Rollout Controls and Blast-Radius Containment
-1. [ ] Extend fleet policy contract with rollout controls for guarded autonomous mode (canary scope/percentage, pause flags, and deterministic cohort selection).
-2. [ ] Implement rollout gating in policy/handoff shaping so auto-dispatch applies only to in-scope cohorts while out-of-scope intents remain manual pending.
-3. [ ] Add fail-safe auto-pause triggers for ambiguity/failure spikes and ensure advisory/manual flows continue when auto execution is paused.
+1. [x] Extend fleet policy contract with rollout controls for guarded autonomous mode (canary scope/percentage, pause flags, and deterministic cohort selection).
+2. [x] Implement rollout gating in policy/handoff shaping so auto-dispatch applies only to in-scope cohorts while out-of-scope intents remain manual pending.
+3. [x] Add fail-safe auto-pause triggers for ambiguity/failure spikes and ensure advisory/manual flows continue when auto execution is paused.
 
 ## P2.2 Governance and Policy-Change Authority
 1. [ ] Define and validate governance metadata for autonomous policy changes (actor identity, approval reference, rationale, and expiry/review window).

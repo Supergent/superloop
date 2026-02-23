@@ -354,6 +354,169 @@ validation_errors=$(jq -r '
     end
   )
   + (
+    if ((.policy.autonomous.rollout // {}) | type) != "object" then
+      ["policy.autonomous.rollout must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.canaryPercent // null) == null) then
+      []
+    elif (
+      ((.policy.autonomous.rollout.canaryPercent // null) | type) != "number"
+      or ((.policy.autonomous.rollout.canaryPercent // null) != ((.policy.autonomous.rollout.canaryPercent // null) | floor))
+      or ((.policy.autonomous.rollout.canaryPercent // null) < 0)
+      or ((.policy.autonomous.rollout.canaryPercent // null) > 100)
+    ) then
+      ["policy.autonomous.rollout.canaryPercent must be an integer between 0 and 100 when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.scope // {}) | type) != "object" then
+      ["policy.autonomous.rollout.scope must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.scope.loopIds // null) == null) then
+      []
+    elif ((.policy.autonomous.rollout.scope.loopIds // null) | type) != "array" then
+      ["policy.autonomous.rollout.scope.loopIds must be an array when present"]
+    elif ([.policy.autonomous.rollout.scope.loopIds[] | type] | all(. == "string")) | not then
+      ["policy.autonomous.rollout.scope.loopIds entries must be strings"]
+    elif ([.policy.autonomous.rollout.scope.loopIds[] | select(length == 0)] | length) > 0 then
+      ["policy.autonomous.rollout.scope.loopIds entries must be non-empty strings"]
+    elif ((.policy.autonomous.rollout.scope.loopIds | length) != ((.policy.autonomous.rollout.scope.loopIds | unique) | length)) then
+      ["policy.autonomous.rollout.scope.loopIds entries must be unique"]
+    else
+      (
+        (.loops // []) as $loops
+        | ([ $loops[]? | .loopId // empty ] | map(select(type == "string" and length > 0)) | unique) as $declared_loop_ids
+        | (
+            [
+              .policy.autonomous.rollout.scope.loopIds[] as $scope_loop_id
+              | select(($declared_loop_ids | index($scope_loop_id)) == null)
+            ]
+            | if (length) > 0 then
+                ["policy.autonomous.rollout.scope.loopIds entries must reference declared loopIds"]
+              else
+                []
+              end
+          )
+      )
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.selector // {}) | type) != "object" then
+      ["policy.autonomous.rollout.selector must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.selector.salt // null) == null) then
+      []
+    elif ((.policy.autonomous.rollout.selector.salt // null) | type) != "string" then
+      ["policy.autonomous.rollout.selector.salt must be a string when present"]
+    elif ((.policy.autonomous.rollout.selector.salt // "") | length) == 0 then
+      ["policy.autonomous.rollout.selector.salt must be non-empty when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.pause // {}) | type) != "object" then
+      ["policy.autonomous.rollout.pause must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.rollout.pause.manual // null) == null
+      or ((.policy.autonomous.rollout.pause.manual // null) | type) == "boolean"
+    ) then
+      []
+    else
+      ["policy.autonomous.rollout.pause.manual must be boolean when present"]
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.autoPause // {}) | type) != "object" then
+      ["policy.autonomous.rollout.autoPause must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.rollout.autoPause.enabled // null) == null
+      or ((.policy.autonomous.rollout.autoPause.enabled // null) | type) == "boolean"
+    ) then
+      []
+    else
+      ["policy.autonomous.rollout.autoPause.enabled must be boolean when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.rollout.autoPause.lookbackExecutions // null) == null
+      or (
+        ((.policy.autonomous.rollout.autoPause.lookbackExecutions // null) | type) == "number"
+        and ((.policy.autonomous.rollout.autoPause.lookbackExecutions // null) >= 1)
+        and ((.policy.autonomous.rollout.autoPause.lookbackExecutions // null) == ((.policy.autonomous.rollout.autoPause.lookbackExecutions // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.autonomous.rollout.autoPause.lookbackExecutions must be an integer >= 1 when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.rollout.autoPause.minSampleSize // null) == null
+      or (
+        ((.policy.autonomous.rollout.autoPause.minSampleSize // null) | type) == "number"
+        and ((.policy.autonomous.rollout.autoPause.minSampleSize // null) >= 1)
+        and ((.policy.autonomous.rollout.autoPause.minSampleSize // null) == ((.policy.autonomous.rollout.autoPause.minSampleSize // null) | floor))
+      )
+    ) then
+      []
+    else
+      ["policy.autonomous.rollout.autoPause.minSampleSize must be an integer >= 1 when present"]
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.autoPause.ambiguityRateThreshold // null) == null) then
+      []
+    elif (
+      ((.policy.autonomous.rollout.autoPause.ambiguityRateThreshold // null) | type) != "number"
+      or ((.policy.autonomous.rollout.autoPause.ambiguityRateThreshold // null) < 0)
+      or ((.policy.autonomous.rollout.autoPause.ambiguityRateThreshold // null) > 1)
+    ) then
+      ["policy.autonomous.rollout.autoPause.ambiguityRateThreshold must be a number between 0 and 1 when present"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.autonomous.rollout.autoPause.failureRateThreshold // null) == null) then
+      []
+    elif (
+      ((.policy.autonomous.rollout.autoPause.failureRateThreshold // null) | type) != "number"
+      or ((.policy.autonomous.rollout.autoPause.failureRateThreshold // null) < 0)
+      or ((.policy.autonomous.rollout.autoPause.failureRateThreshold // null) > 1)
+    ) then
+      ["policy.autonomous.rollout.autoPause.failureRateThreshold must be a number between 0 and 1 when present"]
+    else
+      []
+    end
+  )
+  + (
     if ((.policy.suppressions // {}) | type) != "object" then
       ["policy.suppressions must be an object mapping loopId to category arrays"]
     else
@@ -441,6 +604,25 @@ normalized_json=$(jq -cn \
             maxActionsPerLoop: ($registry.policy.autonomous.safety.maxActionsPerLoop // 1),
             cooldownSeconds: ($registry.policy.autonomous.safety.cooldownSeconds // 300),
             killSwitch: ($registry.policy.autonomous.safety.killSwitch // false)
+          },
+          rollout: {
+            canaryPercent: ($registry.policy.autonomous.rollout.canaryPercent // 100),
+            scope: {
+              loopIds: ($registry.policy.autonomous.rollout.scope.loopIds // [])
+            },
+            selector: {
+              salt: ($registry.policy.autonomous.rollout.selector.salt // "fleet-autonomous-rollout-v1")
+            },
+            pause: {
+              manual: ($registry.policy.autonomous.rollout.pause.manual // false)
+            },
+            autoPause: {
+              enabled: ($registry.policy.autonomous.rollout.autoPause.enabled // true),
+              lookbackExecutions: ($registry.policy.autonomous.rollout.autoPause.lookbackExecutions // 5),
+              minSampleSize: ($registry.policy.autonomous.rollout.autoPause.minSampleSize // 3),
+              ambiguityRateThreshold: ($registry.policy.autonomous.rollout.autoPause.ambiguityRateThreshold // 0.4),
+              failureRateThreshold: ($registry.policy.autonomous.rollout.autoPause.failureRateThreshold // 0.4)
+            }
           }
         }
       }

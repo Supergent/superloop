@@ -158,6 +158,76 @@
                   "type": "boolean"
                 }
               }
+            },
+            "rollout": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "canaryPercent": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "scope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "loopIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "selector": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "salt": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "pause": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "manual": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "autoPause": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "lookbackExecutions": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "minSampleSize": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "ambiguityRateThreshold": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "failureRateThreshold": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                }
+              }
             }
           }
         }

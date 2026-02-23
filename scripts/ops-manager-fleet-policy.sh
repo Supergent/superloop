@@ -10,6 +10,7 @@ Options:
   --registry-file <path>         Fleet registry JSON path. Default: <repo>/.superloop/ops-manager/fleet/registry.v1.json
   --fleet-state-file <path>      Fleet state JSON path. Default: <repo>/.superloop/ops-manager/fleet/state.json
   --policy-state-file <path>     Policy state JSON output path. Default: <repo>/.superloop/ops-manager/fleet/policy-state.json
+  --handoff-telemetry-file <path> Fleet handoff telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/handoff.jsonl
   --policy-telemetry-file <path> Policy telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/policy.jsonl
   --policy-history-file <path>   Candidate history JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/policy-history.jsonl
   --dedupe-window-seconds <n>    Advisory cooldown window for duplicate candidates. Default: registry policy.noiseControls.dedupeWindowSeconds (or 300)
@@ -55,6 +56,7 @@ repo=""
 registry_file=""
 fleet_state_file=""
 policy_state_file=""
+handoff_telemetry_file=""
 policy_telemetry_file=""
 policy_history_file=""
 dedupe_window_seconds=""
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --policy-state-file)
       policy_state_file="${2:-}"
+      shift 2
+      ;;
+    --handoff-telemetry-file)
+      handoff_telemetry_file="${2:-}"
       shift 2
       ;;
     --policy-telemetry-file)
@@ -131,6 +137,9 @@ fi
 if [[ -z "$policy_state_file" ]]; then
   policy_state_file="$repo/.superloop/ops-manager/fleet/policy-state.json"
 fi
+if [[ -z "$handoff_telemetry_file" ]]; then
+  handoff_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl"
+fi
 if [[ -z "$policy_telemetry_file" ]]; then
   policy_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/policy.jsonl"
 fi
@@ -178,6 +187,11 @@ results_json="$(jq -c '.results // []' <<<"$fleet_state_json")"
 history_json='[]'
 if [[ -f "$policy_history_file" ]]; then
   history_json=$(jq -cs '.' "$policy_history_file" 2>/dev/null) || die "invalid policy history JSONL: $policy_history_file"
+fi
+
+handoff_history_json='[]'
+if [[ -f "$handoff_telemetry_file" ]]; then
+  handoff_history_json=$(jq -cs '.' "$handoff_telemetry_file" 2>/dev/null) || die "invalid handoff telemetry JSONL: $handoff_telemetry_file"
 fi
 
 current_timestamp="$(timestamp)"
@@ -295,6 +309,7 @@ candidates_json=$(jq -cn \
   --argjson candidates "$candidates_json" \
   --argjson autonomous "$autonomous_controls_json" \
   --argjson history "$history_json" \
+  --argjson handoff_history "$handoff_history_json" \
   --arg now "$current_timestamp" \
   '
   def severity_rank($severity):
@@ -319,6 +334,17 @@ candidates_json=$(jq -cn \
        | fromdateiso8601?
      ] | max // null);
 
+  def bucket_for($seed):
+    reduce ($seed | explode[]) as $cp (17; ((. * 31 + $cp) % 1000003))
+    | . % 100;
+
+  def to_rate($num; $den):
+    if $den <= 0 then 0 else ($num / $den) end;
+
+  def is_autonomous_handoff_event:
+    (.category // "") == "fleet_handoff_execute"
+    and (.execution.mode // "") == "autonomous";
+
   ($autonomous.allow.categories // []) as $allowed_categories
   | ($autonomous.allow.intents // []) as $allowed_intents
   | ($autonomous.thresholds.minSeverity // "critical") as $min_severity
@@ -327,7 +353,58 @@ candidates_json=$(jq -cn \
   | ($autonomous.safety.maxActionsPerLoop // 1) as $max_actions_per_loop
   | ($autonomous.safety.cooldownSeconds // 300) as $cooldown_seconds
   | ($autonomous.safety.killSwitch // false) as $kill_switch
+  | ($autonomous.rollout // {}) as $rollout
+  | ($rollout.canaryPercent // 100) as $canary_percent
+  | ($rollout.scope.loopIds // []) as $scope_loop_ids
+  | ($rollout.selector.salt // "fleet-autonomous-rollout-v1") as $rollout_salt
+  | ($rollout.pause.manual // false) as $rollout_manual_pause
+  | ($rollout.autoPause.enabled // true) as $autopause_enabled
+  | ($rollout.autoPause.lookbackExecutions // 5) as $autopause_lookback
+  | ($rollout.autoPause.minSampleSize // 3) as $autopause_min_samples
+  | ($rollout.autoPause.ambiguityRateThreshold // 0.4) as $autopause_amb_threshold
+  | ($rollout.autoPause.failureRateThreshold // 0.4) as $autopause_fail_threshold
   | ($now | fromdateiso8601) as $now_epoch
+  | (
+      [ $handoff_history[]?
+        | select(is_autonomous_handoff_event)
+      ]
+      | sort_by(.timestamp // "")
+      | (if $autopause_lookback > 0 then .[-$autopause_lookback:] else . end)
+      | {
+          windowExecutionCount: length,
+          attemptedCount: ([ .[] | (.execution.executedIntentCount // .execution.requestedIntentCount // 0) ] | add // 0),
+          executedCount: ([ .[] | (.execution.executedCount // 0) ] | add // 0),
+          ambiguousCount: ([ .[] | (.execution.ambiguousCount // 0) ] | add // 0),
+          failedCount: ([ .[] | (.execution.failedCount // 0) ] | add // 0)
+        }
+    ) as $autopause_metrics
+  | ($autopause_metrics.attemptedCount) as $autopause_attempted
+  | (to_rate($autopause_metrics.ambiguousCount; $autopause_attempted)) as $autopause_amb_rate
+  | (to_rate($autopause_metrics.failedCount; $autopause_attempted)) as $autopause_fail_rate
+  | ([
+      (
+        if $autopause_enabled
+          and $autopause_attempted >= $autopause_min_samples
+          and $autopause_amb_rate >= $autopause_amb_threshold
+        then "autonomous_autopause_ambiguous_spike"
+        else empty
+        end
+      ),
+      (
+        if $autopause_enabled
+          and $autopause_attempted >= $autopause_min_samples
+          and $autopause_fail_rate >= $autopause_fail_threshold
+        then "autonomous_autopause_failure_spike"
+        else empty
+        end
+      )
+    ] | unique) as $autopause_trigger_reasons
+  | (($autopause_trigger_reasons | length) > 0) as $autopause_triggered
+  | ([
+      (if $rollout_manual_pause then "autonomous_rollout_paused_manual" else empty end),
+      (if $autopause_triggered then "autonomous_rollout_paused_auto" else empty end)
+    ] | unique) as $rollout_pause_reasons
+  | (($rollout_pause_reasons | length) > 0) as $rollout_pause_active
   | (
       ($candidates // [])
       | map(
@@ -343,6 +420,15 @@ candidates_json=$(jq -cn \
             ) as $intent_allowed
           | (severity_rank($candidate.severity) >= severity_rank($min_severity)) as $severity_ok
           | (confidence_rank($candidate.confidence) >= confidence_rank($min_confidence)) as $confidence_ok
+          | (($scope_loop_ids | length) == 0 or (($scope_loop_ids | index($candidate.loopId)) != null)) as $scope_allowed
+          | (bucket_for(($candidate.loopId + "|" + $rollout_salt))) as $rollout_bucket
+          | (
+              if $canary_percent <= 0 then false
+              elif $canary_percent >= 100 then true
+              else ($rollout_bucket < $canary_percent)
+              end
+            ) as $canary_allowed
+          | ($scope_allowed and $canary_allowed) as $cohort_allowed
           | ([
               (if $mode != "guarded_auto" then "policy_mode_not_guarded_auto" else empty end),
               (if ($candidate.suppressed // false) == true then "candidate_suppressed" else empty end),
@@ -354,6 +440,16 @@ candidates_json=$(jq -cn \
               (if $severity_ok then empty else "severity_below_threshold" end),
               (if $confidence_ok then empty else "confidence_below_threshold" end)
             ] | unique) as $base_reasons
+          | (([
+              (if $scope_allowed then empty else "autonomous_rollout_scope_excluded" end),
+              (if $scope_allowed and $canary_allowed then empty
+               elif $scope_allowed then "autonomous_rollout_canary_excluded"
+               else empty
+               end),
+              (if $rollout_manual_pause then "autonomous_rollout_paused_manual" else empty end),
+              (if $autopause_triggered then "autonomous_rollout_paused_auto" else empty end)
+            ] + $autopause_trigger_reasons) | unique) as $rollout_reasons
+          | (($base_reasons + $rollout_reasons) | unique) as $gating_reasons
           | (last_autonomous_epoch($candidate.candidateId)) as $last_auto_epoch
           | (if $last_auto_epoch == null then null else ($now_epoch - $last_auto_epoch) end) as $auto_age
           | $candidate
@@ -361,8 +457,8 @@ candidates_json=$(jq -cn \
               mode: $mode,
               eligible: false,
               manualOnly: true,
-              reasons: $base_reasons,
-              gatingReasons: $base_reasons,
+              reasons: $gating_reasons,
+              gatingReasons: $gating_reasons,
               recommendedIntent: $recommended_intent,
               gates: {
                 modeGuardedAuto: ($mode == "guarded_auto"),
@@ -370,7 +466,9 @@ candidates_json=$(jq -cn \
                 categoryAllowed: $category_allowed,
                 intentAllowed: $intent_allowed,
                 severityMeetsThreshold: $severity_ok,
-                confidenceMeetsThreshold: $confidence_ok
+                confidenceMeetsThreshold: $confidence_ok,
+                rolloutScopeAllowed: $scope_allowed,
+                rolloutCanarySelected: $canary_allowed
               },
               safety: {
                 maxActionsPerRun: $max_actions_per_run,
@@ -381,6 +479,40 @@ candidates_json=$(jq -cn \
                   active: ($cooldown_seconds > 0 and $last_auto_epoch != null and $auto_age < $cooldown_seconds),
                   remainingSeconds: (if $cooldown_seconds > 0 and $last_auto_epoch != null and $auto_age < $cooldown_seconds then ($cooldown_seconds - $auto_age) else 0 end),
                   lastEligibleAt: (if $last_auto_epoch == null then null else ($last_auto_epoch | todateiso8601) end)
+                }
+              },
+              rollout: {
+                canaryPercent: $canary_percent,
+                scopeLoopIds: $scope_loop_ids,
+                selector: {
+                  salt: $rollout_salt,
+                  bucket: $rollout_bucket,
+                  inScope: $scope_allowed,
+                  canarySelected: $canary_allowed,
+                  inCohort: $cohort_allowed
+                },
+                pause: {
+                  active: $rollout_pause_active,
+                  reasons: $rollout_pause_reasons,
+                  manual: $rollout_manual_pause,
+                  auto: {
+                    enabled: $autopause_enabled,
+                    active: $autopause_triggered,
+                    reasons: $autopause_trigger_reasons,
+                    lookbackExecutions: $autopause_lookback,
+                    minSampleSize: $autopause_min_samples,
+                    ambiguityRateThreshold: $autopause_amb_threshold,
+                    failureRateThreshold: $autopause_fail_threshold,
+                    metrics: {
+                      windowExecutionCount: $autopause_metrics.windowExecutionCount,
+                      attemptedCount: $autopause_attempted,
+                      executedCount: $autopause_metrics.executedCount,
+                      ambiguousCount: $autopause_metrics.ambiguousCount,
+                      failedCount: $autopause_metrics.failedCount,
+                      ambiguityRate: $autopause_amb_rate,
+                      failureRate: $autopause_fail_rate
+                    }
+                  }
                 }
               }
             }
@@ -437,6 +569,7 @@ policy_state_json=$(jq -cn \
   --arg fleet_state_file "$fleet_state_file" \
   --arg registry_file "$registry_file" \
   --arg policy_history_file "$policy_history_file" \
+  --arg handoff_telemetry_file "$handoff_telemetry_file" \
   --argjson dedupe_window "$dedupe_window_seconds" \
   --argjson evaluated_loop_count "$(jq -r '.results | length' <<<"$fleet_state_json")" \
   --argjson candidates "$candidates_json" \
@@ -464,11 +597,80 @@ policy_state_json=$(jq -cn \
     },
     noiseControls: {
       dedupeWindowSeconds: $dedupe_window,
-      policyHistoryFile: $policy_history_file
+      policyHistoryFile: $policy_history_file,
+      handoffTelemetryFile: $handoff_telemetry_file
     },
     autonomous: {
       enabled: ($mode == "guarded_auto"),
-      controls: $autonomous_controls
+      controls: $autonomous_controls,
+      rollout: {
+        canaryPercent: ($autonomous_controls.rollout.canaryPercent // 100),
+        scopeLoopIds: ($autonomous_controls.rollout.scope.loopIds // []),
+        selectorSalt: ($autonomous_controls.rollout.selector.salt // "fleet-autonomous-rollout-v1"),
+        candidateBuckets: {
+          inScopeCount: ([ $candidates[] | select((.autonomous.rollout.selector.inScope // false) == true) ] | length),
+          inCohortCount: ([ $candidates[] | select((.autonomous.rollout.selector.inCohort // false) == true) ] | length),
+          outOfCohortCount: ([ $candidates[] | select((.autonomous.rollout.selector.inScope // false) == true and (.autonomous.rollout.selector.inCohort // false) == false) ] | length)
+        },
+        pause: (
+          if ($candidates | length) == 0 then
+            {
+              active: false,
+              reasons: [],
+              manual: ($autonomous_controls.rollout.pause.manual // false),
+              auto: {
+                enabled: ($autonomous_controls.rollout.autoPause.enabled // true),
+                active: false,
+                reasons: [],
+                lookbackExecutions: ($autonomous_controls.rollout.autoPause.lookbackExecutions // 5),
+                minSampleSize: ($autonomous_controls.rollout.autoPause.minSampleSize // 3),
+                ambiguityRateThreshold: ($autonomous_controls.rollout.autoPause.ambiguityRateThreshold // 0.4),
+                failureRateThreshold: ($autonomous_controls.rollout.autoPause.failureRateThreshold // 0.4),
+                metrics: {
+                  windowExecutionCount: 0,
+                  attemptedCount: 0,
+                  executedCount: 0,
+                  ambiguousCount: 0,
+                  failedCount: 0,
+                  ambiguityRate: 0,
+                  failureRate: 0
+                }
+              }
+            }
+          else
+            ($candidates[0].autonomous.rollout.pause // {}) as $pause
+            | {
+                active: ($pause.active // false),
+                reasons: ($pause.reasons // []),
+                manual: ($pause.manual // false),
+                auto: (
+                  ($pause.auto // {}) as $auto
+                  | {
+                      enabled: ($auto.enabled // true),
+                      active: ($auto.active // false),
+                      reasons: ($auto.reasons // []),
+                      lookbackExecutions: ($auto.lookbackExecutions // 5),
+                      minSampleSize: ($auto.minSampleSize // 3),
+                      ambiguityRateThreshold: ($auto.ambiguityRateThreshold // 0.4),
+                      failureRateThreshold: ($auto.failureRateThreshold // 0.4),
+                      metrics: (
+                        $auto.metrics
+                        // {
+                          windowExecutionCount: 0,
+                          attemptedCount: 0,
+                          executedCount: 0,
+                          ambiguousCount: 0,
+                          failedCount: 0,
+                          ambiguityRate: 0,
+                          failureRate: 0
+                        }
+                      )
+                    }
+                )
+              }
+          end
+        )
+      }
     },
     evaluatedLoopCount: $evaluated_loop_count,
     candidateCount: ($candidates | length),
@@ -531,6 +733,15 @@ policy_state_json=$(jq -cn \
         (if .summary.bySuppressionReason.advisory_cooldown_active // 0 > 0 then "fleet_actions_deduped" else empty end),
         (if .mode == "guarded_auto" and .autoEligibleCount > 0 then "fleet_auto_candidates_eligible" else empty end),
         (if .mode == "guarded_auto" and .unsuppressedCount > 0 and .autoEligibleCount == 0 then "fleet_auto_candidates_blocked" else empty end),
+        (if .mode == "guarded_auto" and (
+          (.summary.byAutonomyReason.autonomous_rollout_scope_excluded // 0) > 0
+          or (.summary.byAutonomyReason.autonomous_rollout_canary_excluded // 0) > 0
+        ) then "fleet_auto_candidates_rollout_gated" else empty end),
+        (if .mode == "guarded_auto" and (
+          (.summary.byAutonomyReason.autonomous_rollout_paused_manual // 0) > 0
+          or (.summary.byAutonomyReason.autonomous_rollout_paused_auto // 0) > 0
+        ) then "fleet_auto_candidates_paused" else empty end),
+        (if .mode == "guarded_auto" and (.autonomous.rollout.pause.auto.active // false) == true then "fleet_auto_candidates_autopause_triggered" else empty end),
         (if .mode == "guarded_auto" and .summary.byAutonomyReason.autonomous_kill_switch_enabled // 0 > 0 then "fleet_auto_kill_switch_enabled" else empty end),
         (if .mode == "guarded_auto" and (
           (.summary.byAutonomyReason.autonomous_cooldown_active // 0) > 0
@@ -576,7 +787,14 @@ history_entries_json=$(jq -cn \
           else true
           end
         ),
-        autonomousReasons: (.autonomous.reasons // [])
+        autonomousReasons: (.autonomous.reasons // []),
+        autonomousRolloutInScope: (.autonomous.rollout.selector.inScope // null),
+        autonomousRolloutInCohort: (.autonomous.rollout.selector.inCohort // null),
+        autonomousRolloutBucket: (.autonomous.rollout.selector.bucket // null),
+        autonomousRolloutPauseActive: (.autonomous.rollout.pause.active // null),
+        autonomousRolloutPauseReasons: (.autonomous.rollout.pause.reasons // []),
+        autonomousAutoPauseActive: (.autonomous.rollout.pause.auto.active // null),
+        autonomousAutoPauseReasons: (.autonomous.rollout.pause.auto.reasons // [])
       }
       | with_entries(select(.value != null))
   ]
