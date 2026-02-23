@@ -11,6 +11,8 @@ Options:
   --fleet-state-file <path>      Fleet state JSON path. Default: <repo>/.superloop/ops-manager/fleet/state.json
   --policy-state-file <path>     Fleet policy state JSON path. Default: <repo>/.superloop/ops-manager/fleet/policy-state.json
   --fleet-telemetry-file <path>  Fleet reconcile telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/reconcile.jsonl
+  --handoff-state-file <path>    Fleet handoff state JSON path. Default: <repo>/.superloop/ops-manager/fleet/handoff-state.json
+  --handoff-telemetry-file <path> Fleet handoff telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/handoff.jsonl
   --pretty                       Pretty-print output JSON.
   --help                         Show this help message.
 USAGE
@@ -37,6 +39,8 @@ registry_file=""
 fleet_state_file=""
 policy_state_file=""
 fleet_telemetry_file=""
+handoff_state_file=""
+handoff_telemetry_file=""
 pretty="0"
 
 while [[ $# -gt 0 ]]; do
@@ -59,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fleet-telemetry-file)
       fleet_telemetry_file="${2:-}"
+      shift 2
+      ;;
+    --handoff-state-file)
+      handoff_state_file="${2:-}"
+      shift 2
+      ;;
+    --handoff-telemetry-file)
+      handoff_telemetry_file="${2:-}"
       shift 2
       ;;
     --pretty)
@@ -98,6 +110,12 @@ fi
 if [[ -z "$fleet_telemetry_file" ]]; then
   fleet_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/reconcile.jsonl"
 fi
+if [[ -z "$handoff_state_file" ]]; then
+  handoff_state_file="$repo/.superloop/ops-manager/fleet/handoff-state.json"
+fi
+if [[ -z "$handoff_telemetry_file" ]]; then
+  handoff_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl"
+fi
 
 if [[ ! -f "$fleet_state_file" ]]; then
   die "fleet state file not found: $fleet_state_file"
@@ -120,6 +138,20 @@ if [[ -f "$fleet_telemetry_file" ]]; then
   fi
 fi
 
+handoff_state_json='null'
+if [[ -f "$handoff_state_file" ]]; then
+  handoff_state_json=$(jq -c '.' "$handoff_state_file" 2>/dev/null) || die "invalid handoff state JSON: $handoff_state_file"
+fi
+
+latest_handoff_telemetry='null'
+if [[ -f "$handoff_telemetry_file" ]]; then
+  if line=$(tail -n 1 "$handoff_telemetry_file" 2>/dev/null); then
+    if [[ -n "$line" ]]; then
+      latest_handoff_telemetry=$(jq -c '.' <<<"$line" 2>/dev/null || echo 'null')
+    fi
+  fi
+fi
+
 status_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg generated_at "$(timestamp)" \
@@ -128,12 +160,19 @@ status_json=$(jq -cn \
   --arg fleet_state_file "$fleet_state_file" \
   --arg policy_state_file "$policy_state_file" \
   --arg fleet_telemetry_file "$fleet_telemetry_file" \
+  --arg handoff_state_file "$handoff_state_file" \
+  --arg handoff_telemetry_file "$handoff_telemetry_file" \
   --argjson registry "$registry_json" \
   --argjson fleet "$fleet_state_json" \
   --argjson policy "$policy_state_json" \
+  --argjson handoff "$handoff_state_json" \
   --argjson last_telemetry "$latest_fleet_telemetry" \
+  --argjson last_handoff_telemetry "$latest_handoff_telemetry" \
   '
   ($fleet.results // []) as $results
+  | ($handoff.execution // {}) as $handoff_execution
+  | ($handoff_execution.results // []) as $handoff_results
+  | ($policy.summary.byAutonomyReason // {}) as $policy_autonomy_reasons
   | {
       schemaVersion: $schema_version,
       generatedAt: $generated_at,
@@ -191,6 +230,107 @@ status_json=$(jq -cn \
         } | with_entries(select(.value != null))
         end
       ),
+      handoff: (
+        if $handoff == null then null
+        else {
+          mode: ($handoff.mode // null),
+          reasonCodes: ($handoff.reasonCodes // []),
+          summary: {
+            intentCount: ($handoff.summary.intentCount // (($handoff.intents // []) | length)),
+            autoEligibleIntentCount: ($handoff.summary.autoEligibleIntentCount // 0),
+            manualOnlyIntentCount: ($handoff.summary.manualOnlyIntentCount // 0),
+            pendingConfirmationCount: ($handoff.summary.pendingConfirmationCount // 0),
+            executedCount: ($handoff.summary.executedCount // 0),
+            ambiguousCount: ($handoff.summary.ambiguousCount // 0),
+            failedCount: ($handoff.summary.failedCount // 0)
+          },
+          execution: {
+            mode: ($handoff_execution.mode // null),
+            requestedBy: ($handoff_execution.requestedBy // null),
+            requestedAt: ($handoff_execution.requestedAt // null),
+            completedAt: ($handoff_execution.completedAt // null),
+            requestedIntentCount: ($handoff_execution.requestedIntentCount // 0),
+            executedIntentCount: ($handoff_execution.executedIntentCount // 0),
+            executedCount: ($handoff_execution.executedCount // 0),
+            ambiguousCount: ($handoff_execution.ambiguousCount // 0),
+            failedCount: ($handoff_execution.failedCount // 0),
+            byReasonCode: (
+              reduce ($handoff_results[] | .reasonCode // empty) as $code ({};
+                .[$code] = ((.[$code] // 0) + 1)
+              )
+            )
+          } | with_entries(select(.value != null)),
+          byAutonomyReason: (
+            reduce (($handoff.intents // [])[] | (.autonomous.reasons // [])[]?) as $reason ({};
+              .[$reason] = ((.[$reason] // 0) + 1)
+            )
+          ),
+          pendingManualOnlyCount: (
+            [ ($handoff.intents // [])[] | select((.status // "") == "pending_operator_confirmation" and (.autonomous.manualOnly // false) == true) ]
+            | length
+          ),
+          traceId: ($handoff.traceId // null),
+          updatedAt: ($handoff.updatedAt // null)
+        } | with_entries(select(.value != null))
+        end
+      ),
+      autonomous: (
+        if $policy == null and $handoff == null then null
+        else {
+          mode: (
+            if $policy != null then ($policy.mode // "advisory")
+            elif $handoff != null then ($handoff.mode // "advisory")
+            else "advisory"
+            end
+          ),
+          enabled: (
+            if $policy != null then (($policy.mode // "advisory") == "guarded_auto")
+            elif $handoff != null then (($handoff.mode // "advisory") == "guarded_auto")
+            else false
+            end
+          ),
+          policyReasonCodes: (if $policy == null then [] else ($policy.reasonCodes // []) end),
+          handoffReasonCodes: (if $handoff == null then [] else ($handoff.reasonCodes // []) end),
+          eligibleCandidateCount: (if $policy == null then 0 else ($policy.autoEligibleCount // 0) end),
+          manualOnlyCandidateCount: (if $policy == null then 0 else ($policy.manualOnlyCount // 0) end),
+          safetyGateDecisions: {
+            byReason: $policy_autonomy_reasons,
+            blockedCount: (
+              ($policy_autonomy_reasons.autonomous_kill_switch_enabled // 0)
+              + ($policy_autonomy_reasons.autonomous_cooldown_active // 0)
+              + ($policy_autonomy_reasons.autonomous_max_actions_per_run_exceeded // 0)
+              + ($policy_autonomy_reasons.autonomous_max_actions_per_loop_exceeded // 0)
+            ),
+            killSwitchActive: (
+              if $policy == null then false
+              else (($policy.autonomous.controls.safety.killSwitch // false) == true)
+              end
+            )
+          },
+          handoff: (
+            if $handoff == null then null
+            else {
+              autoEligibleIntentCount: ($handoff.summary.autoEligibleIntentCount // 0),
+              manualOnlyIntentCount: ($handoff.summary.manualOnlyIntentCount // 0),
+              pendingManualOnlyCount: (
+                [ ($handoff.intents // [])[] | select((.status // "") == "pending_operator_confirmation" and (.autonomous.manualOnly // false) == true) ]
+                | length
+              ),
+              executionMode: ($handoff_execution.mode // null),
+              executedCount: ($handoff_execution.executedCount // 0),
+              ambiguousCount: ($handoff_execution.ambiguousCount // 0),
+              failedCount: ($handoff_execution.failedCount // 0),
+              outcomeReasonCodes: (
+                reduce ($handoff_results[] | .reasonCode // empty) as $code ({};
+                  .[$code] = ((.[$code] // 0) + 1)
+                )
+              )
+            } | with_entries(select(.value != null))
+            end
+          )
+        } | with_entries(select(.value != null))
+        end
+      ),
       loops: (
         $results
         | map({
@@ -236,11 +376,30 @@ status_json=$(jq -cn \
         } | with_entries(select(.value != null))
         end
       ),
+      latestHandoffTelemetry: (
+        if $last_handoff_telemetry == null then null
+        else {
+          timestamp: ($last_handoff_telemetry.timestamp // null),
+          category: ($last_handoff_telemetry.category // null),
+          traceId: ($last_handoff_telemetry.traceId // null),
+          execution: {
+            mode: ($last_handoff_telemetry.execution.mode // null),
+            requestedIntentCount: ($last_handoff_telemetry.execution.requestedIntentCount // null),
+            executedCount: ($last_handoff_telemetry.execution.executedCount // null),
+            ambiguousCount: ($last_handoff_telemetry.execution.ambiguousCount // null),
+            failedCount: ($last_handoff_telemetry.execution.failedCount // null)
+          } | with_entries(select(.value != null)),
+          reasonCodes: ($last_handoff_telemetry.summary.reasonCodes // [])
+        } | with_entries(select(.value != null))
+        end
+      ),
       files: {
         registryFile: $registry_file,
         fleetStateFile: $fleet_state_file,
         policyStateFile: $policy_state_file,
-        fleetTelemetryFile: $fleet_telemetry_file
+        fleetTelemetryFile: $fleet_telemetry_file,
+        handoffStateFile: $handoff_state_file,
+        handoffTelemetryFile: $handoff_telemetry_file
       }
     }
   | .fleet.reasonCodes = (
