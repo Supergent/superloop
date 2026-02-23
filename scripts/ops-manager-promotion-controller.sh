@@ -155,6 +155,172 @@ append_context_flags() {
   fi
 }
 
+emit_failed_state_and_exit() {
+  local stage="$1"
+  local reason_code="$2"
+  local exit_code="${3:-1}"
+  local command_output="${4:-}"
+
+  local output_truncated="$command_output"
+  if (( ${#output_truncated} > 4000 )); then
+    output_truncated="${output_truncated:0:4000}"
+  fi
+
+  local run_ts="${run_timestamp:-$(timestamp)}"
+  local promotion_decision_local="${promotion_decision:-unknown}"
+  local planned_action_local="${planned_action:-propose}"
+  local executed_action_local="${executed_action:-$planned_action_local}"
+  local apply_executed_local="${apply_executed:-false}"
+  local rollback_executed_local="${rollback_executed:-false}"
+  local verify_ran_local="${verify_ran:-false}"
+  local verification_status_local="${verification_status:-skipped}"
+  local verification_decision_local="${verification_decision:-}"
+  local promotion_reason_codes_local="${promotion_reason_codes_json:-[]}"
+  local promotion_failed_gates_local="${promotion_failed_gates_json:-[]}"
+  local verification_reason_codes_local="${verification_reason_codes_json:-[]}"
+  local freshness_reasons_local="${freshness_reasons_json:-[]}"
+  local budget_reasons_local="${budget_reasons_json:-[]}"
+
+  local failed_json
+  failed_json="$(jq -cn \
+    --arg schema_version "v1" \
+    --arg timestamp "$run_ts" \
+    --arg category "promotion_controller_run" \
+    --arg mode "$controller_mode" \
+    --arg status "failed" \
+    --arg stage "$stage" \
+    --arg reason_code "$reason_code" \
+    --arg promotion_decision "$promotion_decision_local" \
+    --arg planned_action "$planned_action_local" \
+    --arg executed_action "$executed_action_local" \
+    --arg apply_intent "$apply_intent" \
+    --arg idempotency_key "$idempotency_key" \
+    --arg trace_id "$trace_id" \
+    --arg loop_id "$loop_id" \
+    --arg horizon_ref "$horizon_ref" \
+    --arg actor "$actor" \
+    --arg approval_ref "$approval_ref" \
+    --arg rationale "$rationale" \
+    --arg review_by "$review_by" \
+    --arg state_file "$state_file" \
+    --arg telemetry_file "$telemetry_file" \
+    --arg promotion_ci_result_file "$promotion_ci_result_file" \
+    --arg promotion_ci_summary_file "$promotion_ci_summary_file" \
+    --arg verify_result_file "$verify_result_file" \
+    --arg verify_summary_file "$verify_summary_file" \
+    --arg preview_result_file "$preview_result_file" \
+    --arg preview_summary_file "$preview_summary_file" \
+    --arg apply_result_file "$apply_result_file" \
+    --arg apply_summary_file "$apply_summary_file" \
+    --arg rollback_result_file "$rollback_result_file" \
+    --arg rollback_summary_file "$rollback_summary_file" \
+    --arg verification_status "$verification_status_local" \
+    --arg verification_decision "$verification_decision_local" \
+    --arg stderr "$output_truncated" \
+    --arg exit_code "$exit_code" \
+    --arg apply_executed "$apply_executed_local" \
+    --arg rollback_executed "$rollback_executed_local" \
+    --arg verify_ran "$verify_ran_local" \
+    --arg expand_step "$expand_step" \
+    --arg promotion_reason_codes "$promotion_reason_codes_local" \
+    --arg promotion_failed_gates "$promotion_failed_gates_local" \
+    --arg verification_reason_codes "$verification_reason_codes_local" \
+    --arg freshness_reasons "$freshness_reasons_local" \
+    --arg budget_reasons "$budget_reasons_local" \
+    --arg evidence_refs "$evidence_refs_json" \
+    --arg previous_state "$previous_state_json" \
+    '
+    {
+      schemaVersion: $schema_version,
+      timestamp: $timestamp,
+      category: $category,
+      mode: $mode,
+      status: $status,
+      decision: {
+        promotionDecision: $promotion_decision,
+        promotionReasonCodes: ($promotion_reason_codes | fromjson? // []),
+        failedGates: ($promotion_failed_gates | fromjson? // []),
+        reasonCodes: (
+          (($freshness_reasons | fromjson? // [])
+          + ($budget_reasons | fromjson? // [])
+          + ($verification_reason_codes | fromjson? // [])
+          + [$reason_code])
+          | map(select(type == "string" and length > 0))
+          | unique
+          | sort
+        )
+      },
+      execution: {
+        plannedAction: $planned_action,
+        action: $executed_action,
+        applyExecuted: ($apply_executed == "true"),
+        rollbackExecuted: ($rollback_executed == "true"),
+        applyIntent: (if $apply_executed == "true" then $apply_intent else null end),
+        expandStep: (if $apply_executed == "true" and $apply_intent == "expand" then ($expand_step | tonumber?) else null end),
+        idempotencyKey: (if ($idempotency_key | length) > 0 then $idempotency_key else null end),
+        governance: {
+          actor: (if ($actor | length) > 0 then $actor else null end),
+          approvalRef: (if ($approval_ref | length) > 0 then $approval_ref else null end),
+          rationale: (if ($rationale | length) > 0 then $rationale else null end),
+          reviewBy: (if ($review_by | length) > 0 then $review_by else null end)
+        }
+      },
+      verification: {
+        ran: ($verify_ran == "true"),
+        status: $verification_status,
+        decision: (if ($verification_decision | length) > 0 then $verification_decision else null end),
+        reasonCodes: ($verification_reason_codes | fromjson? // [])
+      },
+      context: {
+        traceId: $trace_id,
+        loopId: (if ($loop_id | length) > 0 then $loop_id else null end),
+        horizonRef: (if ($horizon_ref | length) > 0 then $horizon_ref else null end),
+        evidenceRefs: ($evidence_refs | fromjson? // [])
+      },
+      files: {
+        stateFile: $state_file,
+        telemetryFile: $telemetry_file,
+        promotionCiResultFile: $promotion_ci_result_file,
+        promotionCiSummaryFile: $promotion_ci_summary_file,
+        verifyResultFile: $verify_result_file,
+        verifySummaryFile: $verify_summary_file,
+        previewResultFile: $preview_result_file,
+        previewSummaryFile: $preview_summary_file,
+        applyResultFile: $apply_result_file,
+        applySummaryFile: $apply_summary_file,
+        rollbackResultFile: $rollback_result_file,
+        rollbackSummaryFile: $rollback_summary_file
+      },
+      observed: {
+        hasPreviousState: (($previous_state | fromjson?) != null),
+        previousStatus: (($previous_state | fromjson? // {}) | .status // null),
+        previousTimestamp: (($previous_state | fromjson? // {}) | .timestamp // null)
+      },
+      error: {
+        stage: $stage,
+        reasonCode: $reason_code,
+        exitCode: ($exit_code | tonumber? // 1),
+        stderr: (if ($stderr | length) > 0 then $stderr else null end)
+      }
+    }
+    ' )"
+
+  jq -c '.' <<<"$failed_json" > "$state_file"
+  jq -c '.' <<<"$failed_json" >> "$telemetry_file"
+
+  if [[ -n "$command_output" ]]; then
+    printf '%s\n' "$command_output" >&2
+  fi
+
+  if [[ "$pretty" == "1" ]]; then
+    jq '.' <<<"$failed_json"
+  else
+    jq -c '.' <<<"$failed_json"
+  fi
+
+  exit "$exit_code"
+}
+
 repo=""
 controller_mode="propose_only"
 apply_intent="expand"
@@ -529,8 +695,7 @@ preview_output="$("${preview_cmd[@]}" 2>&1)"
 preview_status=$?
 set -e
 if [[ "$preview_status" -ne 0 ]]; then
-  printf '%s\n' "$preview_output" >&2
-  exit "$preview_status"
+  emit_failed_state_and_exit "evaluate" "controller_evaluate_command_failed" "$preview_status" "$preview_output"
 fi
 
 [[ -f "$preview_result_file" ]] || die "preview result file not found: $preview_result_file"
@@ -703,8 +868,7 @@ elif [[ "$planned_action" == "apply" ]]; then
   apply_status=$?
   set -e
   if [[ "$apply_status" -ne 0 ]]; then
-    printf '%s\n' "$apply_output" >&2
-    exit "$apply_status"
+    emit_failed_state_and_exit "apply" "controller_apply_command_failed" "$apply_status" "$apply_output"
   fi
 
   [[ -f "$apply_result_file" ]] || die "apply orchestration result file not found: $apply_result_file"
@@ -775,8 +939,7 @@ elif [[ "$planned_action" == "apply" ]]; then
     rollback_status=$?
     set -e
     if [[ "$rollback_status" -ne 0 ]]; then
-      printf '%s\n' "$rollback_output" >&2
-      exit "$rollback_status"
+      emit_failed_state_and_exit "rollback" "controller_rollback_command_failed" "$rollback_status" "$rollback_output"
     fi
 
     [[ -f "$rollback_result_file" ]] || die "rollback orchestration result file not found: $rollback_result_file"
@@ -823,6 +986,10 @@ controller_json="$(jq -cn \
   --arg trace_id "$trace_id" \
   --arg loop_id "$loop_id" \
   --arg horizon_ref "$horizon_ref" \
+  --arg actor "$actor" \
+  --arg approval_ref "$approval_ref" \
+  --arg rationale "$rationale" \
+  --arg review_by "$review_by" \
   --arg state_file "$state_file" \
   --arg telemetry_file "$telemetry_file" \
   --arg promotion_ci_result_file "$promotion_ci_result_file" \
@@ -898,8 +1065,10 @@ controller_json="$(jq -cn \
       expandStep: (if $apply_executed and $apply_intent == "expand" then $expand_step else null end),
       idempotencyKey: (if ($idempotency_key | length) > 0 then $idempotency_key else null end),
       governance: {
-        actor: (if ($mode == "guarded_auto_apply" and ($status == "applied" or $status == "rolled_back" or $planned_action == "hold")) then null else null end),
-        by: (if ($mode == "guarded_auto_apply" and ($status == "applied" or $status == "rolled_back" or $planned_action == "hold")) then null else null end)
+        actor: (if ($actor | length) > 0 then $actor else null end),
+        approvalRef: (if ($approval_ref | length) > 0 then $approval_ref else null end),
+        rationale: (if ($rationale | length) > 0 then $rationale else null end),
+        reviewBy: (if ($review_by | length) > 0 then $review_by else null end)
       }
     },
     verification: {
@@ -935,20 +1104,6 @@ controller_json="$(jq -cn \
     }
   }
   ' )"
-
-# overwrite placeholder governance object with actual values while keeping JSON construction centralized.
-controller_json="$(jq -c \
-  --arg actor "$actor" \
-  --arg approval_ref "$approval_ref" \
-  --arg rationale "$rationale" \
-  --arg review_by "$review_by" \
-  '.execution.governance = {
-      actor: (if ($actor | length) > 0 then $actor else null end),
-      approvalRef: (if ($approval_ref | length) > 0 then $approval_ref else null end),
-      rationale: (if ($rationale | length) > 0 then $rationale else null end),
-      reviewBy: (if ($review_by | length) > 0 then $review_by else null end)
-    }
-  ' <<<"$controller_json")"
 
 jq -c '.' <<<"$controller_json" > "$state_file"
 jq -c '.' <<<"$controller_json" >> "$telemetry_file"

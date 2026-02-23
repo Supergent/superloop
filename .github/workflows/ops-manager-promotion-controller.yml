@@ -1,0 +1,288 @@
+name: Ops Manager Promotion Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_path:
+        description: Repository path containing .superloop ops-manager artifacts
+        required: false
+        default: .
+      mode:
+        description: Controller mode
+        type: choice
+        required: true
+        default: propose_only
+        options:
+          - propose_only
+          - guarded_auto_apply
+      apply_intent:
+        description: Apply intent used when mode=guarded_auto_apply
+        type: choice
+        required: false
+        default: expand
+        options:
+          - expand
+          - resume
+      expand_step:
+        description: Expand step percentage (apply_intent=expand)
+        required: false
+        default: "25"
+      decision_ttl_minutes:
+        description: Maximum age for promotion decision artifact in minutes
+        required: false
+        default: "60"
+      budget_window_hours:
+        description: Budget lookback window in hours
+        required: false
+        default: "24"
+      max_applies_per_window:
+        description: Maximum apply mutations allowed per budget window
+        required: false
+        default: "1"
+      max_expand_step_per_window:
+        description: Maximum cumulative expand step allowed per budget window
+        required: false
+        default: "25"
+      cooldown_minutes:
+        description: Cooldown after apply/rollback mutation in minutes
+        required: false
+        default: "60"
+      freeze_windows_file:
+        description: Optional freeze windows JSON file path
+        required: false
+        default: ""
+      skip_on_missing_evidence:
+        description: Skip with success when promotion evidence files are missing
+        type: boolean
+        required: false
+        default: true
+      window_executions:
+        description: Window size for autonomous execution reliability gate
+        required: false
+        default: "20"
+      min_sample_size:
+        description: Minimum autonomous sample size required for promotion
+        required: false
+        default: "20"
+      max_ambiguity_rate:
+        description: Maximum ambiguity rate threshold
+        required: false
+        default: "0.2"
+      max_failure_rate:
+        description: Maximum failure rate threshold
+        required: false
+        default: "0.2"
+      max_manual_backlog:
+        description: Maximum manual backlog threshold
+        required: false
+        default: "5"
+      max_drill_age_hours:
+        description: Maximum drill evidence age in hours
+        required: false
+        default: "168"
+      idempotency_key:
+        description: Optional idempotency key for guarded apply replay protection
+        required: false
+        default: ""
+      trace_id:
+        description: Optional trace id propagated through controller/orchestration artifacts
+        required: false
+        default: ""
+      loop_id:
+        description: Optional loop id seam metadata
+        required: false
+        default: ""
+      horizon_ref:
+        description: Optional Horizon reference seam metadata
+        required: false
+        default: ""
+      evidence_refs:
+        description: Optional evidence references (comma or newline separated)
+        required: false
+        default: ""
+      by:
+        description: Governance actor identity (required for guarded_auto_apply)
+        required: false
+        default: ""
+      approval_ref:
+        description: Governance approval/change reference (required for guarded_auto_apply)
+        required: false
+        default: ""
+      rationale:
+        description: Governance rationale (required for guarded_auto_apply)
+        required: false
+        default: ""
+      review_by:
+        description: Governance review deadline ISO-8601 (required for guarded_auto_apply)
+        required: false
+        default: ""
+  schedule:
+    - cron: "47 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-manager-promotion-controller-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promotion-controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Execute guarded promotion controller
+        env:
+          INPUT_REPO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.repo_path || '.' }}
+          INPUT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'propose_only' }}
+          INPUT_APPLY_INTENT: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_intent || 'expand' }}
+          INPUT_EXPAND_STEP: ${{ github.event_name == 'workflow_dispatch' && inputs.expand_step || '25' }}
+          INPUT_DECISION_TTL_MINUTES: ${{ github.event_name == 'workflow_dispatch' && inputs.decision_ttl_minutes || '60' }}
+          INPUT_BUDGET_WINDOW_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.budget_window_hours || '24' }}
+          INPUT_MAX_APPLIES_PER_WINDOW: ${{ github.event_name == 'workflow_dispatch' && inputs.max_applies_per_window || '1' }}
+          INPUT_MAX_EXPAND_STEP_PER_WINDOW: ${{ github.event_name == 'workflow_dispatch' && inputs.max_expand_step_per_window || '25' }}
+          INPUT_COOLDOWN_MINUTES: ${{ github.event_name == 'workflow_dispatch' && inputs.cooldown_minutes || '60' }}
+          INPUT_FREEZE_WINDOWS_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.freeze_windows_file || '' }}
+          INPUT_SKIP_MISSING: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_on_missing_evidence || 'true' }}
+          INPUT_WINDOW_EXECUTIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.window_executions || '20' }}
+          INPUT_MIN_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_sample_size || '20' }}
+          INPUT_MAX_AMBIGUITY_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_ambiguity_rate || '0.2' }}
+          INPUT_MAX_FAILURE_RATE: ${{ github.event_name == 'workflow_dispatch' && inputs.max_failure_rate || '0.2' }}
+          INPUT_MAX_MANUAL_BACKLOG: ${{ github.event_name == 'workflow_dispatch' && inputs.max_manual_backlog || '5' }}
+          INPUT_MAX_DRILL_AGE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_drill_age_hours || '168' }}
+          INPUT_IDEMPOTENCY_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.idempotency_key || '' }}
+          INPUT_TRACE_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.trace_id || '' }}
+          INPUT_LOOP_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.loop_id || '' }}
+          INPUT_HORIZON_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.horizon_ref || '' }}
+          INPUT_EVIDENCE_REFS: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_refs || '' }}
+          INPUT_BY: ${{ github.event_name == 'workflow_dispatch' && inputs.by || '' }}
+          INPUT_APPROVAL_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.approval_ref || '' }}
+          INPUT_RATIONALE: ${{ github.event_name == 'workflow_dispatch' && inputs.rationale || '' }}
+          INPUT_REVIEW_BY: ${{ github.event_name == 'workflow_dispatch' && inputs.review_by || '' }}
+        run: |
+          set -euo pipefail
+
+          cmd=(
+            scripts/ops-manager-promotion-controller.sh
+            --repo "${INPUT_REPO_PATH}"
+            --mode "${INPUT_MODE}"
+            --apply-intent "${INPUT_APPLY_INTENT}"
+            --expand-step "${INPUT_EXPAND_STEP}"
+            --decision-ttl-minutes "${INPUT_DECISION_TTL_MINUTES}"
+            --budget-window-hours "${INPUT_BUDGET_WINDOW_HOURS}"
+            --max-applies-per-window "${INPUT_MAX_APPLIES_PER_WINDOW}"
+            --max-expand-step-per-window "${INPUT_MAX_EXPAND_STEP_PER_WINDOW}"
+            --cooldown-minutes "${INPUT_COOLDOWN_MINUTES}"
+            --window-executions "${INPUT_WINDOW_EXECUTIONS}"
+            --min-sample-size "${INPUT_MIN_SAMPLE_SIZE}"
+            --max-ambiguity-rate "${INPUT_MAX_AMBIGUITY_RATE}"
+            --max-failure-rate "${INPUT_MAX_FAILURE_RATE}"
+            --max-manual-backlog "${INPUT_MAX_MANUAL_BACKLOG}"
+            --max-drill-age-hours "${INPUT_MAX_DRILL_AGE_HOURS}"
+            --promotion-ci-result-file .superloop/ops-manager/fleet/promotion-controller-ci-result.json
+            --promotion-ci-summary-file .superloop/ops-manager/fleet/promotion-controller-ci-summary.md
+            --verify-result-file .superloop/ops-manager/fleet/promotion-controller-verify-ci-result.json
+            --verify-summary-file .superloop/ops-manager/fleet/promotion-controller-verify-ci-summary.md
+            --preview-result-file .superloop/ops-manager/fleet/promotion-controller-preview-result.json
+            --preview-summary-file .superloop/ops-manager/fleet/promotion-controller-preview-summary.md
+            --apply-result-file .superloop/ops-manager/fleet/promotion-controller-apply-result.json
+            --apply-summary-file .superloop/ops-manager/fleet/promotion-controller-apply-summary.md
+            --rollback-result-file .superloop/ops-manager/fleet/promotion-controller-rollback-result.json
+            --rollback-summary-file .superloop/ops-manager/fleet/promotion-controller-rollback-summary.md
+            --state-file .superloop/ops-manager/fleet/promotion-controller-state.json
+            --telemetry-file .superloop/ops-manager/fleet/telemetry/promotion-controller.jsonl
+            --pretty
+          )
+
+          if [ "${INPUT_SKIP_MISSING}" = "true" ]; then
+            cmd+=(--skip-on-missing-evidence)
+          fi
+
+          if [ -n "${INPUT_FREEZE_WINDOWS_FILE}" ]; then
+            cmd+=(--freeze-windows-file "${INPUT_FREEZE_WINDOWS_FILE}")
+          fi
+
+          if [ -n "${INPUT_TRACE_ID}" ]; then
+            cmd+=(--trace-id "${INPUT_TRACE_ID}")
+          fi
+          if [ -n "${INPUT_LOOP_ID}" ]; then
+            cmd+=(--loop-id "${INPUT_LOOP_ID}")
+          fi
+          if [ -n "${INPUT_HORIZON_REF}" ]; then
+            cmd+=(--horizon-ref "${INPUT_HORIZON_REF}")
+          fi
+          if [ -n "${INPUT_IDEMPOTENCY_KEY}" ]; then
+            cmd+=(--idempotency-key "${INPUT_IDEMPOTENCY_KEY}")
+          fi
+
+          if [ -n "${INPUT_EVIDENCE_REFS}" ]; then
+            while IFS= read -r evidence_ref; do
+              [ -n "${evidence_ref}" ] || continue
+              cmd+=(--evidence-ref "${evidence_ref}")
+            done < <(printf '%s\n' "${INPUT_EVIDENCE_REFS}" | tr ',' '\n')
+          fi
+
+          if [ "${INPUT_MODE}" = "guarded_auto_apply" ]; then
+            [ -n "${INPUT_BY}" ] || { echo "::error::input 'by' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_APPROVAL_REF}" ] || { echo "::error::input 'approval_ref' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_RATIONALE}" ] || { echo "::error::input 'rationale' is required for mode=${INPUT_MODE}"; exit 1; }
+            [ -n "${INPUT_REVIEW_BY}" ] || { echo "::error::input 'review_by' is required for mode=${INPUT_MODE}"; exit 1; }
+            cmd+=(
+              --by "${INPUT_BY}"
+              --approval-ref "${INPUT_APPROVAL_REF}"
+              --rationale "${INPUT_RATIONALE}"
+              --review-by "${INPUT_REVIEW_BY}"
+            )
+          fi
+
+          "${cmd[@]}"
+
+      - name: Show promotion controller artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+
+          artifact_paths=(
+            .superloop/ops-manager/fleet/promotion-controller-state.json
+            .superloop/ops-manager/fleet/promotion-controller-ci-result.json
+            .superloop/ops-manager/fleet/promotion-controller-ci-summary.md
+            .superloop/ops-manager/fleet/promotion-controller-verify-ci-result.json
+            .superloop/ops-manager/fleet/promotion-controller-verify-ci-summary.md
+            .superloop/ops-manager/fleet/promotion-controller-preview-result.json
+            .superloop/ops-manager/fleet/promotion-controller-preview-summary.md
+            .superloop/ops-manager/fleet/promotion-controller-apply-result.json
+            .superloop/ops-manager/fleet/promotion-controller-apply-summary.md
+            .superloop/ops-manager/fleet/promotion-controller-rollback-result.json
+            .superloop/ops-manager/fleet/promotion-controller-rollback-summary.md
+          )
+
+          for path in "${artifact_paths[@]}"; do
+            if [ -f "${path}" ]; then
+              echo "--- ${path} ---"
+              cat "${path}"
+            else
+              echo "${path} not found"
+            fi
+          done
+
+          telemetry=.superloop/ops-manager/fleet/telemetry/promotion-controller.jsonl
+          if [ -f "${telemetry}" ]; then
+            echo "--- ${telemetry} (tail -n 5) ---"
+            tail -n 5 "${telemetry}"
+          else
+            echo "${telemetry} not found"
+          fi
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f .superloop/ops-manager/fleet/promotion-controller-state.json ]; then
+            {
+              echo "## Promotion Controller State"
+              echo
+              echo '```json'
+              jq '.' .superloop/ops-manager/fleet/promotion-controller-state.json
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi

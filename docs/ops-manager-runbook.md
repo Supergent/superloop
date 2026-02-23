@@ -487,7 +487,7 @@ Triage guidance:
 - for `apply`/`rollback` input failures, fix governance metadata (`--by`, `--approval-ref`, `--rationale`, `--review-by`) and rerun.
 - for `skipped` promotion CI decisions, either provide evidence artifacts or disable skip mode for strict environments.
 
-## Promotion Controller Workflow (Phase 12 / Phase 1)
+## Promotion Controller Workflow (Phase 12 / Phase 2)
 Use this when you want a guarded controller loop over promotion evidence and rollout mutation posture.
 
 Controller commands:
@@ -531,8 +531,21 @@ Execution semantics:
 - `guarded_auto_apply` requires governance metadata and enforces freshness + budget gates before apply.
 - verification runs after successful apply; failed verification triggers deterministic rollback.
 - rollback remains explicitly safety-allowed and deterministic.
+- evaluate/apply/rollback command-stage failures emit deterministic failed-run state (`status=failed`) with `error.stage`, `error.reasonCode`, and `error.exitCode`.
 - seam fields are additive only: `traceId`, `loopId`, optional `horizonRef`, `evidenceRefs`.
 - hard boundary: controller does not call Horizon runtime internals; `horizonRef` is contextual metadata only.
+
+Controller automation workflow:
+- workflow file: `.github/workflows/ops-manager-promotion-controller.yml`
+- triggers:
+  - `workflow_dispatch` for operator-invoked `propose_only` or `guarded_auto_apply` runs
+  - daily `schedule` for recurring preview-first controller evaluation
+- workflow inputs map directly to controller policy controls:
+  - mode + apply intent
+  - freshness/budget/freeze controls
+  - seam metadata (`trace_id`, `loop_id`, `horizon_ref`, `evidence_refs`)
+  - governance metadata (required for guarded auto-apply)
+- workflow publishes controller state/artifacts and telemetry tail in logs and writes state JSON to job summary.
 
 Controller artifacts:
 - `.superloop/ops-manager/fleet/promotion-controller-state.json`
@@ -566,6 +579,7 @@ Controller triage guidance:
 - `status=hold`: remediate `decision.reasonCodes` and rerun in propose-only first.
 - `status=applied`: verify `verification.status=pass` and watch next scheduled run for drift.
 - `status=rolled_back`: treat as safety event and review verify result + rollback result artifacts before another apply.
+- `status=failed`: inspect `.error.stage`, `.error.reasonCode`, `.error.exitCode`, and `.error.stderr`; remediate the failing stage then rerun `propose_only` before any guarded apply.
 
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
