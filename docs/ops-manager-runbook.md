@@ -129,6 +129,8 @@ Expected fleet outputs:
 - advisory candidate summary with suppression counts
 - suppression precedence (`loop` over global `*`) and suppression source details
 - advisory cooldown suppression behavior (`advisory_cooldown_active`) for repeated candidates
+- deterministic rollout cohort gating surfaces (`autonomous.rollout.candidateBuckets.*`) for canary/scope posture
+- rollout pause posture and spike metrics (`autonomous.rollout.pause.*`) for manual and auto-pause state
 - handoff summary of pending/confirmed/failed operator intents
 - explicit confirmation gate for manual execution (`--execute` requires `--confirm`)
 - guarded autonomous outcomes and safety-gate decisions from `scripts/ops-manager-fleet-status.sh` (`autonomous.*`, `handoff.*`)
@@ -155,6 +157,12 @@ Disable when:
 - autonomous dispatch shows repeated ambiguous/failed outcomes
 - kill-switch drill is active or service transport is unstable
 
+Rollout controls:
+- `policy.autonomous.rollout.scope.loopIds`: restrict autonomous dispatch to specific loops
+- `policy.autonomous.rollout.canaryPercent`: deterministic cohort percentage inside the selected scope
+- `policy.autonomous.rollout.pause.manual`: immediate operator pause, keeping all intents manual-only
+- `policy.autonomous.rollout.autoPause.*`: telemetry-triggered pause on ambiguity/failure spikes
+
 Hard-disable autonomous dispatch (kill switch):
 ```bash
 jq '.policy.autonomous.safety.killSwitch = true' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
@@ -172,6 +180,41 @@ scripts/ops-manager-fleet-handoff.sh \
   --confirm \
   --intent-id <intent-id> \
   --by <operator-name>
+```
+
+Adjust rollout canary and scope:
+```bash
+jq '.policy.autonomous.rollout.canaryPercent = 25 | .policy.autonomous.rollout.scope.loopIds = ["loop-a","loop-b"]' \
+  .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+```
+
+Manual pause/unpause autonomous rollout:
+```bash
+# Pause
+jq '.policy.autonomous.rollout.pause.manual = true' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+
+# Unpause
+jq '.policy.autonomous.rollout.pause.manual = false' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+```
+
+Auto-pause spike tuning:
+```bash
+jq '.policy.autonomous.rollout.autoPause = {
+  enabled: true,
+  lookbackExecutions: 5,
+  minSampleSize: 3,
+  ambiguityRateThreshold: 0.4,
+  failureRateThreshold: 0.4
+}' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 ```
 
 ## Fleet Partial-Failure Triage

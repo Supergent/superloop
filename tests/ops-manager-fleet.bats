@@ -72,6 +72,20 @@ print(value.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
 PY
 }
 
+deterministic_rollout_bucket() {
+  local seed="$1"
+
+  python3 - "$seed" <<'PY'
+import sys
+
+seed = sys.argv[1].encode("utf-8")
+value = 17
+for item in seed:
+    value = ((value * 31 + item) % 1000003)
+print(value % 100)
+PY
+}
+
 start_service() {
   local repo="$1"
   local token="$2"
@@ -195,6 +209,54 @@ JSON
   [ "$status" -ne 0 ]
   [[ "$output" == *"policy.autonomous.thresholds.minConfidence must be one of high, medium, low"* ]]
   [[ "$output" == *"policy.autonomous.safety.maxActionsPerRun must be an integer >= 0 when present"* ]]
+}
+
+@test "fleet registry accepts rollout controls and normalizes deterministic cohort defaults" {
+  local repo="$TEMP_DIR/registry-rollout-controls"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"rollout":{"canaryPercent":40,"scope":{"loopIds":["loop-a"]}}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local registry_json="$output"
+
+  run jq -r '.policy.autonomous.rollout.canaryPercent' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "40" ]
+
+  run jq -r '.policy.autonomous.rollout.scope.loopIds | join(",")' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-a" ]
+
+  run jq -r '.policy.autonomous.rollout.selector.salt' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "fleet-autonomous-rollout-v1" ]
+
+  run jq -r '.policy.autonomous.rollout.autoPause.enabled' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.policy.autonomous.rollout.autoPause.lookbackExecutions' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "5" ]
+}
+
+@test "fleet registry fails closed on invalid rollout controls" {
+  local repo="$TEMP_DIR/registry-rollout-invalid"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"rollout":{"canaryPercent":101,"scope":{"loopIds":["loop-a","unknown-loop"]},"autoPause":{"failureRateThreshold":1.5}}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.rollout.canaryPercent must be an integer between 0 and 100 when present"* ]]
+  [[ "$output" == *"policy.autonomous.rollout.scope.loopIds entries must reference declared loopIds"* ]]
+  [[ "$output" == *"policy.autonomous.rollout.autoPause.failureRateThreshold must be a number between 0 and 1 when present"* ]]
 }
 
 @test "fleet reconcile captures partial failure with deterministic ordering and trace linkage" {
@@ -782,6 +844,225 @@ JSONL
 
   run jq -e '.reasonCodes | index("fleet_auto_candidates_safety_blocked") != null' <<<"$policy_json"
   [ "$status" -eq 0 ]
+}
+
+@test "fleet policy guarded_auto applies deterministic rollout cohort gating" {
+  local repo="$TEMP_DIR/fleet-policy-rollout-cohort"
+  local rollout_salt="cohort-seed-v1"
+  local canary_percent=50
+  local in_loop=""
+  local out_loop=""
+  local candidate=""
+  local bucket=""
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  for i in $(seq 1 400); do
+    candidate="loop-$i"
+    bucket="$(deterministic_rollout_bucket "${candidate}|${rollout_salt}")"
+    if [[ -z "$in_loop" && "$bucket" -lt "$canary_percent" ]]; then
+      in_loop="$candidate"
+    fi
+    if [[ -z "$out_loop" && "$bucket" -ge "$canary_percent" ]]; then
+      out_loop="$candidate"
+    fi
+    if [[ -n "$in_loop" && -n "$out_loop" ]]; then
+      break
+    fi
+  done
+
+  [ -n "$in_loop" ]
+  [ -n "$out_loop" ]
+
+  local scope_miss_loop="loop-scope-miss"
+  local in_bucket
+  local out_bucket
+  in_bucket="$(deterministic_rollout_bucket "${in_loop}|${rollout_salt}")"
+  out_bucket="$(deterministic_rollout_bucket "${out_loop}|${rollout_salt}")"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<JSON
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-cohort","loops":[{"loopId":"$in_loop"},{"loopId":"$out_loop"},{"loopId":"$scope_miss_loop"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":10,"maxActionsPerLoop":10,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":$canary_percent,"scope":{"loopIds":["$in_loop","$out_loop"]},"selector":{"salt":"$rollout_salt"}}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<JSON
+{"schemaVersion":"v1","updatedAt":"2026-02-23T03:00:00Z","startedAt":"2026-02-23T02:59:50Z","fleetId":"fleet-policy-rollout-cohort","traceId":"trace-fleet-policy-rollout-cohort-1","status":"success","reasonCodes":[],"loopCount":3,"successCount":3,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":3,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T03:00:00Z","startedAt":"2026-02-23T02:59:52Z","loopId":"$in_loop","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":2,"traceId":"trace-fleet-policy-rollout-cohort-1-$in_loop","files":{"stateFile":"/tmp/$in_loop/state.json","healthFile":"/tmp/$in_loop/health.json","cursorFile":"/tmp/$in_loop/cursor.json","reconcileTelemetryFile":"/tmp/$in_loop/reconcile.jsonl"}},{"timestamp":"2026-02-23T03:00:00Z","startedAt":"2026-02-23T02:59:53Z","loopId":"$out_loop","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":2,"traceId":"trace-fleet-policy-rollout-cohort-1-$out_loop","files":{"stateFile":"/tmp/$out_loop/state.json","healthFile":"/tmp/$out_loop/health.json","cursorFile":"/tmp/$out_loop/cursor.json","reconcileTelemetryFile":"/tmp/$out_loop/reconcile.jsonl"}},{"timestamp":"2026-02-23T03:00:00Z","startedAt":"2026-02-23T02:59:54Z","loopId":"$scope_miss_loop","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":2,"traceId":"trace-fleet-policy-rollout-cohort-1-$scope_miss_loop","files":{"stateFile":"/tmp/$scope_miss_loop/state.json","healthFile":"/tmp/$scope_miss_loop/health.json","cursorFile":"/tmp/$scope_miss_loop/cursor.json","reconcileTelemetryFile":"/tmp/$scope_miss_loop/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-rollout-cohort-1"
+  [ "$status" -eq 0 ]
+  local first_policy_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-rollout-cohort-2"
+  [ "$status" -eq 0 ]
+  local second_policy_json="$output"
+
+  run jq -r ".candidates[] | select(.loopId == \"$in_loop\") | .autonomous.eligible" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r ".candidates[] | select(.loopId == \"$in_loop\") | .autonomous.rollout.selector.bucket" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$in_bucket" ]
+
+  run jq -r ".candidates[] | select(.loopId == \"$out_loop\") | .autonomous.manualOnly" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e ".candidates[] | select(.loopId == \"$out_loop\") | .autonomous.reasons | index(\"autonomous_rollout_canary_excluded\") != null" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r ".candidates[] | select(.loopId == \"$out_loop\") | .autonomous.rollout.selector.bucket" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$out_bucket" ]
+
+  run jq -e ".candidates[] | select(.loopId == \"$scope_miss_loop\") | .autonomous.reasons | index(\"autonomous_rollout_scope_excluded\") != null" <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -cn \
+    --argjson first "$first_policy_json" \
+    --argjson second "$second_policy_json" \
+    '(
+      $first.candidates
+      | map({candidateId, bucket: .autonomous.rollout.selector.bucket, inCohort: .autonomous.rollout.selector.inCohort})
+      | sort_by(.candidateId)
+    ) == (
+      $second.candidates
+      | map({candidateId, bucket: .autonomous.rollout.selector.bucket, inCohort: .autonomous.rollout.selector.inCohort})
+      | sort_by(.candidateId)
+    )'
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_rollout_gated") != null' <<<"$first_policy_json"
+  [ "$status" -eq 0 ]
+}
+
+@test "fleet policy rollout manual pause blocks autonomous dispatch while keeping manual handoff pending" {
+  local repo="$TEMP_DIR/fleet-policy-rollout-manual-pause"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-manual-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":true}}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T03:20:00Z","startedAt":"2026-02-23T03:19:50Z","fleetId":"fleet-policy-rollout-manual-pause","traceId":"trace-fleet-policy-rollout-manual-pause-1","status":"success","reasonCodes":[],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T03:20:00Z","startedAt":"2026-02-23T03:19:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-rollout-manual-pause-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-rollout-manual-pause-1"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.manualOnlyCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_rollout_paused_manual") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_paused") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" --repo "$repo" --trace-id "trace-fleet-handoff-rollout-manual-pause-1"
+  [ "$status" -eq 0 ]
+  local handoff_plan="$output"
+
+  run jq -r '.summary.intentCount' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.autoEligibleIntentCount' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-rollout-manual-pause-2" \
+    --autonomous-execute \
+    --by "ops-bot"
+  [ "$status" -eq 0 ]
+  local handoff_exec="$output"
+
+  run jq -r '.execution.requestedIntentCount' <<<"$handoff_exec"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_exec"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "fleet policy rollout auto-pause triggers on autonomous ambiguity spike and preserves manual fallback" {
+  local repo="$TEMP_DIR/fleet-policy-rollout-auto-pause"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-auto-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":false},"autoPause":{"enabled":true,"lookbackExecutions":3,"minSampleSize":2,"ambiguityRateThreshold":0.4,"failureRateThreshold":0.8}}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T03:40:00Z","startedAt":"2026-02-23T03:39:50Z","fleetId":"fleet-policy-rollout-auto-pause","traceId":"trace-fleet-policy-rollout-auto-pause-1","status":"success","reasonCodes":[],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T03:40:00Z","startedAt":"2026-02-23T03:39:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-rollout-auto-pause-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" <<'JSONL'
+{"timestamp":"2026-02-23T03:35:00Z","category":"fleet_handoff_execute","fleetId":"fleet-policy-rollout-auto-pause","traceId":"trace-auto-1","execution":{"mode":"autonomous","requestedIntentCount":2,"executedCount":1,"ambiguousCount":1,"failedCount":0}}
+{"timestamp":"2026-02-23T03:36:00Z","category":"fleet_handoff_execute","fleetId":"fleet-policy-rollout-auto-pause","traceId":"trace-auto-2","execution":{"mode":"autonomous","requestedIntentCount":2,"executedCount":1,"ambiguousCount":1,"failedCount":0}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-rollout-auto-pause-1"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.autonomous.rollout.pause.auto.active' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.rollout.pause.auto.metrics.attemptedCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "4" ]
+
+  run jq -r '.autonomous.rollout.pause.auto.metrics.ambiguityRate' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0.5" ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_rollout_paused_auto") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_autopause_ambiguous_spike") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_paused") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_autopause_triggered") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" --repo "$repo" --trace-id "trace-fleet-handoff-rollout-auto-pause-1"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.summary.intentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.autoEligibleIntentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
 }
 
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {

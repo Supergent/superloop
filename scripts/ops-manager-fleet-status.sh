@@ -296,7 +296,13 @@ status_json=$(jq -cn \
           safetyGateDecisions: {
             byReason: $policy_autonomy_reasons,
             blockedCount: (
-              ($policy_autonomy_reasons.autonomous_kill_switch_enabled // 0)
+              ($policy_autonomy_reasons.autonomous_rollout_scope_excluded // 0)
+              + ($policy_autonomy_reasons.autonomous_rollout_canary_excluded // 0)
+              + ($policy_autonomy_reasons.autonomous_rollout_paused_manual // 0)
+              + ($policy_autonomy_reasons.autonomous_rollout_paused_auto // 0)
+              + ($policy_autonomy_reasons.autonomous_autopause_ambiguous_spike // 0)
+              + ($policy_autonomy_reasons.autonomous_autopause_failure_spike // 0)
+              + ($policy_autonomy_reasons.autonomous_kill_switch_enabled // 0)
               + ($policy_autonomy_reasons.autonomous_cooldown_active // 0)
               + ($policy_autonomy_reasons.autonomous_max_actions_per_run_exceeded // 0)
               + ($policy_autonomy_reasons.autonomous_max_actions_per_loop_exceeded // 0)
@@ -307,6 +313,30 @@ status_json=$(jq -cn \
               end
             )
           },
+          rollout: (
+            if $policy == null then null
+            else {
+              canaryPercent: ($policy.autonomous.rollout.canaryPercent // null),
+              scopeLoopIds: ($policy.autonomous.rollout.scopeLoopIds // []),
+              selectorSalt: ($policy.autonomous.rollout.selectorSalt // null),
+              candidateBuckets: {
+                inScopeCount: ($policy.autonomous.rollout.candidateBuckets.inScopeCount // 0),
+                inCohortCount: ($policy.autonomous.rollout.candidateBuckets.inCohortCount // 0),
+                outOfCohortCount: ($policy.autonomous.rollout.candidateBuckets.outOfCohortCount // 0)
+              },
+              pause: {
+                active: ($policy.autonomous.rollout.pause.active // false),
+                reasons: ($policy.autonomous.rollout.pause.reasons // []),
+                manual: ($policy.autonomous.rollout.pause.manual // false),
+                auto: {
+                  active: ($policy.autonomous.rollout.pause.auto.active // false),
+                  reasons: ($policy.autonomous.rollout.pause.auto.reasons // []),
+                  metrics: ($policy.autonomous.rollout.pause.auto.metrics // {})
+                }
+              }
+            } | with_entries(select(.value != null))
+            end
+          ),
           handoff: (
             if $handoff == null then null
             else {

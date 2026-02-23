@@ -256,6 +256,15 @@ Fleet policy contract fields:
 - `policy.autonomous.safety.maxActionsPerLoop`: autonomous action cap per loop (default `1`).
 - `policy.autonomous.safety.cooldownSeconds`: autonomous loop/category cooldown window (default `300`).
 - `policy.autonomous.safety.killSwitch`: hard-disable autonomous dispatch while preserving advisory/manual paths (default `false`).
+- `policy.autonomous.rollout.canaryPercent`: deterministic cohort percentage for autonomous dispatch (`0..100`, default `100`).
+- `policy.autonomous.rollout.scope.loopIds`: optional loop allowlist limiting autonomous rollout scope (default `[]`, meaning all loops).
+- `policy.autonomous.rollout.selector.salt`: deterministic cohort selector salt (default `fleet-autonomous-rollout-v1`).
+- `policy.autonomous.rollout.pause.manual`: operator-controlled rollout pause flag that forces manual-only handoff (default `false`).
+- `policy.autonomous.rollout.autoPause.enabled`: telemetry-driven autonomous pause enable flag (default `true`).
+- `policy.autonomous.rollout.autoPause.lookbackExecutions`: number of recent autonomous handoff executions sampled for spike detection (default `5`).
+- `policy.autonomous.rollout.autoPause.minSampleSize`: minimum attempted autonomous intents required before auto-pause can trigger (default `3`).
+- `policy.autonomous.rollout.autoPause.ambiguityRateThreshold`: ambiguity rate threshold (`0..1`) that triggers auto-pause (default `0.4`).
+- `policy.autonomous.rollout.autoPause.failureRateThreshold`: failure rate threshold (`0..1`) that triggers auto-pause (default `0.4`).
 
 Registry schema reference:
 - `schema/ops-manager-fleet.registry.schema.json`
@@ -280,6 +289,7 @@ Purpose:
 scripts/ops-manager-fleet-policy.sh \
   --repo /path/to/repo \
   --trace-id fleet-trace-001 \
+  --handoff-telemetry-file /path/to/repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl \
   --dedupe-window-seconds 300 \
   --pretty
 ```
@@ -292,6 +302,8 @@ Purpose:
 - Supports advisory cooldown dedupe using policy history.
 - Classifies unsuppressed candidates as `autonomous.eligible` vs `autonomous.manualOnly` with explicit rejection reasons from allowlist/threshold gates.
 - Enforces autonomous safety rails before eligibility (`killSwitch`, `maxActionsPerRun`, `maxActionsPerLoop`, `cooldownSeconds`).
+- Applies deterministic rollout cohort gating (scope + canary percentage + selector salt) before autonomous eligibility.
+- Applies rollout pause gates (`manual` and telemetry-triggered `autoPause`) while preserving manual handoff intent generation.
 - Persists autonomous eligibility state into policy artifacts and policy history telemetry.
 
 ### Fleet Status
@@ -305,6 +317,7 @@ Purpose:
 - Provides operator fleet posture summary and loop exception buckets.
 - Surfaces policy summary and top advisory candidates.
 - Surfaces handoff execution outcomes plus autonomous safety-gate decisions/reason counts.
+- Surfaces rollout posture (`autonomous.rollout.*`) including cohort buckets and pause/auto-pause metrics.
 - Includes trace linkage and per-loop drill-down pointers to loop-level artifacts.
 
 ### Fleet Handoff (Operator Control Planning/Execution)
@@ -417,6 +430,9 @@ Fleet state/policy/status artifacts may include:
 - `fleet_actions_deduped`
 - `fleet_auto_candidates_eligible`
 - `fleet_auto_candidates_blocked`
+- `fleet_auto_candidates_rollout_gated`
+- `fleet_auto_candidates_paused`
+- `fleet_auto_candidates_autopause_triggered`
 - `fleet_auto_kill_switch_enabled`
 - `fleet_auto_candidates_safety_blocked`
 - `fleet_handoff_action_required`
