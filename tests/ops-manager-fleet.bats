@@ -1518,6 +1518,168 @@ JSON
   [ "$output" = "advisory" ]
 }
 
+@test "fleet policy governance audit snapshots remain deterministic across mutation reruns" {
+  local repo="$TEMP_DIR/fleet-policy-governance-deterministic"
+  local audit_file="$repo/.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-governance-deterministic","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-301","rationale":"baseline approval","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":0,"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-24T01:00:00Z","startedAt":"2026-02-24T00:59:50Z","fleetId":"fleet-policy-governance-deterministic","traceId":"trace-fleet-policy-governance-deterministic-1","status":"success","reasonCodes":[],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-24T01:00:00Z","startedAt":"2026-02-24T00:59:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-governance-deterministic-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-deterministic-1"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.eventType'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous_policy_initialized" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.controls.safety.maxActionsPerRun'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-governance-deterministic","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-302","rationale":"expanded run cap","changedAt":"2026-02-24T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":2,"maxActionsPerLoop":1,"cooldownSeconds":0,"killSwitch":false}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-deterministic-2"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.eventType'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous_policy_mutated" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.previousGovernance.approvalRef'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "CAB-301" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.governance.approvalRef'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "CAB-302" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.previousControls.safety.maxActionsPerRun'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.controls.safety.maxActionsPerRun'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-deterministic-3"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+}
+
+@test "fleet handoff mixed autonomous outcomes keep reason-code projection stable" {
+  local repo_a="$TEMP_DIR/fleet-handoff-mixed-a"
+  local repo_b="$TEMP_DIR/fleet-handoff-mixed-b"
+  local first_handoff=""
+  local second_handoff=""
+
+  for repo in "$repo_a" "$repo_b"; do
+    mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+    cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-mixed-stability","loops":[{"loopId":"loop-ok","transport":"local"},{"loopId":"loop-amb","transport":"local"},{"loopId":"loop-fail","transport":"local"}]}
+JSON
+
+    cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-24T02:00:00Z","fleetId":"fleet-handoff-mixed-stability","traceId":"trace-fleet-handoff-mixed-stability-policy","mode":"guarded_auto","candidateCount":3,"unsuppressedCount":3,"suppressedCount":0,"autoEligibleCount":3,"manualOnlyCount":0,"candidates":[{"candidateId":"loop-ok:reconcile_failed","loopId":"loop-ok","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-amb:reconcile_failed","loopId":"loop-amb","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-fail:health_critical","loopId":"loop-fail","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+    local control_stub="$TEMP_DIR/$(basename "$repo")-mixed-control-stub.sh"
+    cat > "$control_stub" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+loop_id=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --loop)
+      loop_id="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+case "$loop_id" in
+  loop-ok)
+    jq -cn --arg status "confirmed" --argjson confirmed true '{status: $status, confirmed: $confirmed}'
+    exit 0
+    ;;
+  loop-amb)
+    jq -cn --arg status "ambiguous" --argjson confirmed false '{status: $status, confirmed: $confirmed}'
+    exit 2
+    ;;
+  *)
+    jq -cn --arg status "failed_command" --argjson confirmed false '{status: $status, confirmed: $confirmed}'
+    exit 1
+    ;;
+esac
+BASH
+    chmod +x "$control_stub"
+
+    run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+      "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+      --repo "$repo" \
+      --trace-id "trace-fleet-handoff-mixed-stability-1" \
+      --autonomous-execute \
+      --by "ops-bot"
+    [ "$status" -eq 0 ]
+
+    if [[ "$repo" == "$repo_a" ]]; then
+      first_handoff="$output"
+    else
+      second_handoff="$output"
+    fi
+  done
+
+  local first_projection
+  local second_projection
+  first_projection="$(jq -c '{summary: (.summary | {executedCount, ambiguousCount, failedCount, pendingConfirmationCount}), reasonCodes: ((.reasonCodes // []) | sort), executionReasonCodes: ((.execution.results // []) | map(.reasonCode) | sort), intentStatuses: ((.intents // []) | map({intentId, status}) | sort_by(.intentId))}' <<<"$first_handoff")"
+  second_projection="$(jq -c '{summary: (.summary | {executedCount, ambiguousCount, failedCount, pendingConfirmationCount}), reasonCodes: ((.reasonCodes // []) | sort), executionReasonCodes: ((.execution.results // []) | map(.reasonCode) | sort), intentStatuses: ((.intents // []) | map({intentId, status}) | sort_by(.intentId))}' <<<"$second_handoff")"
+  [ "$first_projection" = "$second_projection" ]
+
+  run jq -r '.summary.executedCount' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.ambiguousCount' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.failedCount' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_executed") != null' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_execution_ambiguous") != null' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_execution_failed") != null' <<<"$first_handoff"
+  [ "$status" -eq 0 ]
+}
+
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {
   local repo="$TEMP_DIR/fleet-handoff-plan"
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
