@@ -33,9 +33,9 @@
 ## P2.6 Docs and Runbook
 1. [x] Update `docs/ops-manager-v0.md` with rollout/governance contract fields and compatibility defaults.
 2. [x] Update `docs/ops-manager-runbook.md` with autonomous rollout operations, pause/unpause procedures, and incident drill workflows.
-3. [ ] Document dogfood promotion gates (required metrics/evidence) for moving from guarded internal mode toward broader beta exposure.
+3. [x] Document dogfood promotion gates (required metrics/evidence) for moving from guarded internal mode toward broader beta exposure.
 
 ## P2.V Validation
 1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats tests/usage-tracking.bats` passes.
 2. [x] All new/changed scripts pass `bash -n` syntax checks.
-3. [ ] Updated docs/runbook match implemented rollout/governance/drill semantics and operator workflow.
+3. [x] Updated docs/runbook match implemented rollout/governance/drill semantics and operator workflow.

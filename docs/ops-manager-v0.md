@@ -491,6 +491,29 @@ The adapters are intentionally fail-closed for contract safety:
 - invalid JSON in source artifacts: non-zero exit
 - cursor offset ahead of available events: non-zero exit (explicit reset required)
 
+## Dogfood Promotion Gates
+Guarded autonomous mode is dogfood-only by default. Promotion toward broader beta exposure must satisfy all gates below for a trailing review window (recommended: 7 days).
+
+- Governance posture gate:
+  - `autonomous.governance.posture` remains `active` for promoted fleets.
+  - no `autonomous_governance_authority_missing`, `autonomous_governance_review_deadline_missing`, or `autonomous_governance_review_expired` reason codes.
+  - evidence: `scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty` and `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl`.
+- Outcome reliability gate:
+  - autonomous ambiguity and failure rates remain below agreed SLOs.
+  - recommendation: ambiguity rate <= `0.20`, failure rate <= `0.20` over last 20 autonomous executions.
+  - evidence: `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` and `autonomous.outcomeRollup`.
+- Manual backlog gate:
+  - `manual_backlog` remains bounded and operator-confirmation queue does not trend upward.
+  - recommendation: backlog <= `5` and no sustained growth across consecutive reconcile windows.
+  - evidence: `autonomous.outcomeRollup.manual_backlog`, `handoff.summary.pendingConfirmationCount`.
+- Safety-gate stability:
+  - no sustained autonomous auto-pause without an active incident.
+  - rollout/safety suppression paths are explainable (`policyGated`, `rolloutGated`, `governanceGated`, `transportGated`).
+  - evidence: `autonomous.rollout.autopause.*`, `autonomous.safetyGateDecisions.byPath.*`.
+- Drill recency gate:
+  - kill-switch, sprite outage, and ambiguous retry-guard drills pass on current head.
+  - evidence: `tests/ops-manager-fleet.bats` drill cases and linked CI runs.
+
 ## Operator Notes
 - Use snapshot for current lifecycle state.
 - Use event polling for real-time progression.

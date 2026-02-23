@@ -249,6 +249,75 @@ scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 ```
 
+## Dogfood Promotion Gates
+Use this checklist before expanding guarded autonomous mode beyond internal dogfood fleets.
+
+Promotion baseline:
+- evaluation window: trailing 7 days
+- minimum autonomous sample: 20 execution events
+- all gates below must pass with evidence attached
+
+1. Governance gate (authority and review posture):
+```bash
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty | jq '.autonomous.governance'
+tail -n 50 .superloop/ops-manager/fleet/telemetry/policy-governance.jsonl | jq '.'
+```
+Pass criteria:
+- posture is `active`
+- no governance reason codes: `autonomous_governance_authority_missing`, `autonomous_governance_review_deadline_missing`, `autonomous_governance_review_expired`
+
+2. Autonomous outcome reliability gate:
+```bash
+jq -s '
+  [ .[] | select((.category // "") == "fleet_handoff_execute" and (.execution.mode // "") == "autonomous") ] as $runs
+  | ($runs | if length > 20 then .[-20:] else . end) as $window
+  | {
+      runs: ($window | length),
+      attempted: ([ $window[] | (.execution.requestedIntentCount // 0) ] | add // 0),
+      executed: ([ $window[] | (.execution.executedCount // 0) ] | add // 0),
+      ambiguous: ([ $window[] | (.execution.ambiguousCount // 0) ] | add // 0),
+      failed: ([ $window[] | (.execution.failedCount // 0) ] | add // 0)
+    }
+  | .ambiguityRate = (if .attempted > 0 then (.ambiguous / .attempted) else 0 end)
+  | .failureRate = (if .attempted > 0 then (.failed / .attempted) else 0 end)
+' .superloop/ops-manager/fleet/telemetry/handoff.jsonl
+```
+Pass criteria:
+- ambiguity rate <= `0.20`
+- failure rate <= `0.20`
+
+3. Manual backlog gate:
+```bash
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty | jq '.autonomous.outcomeRollup'
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty | jq '.summary | {pendingConfirmationCount, manualOnlyIntentCount}'
+```
+Pass criteria:
+- `manual_backlog` <= `5`
+- no sustained upward trend in pending confirmations across the review window
+
+4. Safety and suppression gate:
+```bash
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty | jq '.autonomous.safetyGateDecisions'
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty | jq '.autonomous.rollout.pause'
+```
+Pass criteria:
+- no sustained auto-pause (`autonomous.rollout.pause.auto.active`) outside active incidents
+- suppression-path reasons are explainable and actioned (`policyGated`, `rolloutGated`, `governanceGated`, `transportGated`)
+
+5. Drill recency gate:
+```bash
+~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill kill switch halts autonomous execution and falls back to explicit manual handoff" tests/ops-manager-fleet.bats
+~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill sprite_service outage triggers autonomous auto-pause and reason-coded manual fallback" tests/ops-manager-fleet.bats
+~/.local/bats-runtime/node_modules/.bin/bats --filter "incident drill ambiguous autonomous outcomes are retry-guarded to prevent execution storms" tests/ops-manager-fleet.bats
+```
+Pass criteria:
+- all three drills pass on the candidate commit
+
+Promotion decision:
+- attach evidence output for all gates to the promotion change record
+- include accountable approver and rollback owner
+- if any gate fails, remain in guarded dogfood mode and remediate before re-evaluation
+
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
 
