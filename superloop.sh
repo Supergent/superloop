@@ -3295,11 +3295,29 @@ extract_codex_thread_id() {
 extract_thread_id_from_filename() {
   local session_file="$1"
   local filename
+  local stem
   filename=$(basename "$session_file")
 
-  # Pattern: rollout-YYYYMMDD_HHMMSS_mmm-<thread_id>.jsonl
-  # or: rollout-<number>-<thread_id>.jsonl
-  if [[ "$filename" =~ ^rollout-.*-([a-zA-Z0-9_-]+)\.jsonl$ ]]; then
+  if [[ ! "$filename" =~ ^rollout-(.+)\.jsonl$ ]]; then
+    return 1
+  fi
+
+  stem="${BASH_REMATCH[1]}"
+
+  # Pattern: rollout-YYYYMMDD_HHMMSS[_mmm]-<thread_id>.jsonl
+  if [[ "$stem" =~ ^[0-9]{8}_[0-9]{6}(_[0-9]+)?-([a-zA-Z0-9_-]+)$ ]]; then
+    echo "${BASH_REMATCH[2]}"
+    return 0
+  fi
+
+  # Pattern: rollout-YYYY-MM-DDTHH-MM-SS-<thread_id>.jsonl
+  if [[ "$stem" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-([a-zA-Z0-9_-]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  # Pattern: rollout-<number>-<thread_id>.jsonl
+  if [[ "$stem" =~ ^[0-9]+-([a-zA-Z0-9_-]+)$ ]]; then
     echo "${BASH_REMATCH[1]}"
     return 0
   fi
