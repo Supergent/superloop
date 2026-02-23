@@ -485,6 +485,50 @@ Purpose:
 - Emits orchestration JSON + markdown artifacts and appends summary content to `GITHUB_STEP_SUMMARY` when present.
 - Workflow integration: `.github/workflows/ops-manager-promotion-rollout.yml` exposes `workflow_dispatch` orchestration inputs.
 
+### Promotion Controller (Phase 12 / Phase 1)
+```bash
+scripts/ops-manager-promotion-controller.sh \
+  --repo /path/to/repo \
+  --mode propose_only \
+  --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-promotion-controller.sh \
+  --repo /path/to/repo \
+  --mode guarded_auto_apply \
+  --apply-intent expand \
+  --expand-step 25 \
+  --decision-ttl-minutes 60 \
+  --budget-window-hours 24 \
+  --max-applies-per-window 1 \
+  --max-expand-step-per-window 25 \
+  --cooldown-minutes 60 \
+  --freeze-windows-file /path/to/repo/.superloop/ops-manager/fleet/promotion-freeze-windows.json \
+  --trace-id <trace-id> \
+  --loop-id <loop-id> \
+  --horizon-ref <horizon-id-or-null> \
+  --evidence-ref <evidence-ref> \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "guarded promotion controller run" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Purpose:
+- Runs deterministic controller stages: `observe -> evaluate -> decide -> apply/propose -> verify -> rollback/hold`.
+- Defaults to `propose_only` (preview-only) and requires explicit governance metadata for `guarded_auto_apply`.
+- Uses promotion evidence freshness gates (`--decision-ttl-minutes`) and budget/rate controls (`--max-applies-per-window`, `--max-expand-step-per-window`, cooldown, optional freeze windows).
+- Executes post-apply verification and triggers deterministic rollback when verification fails.
+- Persists controller state and append-only telemetry artifacts for run auditability.
+- Forwards additive seam metadata (`traceId`, `loopId`, `horizonRef`, `evidenceRefs`) into orchestration artifacts when present.
+- Maintains hard Phase 12 boundary: no Horizon runtime coupling; `horizonRef` is optional context only.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -539,6 +583,18 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/promotion-ci-summary.md` - latest CI wrapper markdown summary for operator workflow/step summaries.
 - `.superloop/ops-manager/fleet/promotion-orchestrate-result.json` - latest orchestration JSON output (`dry_run|apply|rollback` execution outcome).
 - `.superloop/ops-manager/fleet/promotion-orchestrate-summary.md` - latest orchestration markdown summary for operator triage and workflow summaries.
+- `.superloop/ops-manager/fleet/promotion-controller-state.json` - latest guarded promotion controller state projection.
+- `.superloop/ops-manager/fleet/telemetry/promotion-controller.jsonl` - append-only guarded promotion controller execution history.
+- `.superloop/ops-manager/fleet/promotion-controller-ci-result.json` - evaluate-stage CI result used by controller decisions.
+- `.superloop/ops-manager/fleet/promotion-controller-ci-summary.md` - evaluate-stage CI summary used by controller decisions.
+- `.superloop/ops-manager/fleet/promotion-controller-verify-ci-result.json` - post-apply verification CI result for rollback gating.
+- `.superloop/ops-manager/fleet/promotion-controller-verify-ci-summary.md` - post-apply verification CI summary.
+- `.superloop/ops-manager/fleet/promotion-controller-preview-result.json` - controller preview orchestration record.
+- `.superloop/ops-manager/fleet/promotion-controller-preview-summary.md` - controller preview orchestration summary.
+- `.superloop/ops-manager/fleet/promotion-controller-apply-result.json` - controller apply orchestration record.
+- `.superloop/ops-manager/fleet/promotion-controller-apply-summary.md` - controller apply orchestration summary.
+- `.superloop/ops-manager/fleet/promotion-controller-rollback-result.json` - controller rollback orchestration record (when triggered).
+- `.superloop/ops-manager/fleet/promotion-controller-rollback-summary.md` - controller rollback orchestration summary (when triggered).
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
