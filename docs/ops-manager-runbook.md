@@ -28,9 +28,11 @@ Operational procedures for manager core behavior across local and sprite-service
 - fleet registry: `.superloop/ops-manager/fleet/registry.v1.json`
 - fleet state: `.superloop/ops-manager/fleet/state.json`
 - fleet policy state: `.superloop/ops-manager/fleet/policy-state.json`
+- fleet handoff state: `.superloop/ops-manager/fleet/handoff-state.json`
 - fleet reconcile telemetry: `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl`
 - fleet policy telemetry: `.superloop/ops-manager/fleet/telemetry/policy.jsonl`
 - fleet policy history: `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl`
+- fleet handoff telemetry: `.superloop/ops-manager/fleet/telemetry/handoff.jsonl`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
@@ -87,13 +89,46 @@ scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --dedupe-window-seconds
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 ```
 
+5. Generate fleet handoff plan from unsuppressed policy candidates:
+```bash
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+```
+
+6. Execute explicit operator-approved actions from handoff (manual only):
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --execute \
+  --confirm \
+  --intent-id <intent-id> \
+  --by <operator-name> \
+  --note "incident-<id>: remediation"
+```
+
+7. Verify post-action state:
+```bash
+scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+```
+
 Expected fleet outputs:
 - fleet rollup status + reason codes (`success|partial_failure|failed`)
 - per-loop exception buckets (`reconcileFailures`, `criticalLoops`, `degradedLoops`, `skippedLoops`)
 - advisory candidate summary with suppression counts
 - suppression precedence (`loop` over global `*`) and suppression source details
 - advisory cooldown suppression behavior (`advisory_cooldown_active`) for repeated candidates
+- handoff summary of pending/confirmed/failed operator intents
+- explicit confirmation gate (`--execute` requires `--confirm`; no autonomous remediation)
 - trace-linked pointers to loop-level state/health/cursor/telemetry artifacts
+
+Expected handoff reason codes in this workflow:
+- `fleet_handoff_action_required`
+- `fleet_handoff_confirmation_pending`
+- `fleet_handoff_executed`
+- `fleet_handoff_execution_ambiguous`
+- `fleet_handoff_execution_failed`
 
 ## Fleet Partial-Failure Triage
 Use when fleet status is `partial_failure` or `failed`.
@@ -110,21 +145,76 @@ scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
 - `fleet_health_degraded`
 - `fleet_loop_skipped`
 
+Reason-code-driven triage:
+- `fleet_partial_failure`: identify failing subset first, then repair only impacted loops.
+- `fleet_reconcile_failed`: verify runtime artifacts/service reachability before retry loops.
+- `fleet_health_critical`: prioritize cancel intents for affected loops after explicit operator confirmation.
+- `fleet_health_degraded`: monitor if transient; otherwise stage targeted handoff intents.
+- `fleet_loop_skipped`: verify registry `enabled` flags and intentional skip criteria.
+
 3. Drill into affected loop artifacts:
 ```bash
 jq '.loops[] | select(.status != "success")' .superloop/ops-manager/fleet/state.json
 ```
 
-4. Reconcile failing loops directly (loop-level replay/fallback):
+4. Build and inspect handoff plan before manual action:
+```bash
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+jq '.intents[] | select(.status == "pending_operator_confirmation")' .superloop/ops-manager/fleet/handoff-state.json
+```
+
+5. Execute only approved intents:
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --execute \
+  --confirm \
+  --intent-id <intent-id> \
+  --by <operator-name>
+```
+
+6. Reconcile failing loops directly (loop-level replay/fallback), if still needed:
 ```bash
 scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --from-start --pretty
 ```
 
-5. Re-run fleet workflow after loop-level remediation:
+7. Re-run fleet workflow after loop-level remediation:
 ```bash
 scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
 scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+```
+
+## Fleet Sprite Transport Outage Drill
+Use when `sprite_service` loops fail due transport/service outages.
+
+1. Identify outage signatures in fleet reason codes and loop outcomes:
+- fleet-level: `fleet_reconcile_failed`, `fleet_partial_failure`
+- loop-level: `transport_unreachable`, `invalid_transport_payload`, `reconcile_failed`
+
+2. Isolate impacted service loops:
+```bash
+jq '.results[] | select(.transport == "sprite_service" and .status != "success") | {loopId, reasonCode, healthStatus}' .superloop/ops-manager/fleet/state.json
+```
+
+3. For urgent intervention, run local fallback control per loop:
+```bash
+scripts/ops-manager-control.sh --repo /path/to/repo --loop <loop-id> --intent cancel --transport local
+```
+
+4. Replay affected loops locally to recover observability signal:
+```bash
+scripts/ops-manager-reconcile.sh --repo /path/to/repo --loop <loop-id> --transport local --from-start --pretty
+```
+
+5. After service recovery, restore declared transport in registry, then re-run full fleet workflow and handoff verification:
+```bash
+scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
 ```
 
 ## Fleet Transport Parity Checks
@@ -142,6 +232,50 @@ jq '.loops[] | {loopId, transport, service: .service}' .superloop/ops-manager/fl
 scripts/ops-manager-fleet-reconcile.sh --repo /path/to/repo --deterministic-order --pretty
 jq '.results[] | {loopId, transport, status, healthStatus, reasonCode}' .superloop/ops-manager/fleet/state.json
 ```
+
+## Fleet Suppression Governance
+Use this workflow to add/remove policy suppressions without hiding real risk.
+
+1. Snapshot current registry and policy surfaces:
+```bash
+cp .superloop/ops-manager/fleet/registry.v1.json .superloop/ops-manager/fleet/registry.v1.backup.json
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+```
+
+2. Edit suppressions in `.superloop/ops-manager/fleet/registry.v1.json`:
+- loop-specific scope: `policy.suppressions.<loopId>`
+- global scope: `policy.suppressions.*`
+- allowed categories only: `reconcile_failed`, `health_critical`, `health_degraded`
+
+3. Validate registry change before applying:
+```bash
+scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
+```
+
+4. Recompute policy + handoff and verify expected suppression effect:
+```bash
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-handoff.sh --repo /path/to/repo --pretty
+jq '.candidates[] | {loopId, category, suppressed, suppressionScope, suppressionReason}' .superloop/ops-manager/fleet/policy-state.json
+```
+
+5. Confirm no unintended suppression drift:
+- if an intent disappears from `handoff-state.json`, confirm it is intentionally suppressed
+- if `fleet_actions_policy_suppressed` appears, confirm change scope and review window are documented
+
+Audit trail expectations for each suppression change:
+- change owner (`who`)
+- timestamp (`when`)
+- scope (`loopId` or `*`)
+- categories affected (`what`)
+- incident/ticket reference and rationale (`why`)
+- planned expiry or review date (`until when`)
+- before/after evidence links from:
+  - `.superloop/ops-manager/fleet/policy-state.json`
+  - `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl`
+  - `.superloop/ops-manager/fleet/handoff-state.json`
+  - `.superloop/ops-manager/fleet/telemetry/handoff.jsonl`
 
 ## Total Visibility Triage
 Use this flow when the operator needs end-to-end visibility from runtime heartbeat to escalation delivery.
