@@ -681,6 +681,122 @@ JSONL
   [ "$status" -eq 0 ]
 }
 
+@test "fleet status surfaces governance posture outcome rollups and suppression-path buckets" {
+  local repo="$TEMP_DIR/fleet-status-operator-visibility"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-status-operator-visibility","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local"}},{"loopId":"loop-green","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T13:30:00Z","startedAt":"2026-02-23T13:29:40Z","fleetId":"fleet-status-operator-visibility","traceId":"trace-fleet-status-operator-visibility-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":3,"successCount":2,"failedCount":1,"skippedCount":0,"durationSeconds":20,"execution":{"maxParallel":3,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T13:30:00Z","startedAt":"2026-02-23T13:29:45Z","loopId":"loop-red","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-status-operator-visibility-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}},{"timestamp":"2026-02-23T13:30:00Z","startedAt":"2026-02-23T13:29:48Z","loopId":"loop-blue","transport":"sprite_service","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"degraded","healthReasonCodes":["ingest_stale"],"durationSeconds":4,"traceId":"trace-fleet-status-operator-visibility-1-loop-blue","files":{"stateFile":"/tmp/loop-blue/state.json","healthFile":"/tmp/loop-blue/health.json","cursorFile":"/tmp/loop-blue/cursor.json","reconcileTelemetryFile":"/tmp/loop-blue/reconcile.jsonl"}},{"timestamp":"2026-02-23T13:30:00Z","startedAt":"2026-02-23T13:29:50Z","loopId":"loop-green","transport":"sprite_service","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":4,"traceId":"trace-fleet-status-operator-visibility-1-loop-green","files":{"stateFile":"/tmp/loop-green/state.json","healthFile":"/tmp/loop-green/health.json","cursorFile":"/tmp/loop-green/cursor.json","reconcileTelemetryFile":"/tmp/loop-green/reconcile.jsonl"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T13:30:02Z","fleetId":"fleet-status-operator-visibility","traceId":"trace-fleet-status-operator-visibility-policy-1","mode":"guarded_auto","candidateCount":3,"unsuppressedCount":3,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":2,"summary":{"byAutonomyReason":{"category_not_allowlisted":1,"autonomous_max_actions_per_run_exceeded":1,"autonomous_rollout_canary_excluded":1,"autonomous_rollout_paused_auto":1,"autonomous_autopause_failure_spike":1}},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-501","rationale":"guarded rollout expansion","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z","reviewWindowDays":311,"authorityContextPresent":false},"controls":{"safety":{"killSwitch":false}},"rollout":{"canaryPercent":50,"scopeLoopIds":["loop-red","loop-blue","loop-green"],"selectorSalt":"fleet-autonomous-rollout-v1","candidateBuckets":{"inScopeCount":3,"inCohortCount":1,"outOfCohortCount":2},"pause":{"active":true,"reasons":["autonomous_rollout_paused_auto"],"manual":false,"auto":{"enabled":true,"active":true,"reasons":["autonomous_autopause_failure_spike"],"lookbackExecutions":3,"minSampleSize":2,"ambiguityRateThreshold":0.4,"failureRateThreshold":0.5,"metrics":{"windowExecutionCount":3,"attemptedCount":2,"executedCount":1,"ambiguousCount":0,"failedCount":1,"ambiguityRate":0,"failureRate":0.5}}}}},"reasonCodes":["fleet_action_required","fleet_auto_candidates_rollout_gated","fleet_auto_candidates_safety_blocked"],"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-blue:health_critical","loopId":"loop-blue","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["autonomous_rollout_canary_excluded"]}},{"candidateId":"loop-green:health_critical","loopId":"loop-green","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted","autonomous_max_actions_per_run_exceeded"]}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/handoff-state.json" <<'JSON'
+{"schemaVersion":"v1","generatedAt":"2026-02-23T13:30:03Z","updatedAt":"2026-02-23T13:30:06Z","fleetId":"fleet-status-operator-visibility","traceId":"trace-fleet-status-operator-visibility-handoff-1","policyTraceId":"trace-fleet-status-operator-visibility-policy-1","mode":"guarded_auto","summary":{"intentCount":3,"autoEligibleIntentCount":2,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":1},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_confirmation_pending","fleet_handoff_execution_failed","fleet_handoff_auto_eligible_intents"],"intents":[{"intentId":"loop-red:reconcile_failed:cancel","loopId":"loop-red","intent":"cancel","status":"executed","transport":"local","autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"intentId":"loop-blue:health_critical:cancel","loopId":"loop-blue","intent":"cancel","status":"pending_operator_confirmation","transport":"sprite_service","autonomous":{"eligible":false,"manualOnly":true,"reasons":["autonomous_rollout_canary_excluded"]}},{"intentId":"loop-green:health_critical:cancel","loopId":"loop-green","intent":"cancel","status":"execution_failed","transport":"sprite_service","autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}}],"execution":{"mode":"autonomous","requestedBy":"ops-bot","requestedAt":"2026-02-23T13:30:04Z","completedAt":"2026-02-23T13:30:06Z","requestedIntentCount":2,"executedIntentCount":2,"executedCount":1,"ambiguousCount":0,"failedCount":1,"results":[{"intentId":"loop-red:reconcile_failed:cancel","loopId":"loop-red","status":"executed","reasonCode":"control_confirmed"},{"intentId":"loop-green:health_critical:cancel","loopId":"loop-green","status":"failed","reasonCode":"control_failed_command"}]}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" <<'JSONL'
+{"timestamp":"2026-02-23T13:30:06Z","category":"fleet_handoff_execute","fleetId":"fleet-status-operator-visibility","traceId":"trace-fleet-status-operator-visibility-handoff-1","execution":{"mode":"autonomous","requestedIntentCount":2,"executedCount":1,"ambiguousCount":0,"failedCount":1},"summary":{"summary":{"intentCount":3,"autoEligibleIntentCount":2,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"pendingManualOnlyCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":1},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_execution_failed"]}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-status.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.autonomous.governance.changedBy' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ops-user" ]
+
+  run jq -r '.autonomous.governance.changedAt' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2026-02-23T00:00:00Z" ]
+
+  run jq -r '.autonomous.governance.why' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "guarded rollout expansion" ]
+
+  run jq -r '.autonomous.governance.until' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2026-12-31T00:00:00Z" ]
+
+  run jq -r '.autonomous.governance.posture' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "authority_missing" ]
+
+  run jq -e '.autonomous.governance.reasonCodes | index("autonomous_governance_authority_missing") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.autonomous.rollout.state.autoPauseActive' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.rollout.autopause.active' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.outcomeRollup.attempted' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.autonomous.outcomeRollup.executed' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.outcomeRollup.failed' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.outcomeRollup.manual_backlog' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.handoff.summary.autonomousOutcomeRollup.manual_backlog' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.latestHandoffTelemetry.autonomousOutcomeRollup.failed' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.policyGated.blockedCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.rolloutGated.blockedCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.governanceGated.blockedCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.transportGated.blockedCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byPath.transportGated.byReason.control_failed_command' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -e '.autonomous.safetyGateDecisions.suppressionReasonCodes | index("autonomous_suppression_policy_gated") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.autonomous.safetyGateDecisions.suppressionReasonCodes | index("autonomous_suppression_rollout_gated") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.autonomous.safetyGateDecisions.suppressionReasonCodes | index("autonomous_suppression_governance_gated") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.autonomous.safetyGateDecisions.suppressionReasonCodes | index("autonomous_suppression_transport_gated") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+}
+
 @test "fleet policy enforces suppression precedence and advisory cooldown dedupe" {
   local repo="$TEMP_DIR/fleet-policy-hardening"
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"

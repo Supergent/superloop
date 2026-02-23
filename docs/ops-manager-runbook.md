@@ -132,6 +132,9 @@ Expected fleet outputs:
 - advisory cooldown suppression behavior (`advisory_cooldown_active`) for repeated candidates
 - deterministic rollout cohort gating surfaces (`autonomous.rollout.candidateBuckets.*`) for canary/scope posture
 - rollout pause posture and spike metrics (`autonomous.rollout.pause.*`) for manual and auto-pause state
+- governance posture surfaces (`autonomous.governance.*`) with who changed policy, when, why, and review-until deadline
+- autonomous outcome rollups (`autonomous.outcomeRollup`, `handoff.summary.autonomousOutcomeRollup`, `latestHandoffTelemetry.autonomousOutcomeRollup`) for attempted/executed/ambiguous/failed/manual backlog tracking
+- suppression-path classification surfaces (`autonomous.safetyGateDecisions.byPath.*`) for policy, rollout, governance, and transport gating
 - handoff summary of pending/confirmed/failed operator intents
 - explicit confirmation gate for manual execution (`--execute` requires `--confirm`)
 - guarded autonomous outcomes and safety-gate decisions from `scripts/ops-manager-fleet-status.sh` (`autonomous.*`, `handoff.*`)
