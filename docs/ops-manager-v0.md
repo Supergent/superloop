@@ -304,6 +304,7 @@ scripts/ops-manager-fleet-status.sh \
 Purpose:
 - Provides operator fleet posture summary and loop exception buckets.
 - Surfaces policy summary and top advisory candidates.
+- Surfaces handoff execution outcomes plus autonomous safety-gate decisions/reason counts.
 - Includes trace linkage and per-loop drill-down pointers to loop-level artifacts.
 
 ### Fleet Handoff (Operator Control Planning/Execution)
@@ -324,13 +325,23 @@ scripts/ops-manager-fleet-handoff.sh \
   --pretty
 ```
 
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --autonomous-execute \
+  --by ops-manager \
+  --note "incident-<id>: guarded_auto_dispatch" \
+  --pretty
+```
+
 Purpose:
 - Maps unsuppressed advisory candidates into explicit per-loop control intents.
 - Enforces explicit operator confirmation gate (`--execute` requires `--confirm`).
+- Supports guarded autonomous dispatch (`--autonomous-execute`) for only `autonomous.eligible` intents when policy mode is `guarded_auto`.
 - Propagates fleet trace/idempotency into loop-level control telemetry and invocation audit.
 - Persists handoff plan/execution artifacts and telemetry.
 - Preserves policy autonomous eligibility classification on generated intents (`autoEligibleIntentCount`, `manualOnlyIntentCount`).
-- In phase 9 P1.2, `guarded_auto` mode adds eligibility shaping only; control execution remains manual-only until autonomous dispatch phases are delivered.
+- Keeps manual-only/out-of-policy intents pending and reason-coded; autonomous execution never dispatches them.
 
 ## Sprite Service Transport
 Service implementation entrypoint:

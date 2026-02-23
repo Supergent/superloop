@@ -432,3 +432,71 @@ start_service() {
   [ "$status" -eq 0 ]
   [ "$output" = "service_request_failed" ]
 }
+
+@test "fleet handoff autonomous execution semantics remain parity across local and sprite_service transports" {
+  local loop_id="loop-target"
+  local local_repo="$TEMP_DIR/fleet-handoff-local"
+  local service_repo="$TEMP_DIR/fleet-handoff-service"
+
+  mkdir -p "$local_repo/.superloop/ops-manager/fleet/telemetry"
+  mkdir -p "$service_repo/.superloop/ops-manager/fleet/telemetry"
+
+  write_runtime_artifacts "$local_repo" "$loop_id"
+  write_runtime_artifacts "$service_repo" "$loop_id"
+
+  local local_stub="$TEMP_DIR/stub-superloop-local-autonomous.sh"
+  local service_stub="$TEMP_DIR/stub-superloop-service-autonomous.sh"
+  write_stub_superloop "$local_stub"
+  write_stub_superloop "$service_stub"
+  start_service "$service_repo" "$SERVICE_TOKEN" "$service_stub"
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomous-parity","loops":[{"loopId":"loop-target","transport":"local"}]}
+JSON
+
+  cat > "$service_repo/.superloop/ops-manager/fleet/registry.v1.json" <<JSON
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomous-parity","loops":[{"loopId":"loop-target","transport":"sprite_service","service":{"baseUrl":"$SERVICE_URL","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}}]}
+JSON
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T14:00:00Z","fleetId":"fleet-handoff-autonomous-parity","traceId":"trace-fleet-handoff-autonomous-parity-policy","mode":"guarded_auto","candidateCount":2,"unsuppressedCount":2,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":1,"candidates":[{"candidateId":"loop-target:reconcile_failed","loopId":"loop-target","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-target:health_critical","loopId":"loop-target","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted"]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+  cp "$local_repo/.superloop/ops-manager/fleet/policy-state.json" "$service_repo/.superloop/ops-manager/fleet/policy-state.json"
+
+  run env SUPERLOOP_BIN="$local_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$local_repo" \
+    --trace-id "trace-fleet-handoff-autonomous-parity-1" \
+    --autonomous-execute \
+    --no-runtime-confirm
+  [ "$status" -eq 0 ]
+  local local_handoff_json="$output"
+
+  run env OPS_MANAGER_TEST_SERVICE_TOKEN="$SERVICE_TOKEN" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$service_repo" \
+    --trace-id "trace-fleet-handoff-autonomous-parity-1" \
+    --autonomous-execute \
+    --no-runtime-confirm
+  [ "$status" -eq 0 ]
+  local service_handoff_json="$output"
+
+  local local_projection
+  local service_projection
+  local_projection="$(jq -c '{summary: (.summary | {executedCount, ambiguousCount, failedCount, pendingConfirmationCount, autoEligibleIntentCount, manualOnlyIntentCount}), execution: (.execution | {mode, requestedIntentCount, executedCount, ambiguousCount, failedCount}), intents: ((.intents // []) | map({intentId, loopId, status, autonomousEligible: (.autonomous.eligible // false), manualOnly: (.autonomous.manualOnly // false), executionReason: (.execution.reasonCode // null)}) | sort_by(.intentId))}' <<<"$local_handoff_json")"
+  service_projection="$(jq -c '{summary: (.summary | {executedCount, ambiguousCount, failedCount, pendingConfirmationCount, autoEligibleIntentCount, manualOnlyIntentCount}), execution: (.execution | {mode, requestedIntentCount, executedCount, ambiguousCount, failedCount}), intents: ((.intents // []) | map({intentId, loopId, status, autonomousEligible: (.autonomous.eligible // false), manualOnly: (.autonomous.manualOnly // false), executionReason: (.execution.reasonCode // null)}) | sort_by(.intentId))}' <<<"$service_handoff_json")"
+  [ "$local_projection" = "$service_projection" ]
+
+  run jq -r '.execution.mode' <<<"$service_handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-target") | .traceId' <<<"$service_handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-fleet-handoff-autonomous-parity-1" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-target") | .reasonCode' <<<"$service_handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "control_confirmed" ]
+}

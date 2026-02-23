@@ -511,6 +511,78 @@ JSONL
   [ "$output" = "/tmp/loop-red/state.json" ]
 }
 
+@test "fleet status surfaces autonomous safety-gate decisions and handoff outcomes" {
+  local repo="$TEMP_DIR/fleet-autonomous-status-surface"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-autonomous-status-surface","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}],"policy":{"mode":"guarded_auto","autonomous":{"safety":{"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T13:00:00Z","startedAt":"2026-02-23T12:59:40Z","fleetId":"fleet-autonomous-status-surface","traceId":"trace-fleet-autonomous-status-surface-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":2,"successCount":1,"failedCount":1,"skippedCount":0,"durationSeconds":20,"execution":{"maxParallel":2,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T13:00:00Z","startedAt":"2026-02-23T12:59:45Z","loopId":"loop-red","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-autonomous-status-surface-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}},{"timestamp":"2026-02-23T13:00:00Z","startedAt":"2026-02-23T12:59:50Z","loopId":"loop-blue","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":4,"traceId":"trace-fleet-autonomous-status-surface-1-loop-blue","files":{"stateFile":"/tmp/loop-blue/state.json","healthFile":"/tmp/loop-blue/health.json","cursorFile":"/tmp/loop-blue/cursor.json","reconcileTelemetryFile":"/tmp/loop-blue/reconcile.jsonl"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T13:00:02Z","fleetId":"fleet-autonomous-status-surface","traceId":"trace-fleet-autonomous-policy-1","mode":"guarded_auto","candidateCount":2,"unsuppressedCount":2,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":1,"summary":{"byAutonomyReason":{"category_not_allowlisted":1,"autonomous_max_actions_per_run_exceeded":1}},"autonomous":{"controls":{"safety":{"killSwitch":false}}},"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-blue:health_critical","loopId":"loop-blue","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted","autonomous_max_actions_per_run_exceeded"]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_safety_blocked"]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/handoff-state.json" <<'JSON'
+{"schemaVersion":"v1","generatedAt":"2026-02-23T13:00:03Z","updatedAt":"2026-02-23T13:00:06Z","fleetId":"fleet-autonomous-status-surface","traceId":"trace-fleet-autonomous-handoff-1","policyTraceId":"trace-fleet-autonomous-policy-1","mode":"guarded_auto","summary":{"intentCount":2,"autoEligibleIntentCount":1,"manualOnlyIntentCount":1,"pendingConfirmationCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"reasonCodes":["fleet_handoff_action_required","fleet_handoff_confirmation_pending","fleet_handoff_executed","fleet_handoff_auto_eligible_intents"],"intents":[{"intentId":"loop-red:reconcile_failed:cancel","loopId":"loop-red","intent":"cancel","status":"executed","autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"intentId":"loop-blue:health_critical:cancel","loopId":"loop-blue","intent":"cancel","status":"pending_operator_confirmation","autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted"]}}],"execution":{"mode":"autonomous","requestedBy":"ops-bot","requestedAt":"2026-02-23T13:00:04Z","completedAt":"2026-02-23T13:00:06Z","requestedIntentCount":1,"executedIntentCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0,"results":[{"intentId":"loop-red:reconcile_failed:cancel","loopId":"loop-red","status":"executed","reasonCode":"control_confirmed"}]}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/reconcile.jsonl" <<'JSONL'
+{"timestamp":"2026-02-23T13:00:00Z","category":"fleet_reconcile","fleetId":"fleet-autonomous-status-surface","traceId":"trace-fleet-autonomous-status-surface-1","status":"partial_failure","reasonCodes":["fleet_partial_failure","fleet_health_critical"]}
+JSONL
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl" <<'JSONL'
+{"timestamp":"2026-02-23T13:00:06Z","category":"fleet_handoff_execute","fleetId":"fleet-autonomous-status-surface","traceId":"trace-fleet-autonomous-handoff-1","execution":{"mode":"autonomous","requestedIntentCount":1,"executedCount":1,"ambiguousCount":0,"failedCount":0},"summary":{"reasonCodes":["fleet_handoff_action_required","fleet_handoff_executed"]}}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-status.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local status_json="$output"
+
+  run jq -r '.autonomous.enabled' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.autonomous.eligibleCandidateCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.manualOnlyCandidateCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.safetyGateDecisions.byReason.autonomous_max_actions_per_run_exceeded' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.handoff.execution.mode' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous" ]
+
+  run jq -r '.handoff.pendingManualOnlyCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.handoff.pendingManualOnlyCount' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.autonomous.handoff.outcomeReasonCodes.control_confirmed' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.latestHandoffTelemetry.execution.mode' <<<"$status_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous" ]
+
+  run jq -e '.latestHandoffTelemetry.reasonCodes | index("fleet_handoff_executed") != null' <<<"$status_json"
+  [ "$status" -eq 0 ]
+}
+
 @test "fleet policy enforces suppression precedence and advisory cooldown dedupe" {
   local repo="$TEMP_DIR/fleet-policy-hardening"
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
@@ -905,4 +977,278 @@ BASH
   run bash -lc "tail -n 1 '$control_telemetry_file' | jq -r '.idempotencyKey'"
   [ "$status" -eq 0 ]
   [ "$output" = "$expected_idempotency" ]
+}
+
+@test "fleet handoff autonomous execute requires guarded_auto policy mode" {
+  local repo="$TEMP_DIR/fleet-handoff-autonomous-mode-gate"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomous-mode-gate","loops":[{"loopId":"loop-red","transport":"local"}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T12:00:00Z","fleetId":"fleet-handoff-autonomous-mode-gate","traceId":"trace-fleet-handoff-autonomous-mode-gate-policy","mode":"advisory","candidateCount":1,"unsuppressedCount":1,"suppressedCount":0,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}}],"reasonCodes":["fleet_action_required"]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-autonomous-mode-gate-1" \
+    --autonomous-execute
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--autonomous-execute requires policy mode guarded_auto"* ]]
+}
+
+@test "fleet handoff autonomous execute dispatches only autonomous-eligible intents" {
+  local repo="$TEMP_DIR/fleet-handoff-autonomous-eligible"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomous-eligible","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T12:10:00Z","fleetId":"fleet-handoff-autonomous-eligible","traceId":"trace-fleet-handoff-autonomous-eligible-policy","mode":"guarded_auto","candidateCount":2,"unsuppressedCount":2,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":1,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-blue:health_critical","loopId":"loop-blue","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted"]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+  local control_log="$TEMP_DIR/fleet-autonomous-control-log.jsonl"
+  local control_stub="$TEMP_DIR/fleet-autonomous-control-stub.sh"
+  cat > "$control_stub" <<BASH
+#!/usr/bin/env bash
+set -euo pipefail
+
+loop_id=""
+transport=""
+trace_id=""
+idempotency_key=""
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --loop)
+      loop_id="\${2:-}"
+      shift 2
+      ;;
+    --transport)
+      transport="\${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="\${2:-}"
+      shift 2
+      ;;
+    --idempotency-key)
+      idempotency_key="\${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+jq -cn \
+  --arg loop_id "\$loop_id" \
+  --arg transport "\$transport" \
+  --arg trace_id "\$trace_id" \
+  --arg idempotency_key "\$idempotency_key" \
+  '{loopId: \$loop_id, transport: \$transport, traceId: \$trace_id, idempotencyKey: \$idempotency_key, status: "confirmed", confirmed: true}' \
+  >> "$control_log"
+
+jq -cn --arg status "confirmed" --argjson confirmed true '{status: \$status, confirmed: \$confirmed}'
+BASH
+  chmod +x "$control_stub"
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-autonomous-eligible-1" \
+    --autonomous-execute \
+    --by "operator-auto"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.execution.mode' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous" ]
+
+  run jq -r '.execution.requestedIntentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.executedCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-red") | .status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "executed" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-blue") | .status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "pending_operator_confirmation" ]
+
+  run jq -r '.execution.results[0].reasonCode' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "control_confirmed" ]
+
+  run bash -lc "wc -l < '$control_log' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.loopId' "$control_log"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-red" ]
+}
+
+@test "fleet handoff autonomous execute preserves deterministic status mapping across transports" {
+  local repo="$TEMP_DIR/fleet-handoff-autonomous-status"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomous-status","loops":[{"loopId":"loop-ok","transport":"local"},{"loopId":"loop-amb","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local"}},{"loopId":"loop-fail","transport":"sprite_service","service":{"baseUrl":"http://sprite-service.local"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T12:20:00Z","fleetId":"fleet-handoff-autonomous-status","traceId":"trace-fleet-handoff-autonomous-status-policy","mode":"guarded_auto","candidateCount":3,"unsuppressedCount":3,"suppressedCount":0,"autoEligibleCount":3,"manualOnlyCount":0,"candidates":[{"candidateId":"loop-ok:reconcile_failed","loopId":"loop-ok","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-amb:reconcile_failed","loopId":"loop-amb","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-fail:health_critical","loopId":"loop-fail","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+  local control_log="$TEMP_DIR/fleet-autonomous-status-control-log.jsonl"
+  local control_stub="$TEMP_DIR/fleet-autonomous-status-control-stub.sh"
+  cat > "$control_stub" <<BASH
+#!/usr/bin/env bash
+set -euo pipefail
+
+loop_id=""
+transport=""
+trace_id=""
+idempotency_key=""
+service_base_url=""
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --loop)
+      loop_id="\${2:-}"
+      shift 2
+      ;;
+    --transport)
+      transport="\${2:-}"
+      shift 2
+      ;;
+    --trace-id)
+      trace_id="\${2:-}"
+      shift 2
+      ;;
+    --idempotency-key)
+      idempotency_key="\${2:-}"
+      shift 2
+      ;;
+    --service-base-url)
+      service_base_url="\${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+jq -cn \
+  --arg loop_id "\$loop_id" \
+  --arg transport "\$transport" \
+  --arg trace_id "\$trace_id" \
+  --arg idempotency_key "\$idempotency_key" \
+  --arg service_base_url "\$service_base_url" \
+  '{loopId: \$loop_id, transport: \$transport, traceId: \$trace_id, idempotencyKey: \$idempotency_key, serviceBaseUrl: (if (\$service_base_url | length) > 0 then \$service_base_url else null end)} | with_entries(select(.value != null))' \
+  >> "$control_log"
+
+if [[ "\$transport" == "sprite_service" && -z "\$service_base_url" ]]; then
+  jq -cn --arg status "failed_command" --argjson confirmed false '{status: \$status, confirmed: \$confirmed}'
+  exit 1
+fi
+
+case "\$loop_id" in
+  loop-ok)
+    jq -cn --arg status "confirmed" --argjson confirmed true '{status: \$status, confirmed: \$confirmed}'
+    exit 0
+    ;;
+  loop-amb)
+    jq -cn --arg status "ambiguous" --argjson confirmed false '{status: \$status, confirmed: \$confirmed}'
+    exit 2
+    ;;
+  *)
+    jq -cn --arg status "failed_command" --argjson confirmed false '{status: \$status, confirmed: \$confirmed}'
+    exit 1
+    ;;
+esac
+BASH
+  chmod +x "$control_stub"
+
+  run env OPS_MANAGER_CONTROL_SCRIPT="$control_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-autonomous-status-1" \
+    --autonomous-execute \
+    --by "operator-auto"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.summary.executedCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.ambiguousCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.failedCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-ok") | .status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "executed" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-amb") | .status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "execution_ambiguous" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-fail") | .status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "execution_failed" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-ok") | .reasonCode' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "control_confirmed" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-amb") | .reasonCode' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "control_ambiguous" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-fail") | .reasonCode' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "control_failed_command" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-amb") | .traceId' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-fleet-handoff-autonomous-status-1" ]
+
+  run jq -r '.execution.results[] | select(.loopId == "loop-fail") | .idempotencyKey' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [[ -n "$output" && "$output" != "null" ]]
+
+  run bash -lc "wc -l < '$control_log' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run jq -r '. | select(.loopId == "loop-amb") | .transport' "$control_log"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sprite_service" ]
+
+  run jq -r '. | select(.loopId == "loop-amb") | .serviceBaseUrl' "$control_log"
+  [ "$status" -eq 0 ]
+  [ "$output" = "http://sprite-service.local" ]
 }
