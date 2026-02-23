@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Superloop Horizon Control Plane",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "organization": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "charter": {"type": "string"}
+      },
+      "required": ["id", "name"]
+    },
+    "horizons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "level": {
+            "type": "string",
+            "enum": ["H1", "H2", "H3"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["proposed", "active", "paused", "completed", "retired"]
+          },
+          "cadence_domain": {
+            "type": "string",
+            "enum": ["realtime", "tactical", "program", "strategic"]
+          },
+          "thesis": {"type": "string"},
+          "success_signals": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "kill_signals": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "constraints": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "review_cadence": {"type": "string"},
+          "owner": {"type": "string"},
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "parent_id": {"type": "string"},
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "execution_slices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string"},
+                "loop_id": {"type": "string"},
+                "spec_file": {"type": "string"},
+                "status": {
+                  "type": "string",
+                  "enum": ["planned", "active", "blocked", "completed", "cancelled"]
+                },
+                "entry_criteria": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                },
+                "exit_criteria": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                },
+                "run_ids": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                },
+                "evidence_refs": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              },
+              "required": ["id", "loop_id", "status"]
+            }
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "from_level": {
+                  "type": "string",
+                  "enum": ["H1", "H2", "H3"]
+                },
+                "to_level": {
+                  "type": "string",
+                  "enum": ["H1", "H2", "H3"]
+                },
+                "reason": {"type": "string"},
+                "evidence_refs": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              },
+              "required": ["at", "from_level", "to_level", "reason"]
+            }
+          }
+        },
+        "required": ["id", "title", "level", "status", "cadence_domain", "thesis"]
+      }
+    }
+  },
+  "required": ["version", "horizons"]
+}

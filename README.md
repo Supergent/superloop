@@ -93,6 +93,49 @@ Each iteration runs four roles in sequence:
 
 The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>` and all gates pass.
 
+## Horizon Planning (Optional Control Plane)
+
+Superloop loops do not require horizons. A repo can run with only:
+
+- `.superloop/specs/<loop-id>.md`
+- `.superloop/config.json`
+
+Horizon planning is an optional layer above runs for long-lived, multi-agent programs.
+
+```
+Organization Charter
+  -> Horizon (adaptive planning envelope)
+    -> Superloop loop/run/iteration (execution cycle)
+      -> PLAN/PHASE tasks (atomic implementation work)
+```
+
+Use horizons when you need:
+
+- Multiple planning timescales (seconds to years).
+- Program-level decomposition across many loops.
+- Explicit promotion/demotion between exploration, convergence, and execution.
+
+Horizon contract files:
+
+- `.superloop/horizons.json` (control-plane state, optional)
+- `schema/horizons.schema.json` (validation schema)
+- `docs/horizon-planning.md` (operating model)
+- `docs/examples/horizons.example.json` (sample)
+
+Loop binding is optional via `horizon_ref`:
+
+```json
+{
+  "id": "my-feature",
+  "horizon_ref": "HZ-program-authn-v1",
+  "spec_file": ".superloop/specs/my-feature.md",
+  "max_iterations": 20,
+  "completion_promise": "SUPERLOOP_COMPLETE"
+}
+```
+
+This keeps waterfall tension bounded: horizons are hypotheses that evolve from run evidence.
+
 ## Config
 
 `.superloop/config.json` controls runners, models, and loops:
@@ -119,6 +162,7 @@ The loop completes when the Reviewer outputs `<promise>COMPLETION_TAG</promise>`
   },
   "loops": [{
     "id": "my-feature",
+    "horizon_ref": "HZ-program-authn-v1",
     "spec_file": ".superloop/specs/my-feature.md",
     "completion_promise": "SUPERLOOP_COMPLETE",
     "max_iterations": 20,
@@ -610,8 +654,10 @@ superloop/
 │   └── superloop-viz/     # Visualization tooling for loops and reports
 ├── .superloop/
 │   ├── config.json        # Loop configuration
+│   ├── horizons.json      # Optional horizon control-plane state
 │   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
 │   └── templates/         # Spec template
+├── docs/horizon-planning.md  # Horizon operating model
 └── .claude/skills/        # Shared skill sources synced to Claude Code and Codex
 ```
 

@@ -16,6 +16,8 @@ You are the **Constructor**, the human-in-the-loop phase that creates feature sp
 
 You bridge human intent and automated execution. Your output (spec.md) becomes the contract that Planner, Implementer, Tester, and Reviewer follow. **Quality here determines success downstream.**
 
+When applicable, also bridge horizon intent to execution by slicing a higher-level horizon into a concrete loop spec. Horizons are optional and live above loop runs.
+
 ## Runner Compatibility
 
 This skill is runner-agnostic and should behave the same in Claude Code and Codex.
@@ -100,6 +102,8 @@ Superloop is a **bash orchestration harness** that runs AI coding agents in an i
 | **Spec** | Your output - defines WHAT to build |
 | **Plan** | Planner's output - defines HOW to build it |
 | **Promise** | A tag that signals completion (e.g., `SUPERLOOP_COMPLETE`) |
+| **Horizon** | Optional planning envelope above loops (`H1/H2/H3`) |
+| **Slice** | One loop-scoped execution cut linked to a horizon |
 
 ## The Iteration Loop
 
@@ -129,6 +133,25 @@ ITERATION 2:
 4. **Reviewer runs last**: Decides if complete or needs more work
 
 If Reviewer doesn't output the promise tag, the loop continues.
+
+## Horizon Control Plane (Optional, Above Loops)
+
+Horizons are not required to run Superloop. Use them when managing multi-loop organizations across different timescales.
+
+Layering:
+
+1. Organization charter
+2. Horizon (`H1/H2/H3`)
+3. Superloop loop/run/iteration
+4. PLAN/PHASE task execution
+
+Do not collapse horizons into PHASE checkboxes. Horizons decide which loops exist; checkboxes execute loop-local work.
+
+Optional files:
+
+- `.superloop/horizons.json` (control-plane state)
+- `schema/horizons.schema.json` (schema)
+- `docs/horizon-planning.md` (operating model)
 
 ### Delegation Execution Model
 
@@ -583,6 +606,7 @@ Now that you understand Superloop, here's your workflow:
 │  - Ask unlimited clarifying questions   │
 │  - Use structured questioning liberally │
 │  - Never rush - keep asking until done  │
+│  - Align optional horizon/slice context │
 │  - User says "finalize" to proceed      │
 └─────────────────────────────────────────┘
         │
@@ -731,6 +755,11 @@ After exploration, present to user:
 - How do we know it works?
 - What are the acceptance criteria?
 - Any specific test scenarios?
+
+**Horizon Alignment** (optional, above the loop):
+- Is this loop bound to an existing horizon ID?
+- If yes, what is the slice objective and exit criteria?
+- What would promote/demote this horizon after this loop completes?
 
 ### Question Format: Single vs Multiple Choice
 
@@ -926,6 +955,15 @@ npm test -- --grep "authentication"
   ]
 }
 ```
+
+## Horizon Binding (Optional)
+
+[Use this only when operating with a horizon control plane.]
+
+- `horizon_ref`: [existing horizon id in `.superloop/horizons.json`]
+- `slice_objective`: [what this loop must prove/change for that horizon]
+- `slice_entry_criteria`: [conditions required before running]
+- `slice_exit_criteria`: [conditions required to close this slice]
 ````
 
 ### Spec Quality Gates
@@ -955,6 +993,11 @@ Before finalizing, verify your spec against Superloop needs:
 - [ ] "Done" is clearly defined
 - [ ] No contradictions or ambiguities
 - [ ] Policy behavior is unambiguous (`failure_policy`, adaptation stop criteria)
+
+**For Horizon Ops (optional)**:
+- [ ] Horizon binding is explicit (`horizon_ref`) when requested
+- [ ] Slice exit criteria map to measurable evidence artifacts
+- [ ] Promotion/demotion signals are written and reviewable
 
 ## Phase 4: Handoff
 
@@ -1036,6 +1079,7 @@ Hard requirements when constructing loops:
   - Prefer check types: `markdown_checklist_complete`, `file_regex_absent` (placeholder detection), and `file_contains_all` (required content anchors).
 - Configure `lifecycle` as mandatory and strict: `enabled: true`, `require_on_completion: true`, `strict: true`, and a concrete `main_ref`.
 - If `git.commit_strategy` is not `never`, require `git.commit_message.authoring: \"llm\"` and set a valid `author_role`.
+- If horizon control-plane is in scope, set `loops[].horizon_ref` to the selected horizon ID and ensure `.superloop/horizons.json` exists.
 
 ```json
 {
@@ -1060,6 +1104,7 @@ Hard requirements when constructing loops:
   "loops": [
     {
       "id": "<loop-id>",
+      "horizon_ref": "<optional-horizon-id>",
       "spec_file": ".superloop/specs/<loop-id>.md",
       "max_iterations": 10,
       "completion_promise": "SUPERLOOP_COMPLETE",
@@ -1169,6 +1214,7 @@ Before handoff, always run:
 ```bash
 ./superloop.sh validate --repo . --schema schema/config.schema.json
 ./superloop.sh run --repo . --loop <loop-id> --dry-run
+test ! -f .superloop/horizons.json || jq -e '.version == 1 and (.horizons | type == "array")' .superloop/horizons.json >/dev/null
 ```
 
 If delegation is enabled in the generated config, require explicit verification targets in notes:
@@ -1188,6 +1234,7 @@ After generating spec and config:
 
 **Spec created**: `.superloop/specs/<loop-id>.md`
 **Config updated**: `.superloop/config.json`
+**Horizons (optional)**: `.superloop/horizons.json`
 
 **Role Configuration**:
 | Role | Runner | Model | Thinking |
