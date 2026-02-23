@@ -66,11 +66,56 @@ classify_failure_code() {
     return 0
   fi
   if [[ "$lower" == *"invalid"*"json"* || "$lower" == *"invalid payload"* ]]; then
-    echo "invalid_payload"
+    echo "invalid_transport_payload"
     return 0
   fi
 
   echo "reconcile_failed"
+}
+
+extract_json_object() {
+  local raw="$1"
+  local parsed=""
+
+  if parsed=$(jq -c '.' <<<"$raw" 2>/dev/null); then
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  local last_line=""
+  last_line="$(printf '%s\n' "$raw" | awk 'NF {line=$0} END {print line}')"
+  if [[ -n "$last_line" ]] && parsed=$(jq -c '.' <<<"$last_line" 2>/dev/null); then
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  return 1
+}
+
+reason_code_from_failure_json() {
+  local failure_json="$1"
+
+  jq -r '
+    (.reasonCodes // []) as $codes
+    | (.transport.failureCode // "") as $failure
+    | if (($codes | index("transport_unreachable")) != null) then
+        "transport_unreachable"
+      elif (($codes | index("invalid_transport_payload")) != null) then
+        "invalid_transport_payload"
+      elif (($codes | index("projection_failed")) != null) then
+        "projection_failed"
+      elif (($codes | index("reconcile_failed")) != null) then
+        "reconcile_failed"
+      elif ($failure == "snapshot_unavailable" or $failure == "events_unavailable" or $failure == "service_request_failed") then
+        "transport_unreachable"
+      elif ($failure == "service_response_invalid") then
+        "invalid_transport_payload"
+      elif ($failure | length) > 0 then
+        $failure
+      else
+        empty
+      end
+  ' <<<"$failure_json" 2>/dev/null || true
 }
 
 repo=""
@@ -262,7 +307,15 @@ run_single_loop() {
     else
       status="failed"
       reconcile_status="failed"
-      reason_code="$(classify_failure_code "$reconcile_output")"
+      failure_json="null"
+      if failure_json="$(extract_json_object "$reconcile_output")"; then
+        health_status="$(jq -r '.status // "unknown"' <<<"$failure_json" 2>/dev/null || echo "unknown")"
+        health_reason_codes="$(jq -c '.reasonCodes // []' <<<"$failure_json" 2>/dev/null || echo '[]')"
+        reason_code="$(reason_code_from_failure_json "$failure_json")"
+      fi
+      if [[ -z "$reason_code" ]]; then
+        reason_code="$(classify_failure_code "$reconcile_output")"
+      fi
     fi
   fi
 

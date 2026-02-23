@@ -379,3 +379,56 @@ start_service() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"service request failed"* || "$output" == *"failed_command"* ]]
 }
+
+@test "reconcile failure reason surfaces remain parity across local and sprite_service transports" {
+  local loop_id="demo-loop"
+  local local_repo="$TEMP_DIR/reconcile-failure-local"
+  local service_repo="$TEMP_DIR/reconcile-failure-service"
+  mkdir -p "$local_repo" "$service_repo"
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$local_repo" \
+    --loop "$loop_id" \
+    --trace-id "trace-service-failure-parity-1"
+  [ "$status" -ne 0 ]
+  local local_failure_json="$output"
+
+  run "$PROJECT_ROOT/scripts/ops-manager-reconcile.sh" \
+    --repo "$service_repo" \
+    --loop "$loop_id" \
+    --transport sprite_service \
+    --service-base-url "$SERVICE_URL" \
+    --service-token "$SERVICE_TOKEN" \
+    --trace-id "trace-service-failure-parity-1"
+  [ "$status" -ne 0 ]
+  local service_failure_json="$output"
+
+  run jq -r '.status' <<<"$local_failure_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -r '.status' <<<"$service_failure_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  local local_reason_codes
+  local service_reason_codes
+  local_reason_codes="$(jq -c '.reasonCodes | sort' <<<"$local_failure_json")"
+  service_reason_codes="$(jq -c '.reasonCodes | sort' <<<"$service_failure_json")"
+  [ "$local_reason_codes" = "$service_reason_codes" ]
+
+  run jq -e '.reasonCodes | index("transport_unreachable") != null' <<<"$local_failure_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("transport_unreachable") != null' <<<"$service_failure_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.transport.failureCode' <<<"$local_failure_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "snapshot_unavailable" ]
+
+  run jq -r '.transport.failureCode' <<<"$service_failure_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "service_request_failed" ]
+}

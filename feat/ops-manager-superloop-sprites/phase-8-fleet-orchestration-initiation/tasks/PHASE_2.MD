@@ -21,13 +21,13 @@
 3. [x] Document suppression governance workflow (add/remove suppression + audit trail expectations).
 
 ## P2.4 Local vs Sprite Service Parity Hardening
-1. [ ] Extend fleet parity coverage for mixed `local` and `sprite_service` loop sets under degraded/critical/failure conditions.
-2. [ ] Verify fleet rollup and reason-code parity across transports for equivalent runtime states.
-3. [ ] Harden failure classification behavior to keep fleet status semantics deterministic across transports.
+1. [x] Extend fleet parity coverage for mixed `local` and `sprite_service` loop sets under degraded/critical/failure conditions.
+2. [x] Verify fleet rollup and reason-code parity across transports for equivalent runtime states.
+3. [x] Harden failure classification behavior to keep fleet status semantics deterministic across transports.
 
 ## P2.5 Test Coverage
 1. [x] Extend `tests/ops-manager-fleet.bats` for policy hardening and operator handoff flows.
-2. [ ] Add/extend transport parity regressions across `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` where relevant.
+2. [x] Add/extend transport parity regressions across `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` where relevant.
 3. [x] Add regression tests for suppression precedence and advisory-noise controls.
 
 ## P2.V Validation

@@ -49,6 +49,29 @@ JSON
 JSONL
 }
 
+write_runtime_heartbeat() {
+  local repo="$1"
+  local loop_id="$2"
+  local heartbeat_ts="$3"
+
+  cat > "$repo/.superloop/loops/$loop_id/heartbeat.v1.json" <<JSON
+{"schemaVersion":"v1","timestamp":"$heartbeat_ts","source":"runtime","status":"running","stage":"iteration"}
+JSON
+}
+
+iso_timestamp_minus_seconds() {
+  local seconds="$1"
+
+  python3 - "$seconds" <<'PY'
+import datetime
+import sys
+
+seconds = int(sys.argv[1])
+value = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
+print(value.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+}
+
 start_service() {
   local repo="$1"
   local token="$2"
@@ -237,6 +260,121 @@ JSON
   run jq -r '.results[] | select(.loopId == "loop-service") | .status' <<<"$fleet_json"
   [ "$status" -eq 0 ]
   [ "$output" = "success" ]
+}
+
+@test "fleet reconcile mixed local and sprite_service loops preserve deterministic degraded critical and failure semantics" {
+  local repo="$TEMP_DIR/fleet-mixed-parity"
+  local now_ts
+  local degraded_heartbeat_ts
+  local critical_heartbeat_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  degraded_heartbeat_ts="$(iso_timestamp_minus_seconds 180)"
+  critical_heartbeat_ts="$(iso_timestamp_minus_seconds 900)"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  write_runtime_artifacts "$repo" "loop-local-degraded" "$now_ts"
+  write_runtime_artifacts "$repo" "loop-service-critical" "$now_ts"
+  write_runtime_heartbeat "$repo" "loop-local-degraded" "$degraded_heartbeat_ts"
+  write_runtime_heartbeat "$repo" "loop-service-critical" "$critical_heartbeat_ts"
+  start_service "$repo" "$SERVICE_TOKEN"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<JSON
+{"schemaVersion":"v1","fleetId":"fleet-mixed-parity","loops":[{"loopId":"loop-local-degraded","transport":"local"},{"loopId":"loop-service-critical","transport":"sprite_service","service":{"baseUrl":"$SERVICE_URL","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}},{"loopId":"loop-local-failure","transport":"local"},{"loopId":"loop-service-failure","transport":"sprite_service","service":{"baseUrl":"$SERVICE_URL","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}}]}
+JSON
+
+  run env OPS_MANAGER_TEST_SERVICE_TOKEN="$SERVICE_TOKEN" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-reconcile.sh" \
+    --repo "$repo" \
+    --deterministic-order \
+    --max-parallel 4 \
+    --trace-id "trace-fleet-mixed-parity-1"
+  [ "$status" -eq 0 ]
+  local fleet_json="$output"
+
+  run jq -r '.status' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "partial_failure" ]
+
+  run jq -r '.successCount' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.failedCount' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.results[] | select(.loopId == "loop-local-degraded") | .healthStatus' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "degraded" ]
+
+  run jq -r '.results[] | select(.loopId == "loop-service-critical") | .healthStatus' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "critical" ]
+
+  run jq -r '.results[] | select(.loopId == "loop-local-failure") | .reasonCode' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "transport_unreachable" ]
+
+  run jq -r '.results[] | select(.loopId == "loop-service-failure") | .reasonCode' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "transport_unreachable" ]
+
+  run jq -e '.results[] | select(.loopId == "loop-local-failure") | .healthReasonCodes | index("transport_unreachable") != null' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.results[] | select(.loopId == "loop-service-failure") | .healthReasonCodes | index("transport_unreachable") != null' <<<"$fleet_json"
+  [ "$status" -eq 0 ]
+}
+
+@test "fleet reconcile rollup and reason surfaces are parity across equivalent local and sprite_service states" {
+  local local_repo="$TEMP_DIR/fleet-local-equivalent"
+  local service_repo="$TEMP_DIR/fleet-service-equivalent"
+  local now_ts
+  local critical_heartbeat_ts
+  now_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  critical_heartbeat_ts="$(iso_timestamp_minus_seconds 900)"
+
+  mkdir -p "$local_repo/.superloop/ops-manager/fleet"
+  mkdir -p "$service_repo/.superloop/ops-manager/fleet"
+
+  write_runtime_artifacts "$local_repo" "loop-critical" "$now_ts"
+  write_runtime_heartbeat "$local_repo" "loop-critical" "$critical_heartbeat_ts"
+
+  write_runtime_artifacts "$service_repo" "loop-critical" "$now_ts"
+  write_runtime_heartbeat "$service_repo" "loop-critical" "$critical_heartbeat_ts"
+
+  start_service "$service_repo" "$SERVICE_TOKEN"
+
+  cat > "$local_repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-equivalent","loops":[{"loopId":"loop-critical","transport":"local"},{"loopId":"loop-failure","transport":"local"}]}
+JSON
+
+  cat > "$service_repo/.superloop/ops-manager/fleet/registry.v1.json" <<JSON
+{"schemaVersion":"v1","fleetId":"fleet-equivalent","loops":[{"loopId":"loop-critical","transport":"sprite_service","service":{"baseUrl":"$SERVICE_URL","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}},{"loopId":"loop-failure","transport":"sprite_service","service":{"baseUrl":"$SERVICE_URL","tokenEnv":"OPS_MANAGER_TEST_SERVICE_TOKEN"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-reconcile.sh" \
+    --repo "$local_repo" \
+    --deterministic-order \
+    --max-parallel 2 \
+    --trace-id "trace-fleet-equivalent-1"
+  [ "$status" -eq 0 ]
+  local local_fleet_json="$output"
+
+  run env OPS_MANAGER_TEST_SERVICE_TOKEN="$SERVICE_TOKEN" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-reconcile.sh" \
+    --repo "$service_repo" \
+    --deterministic-order \
+    --max-parallel 2 \
+    --trace-id "trace-fleet-equivalent-1"
+  [ "$status" -eq 0 ]
+  local service_fleet_json="$output"
+
+  local local_projection
+  local service_projection
+  local_projection="$(jq -c '{status, reasonCodes: ((.reasonCodes // []) | sort), loopCount, successCount, failedCount, skippedCount, results: ((.results // []) | map({loopId, status, reasonCode, reconcileStatus, healthStatus, healthReasonCodes: ((.healthReasonCodes // []) | sort)}) | sort_by(.loopId))}' <<<"$local_fleet_json")"
+  service_projection="$(jq -c '{status, reasonCodes: ((.reasonCodes // []) | sort), loopCount, successCount, failedCount, skippedCount, results: ((.results // []) | map({loopId, status, reasonCode, reconcileStatus, healthStatus, healthReasonCodes: ((.healthReasonCodes // []) | sort)}) | sort_by(.loopId))}' <<<"$service_fleet_json")"
+  [ "$local_projection" = "$service_projection" ]
 }
 
 @test "fleet policy and status project suppressions, exception buckets, and advisory actions" {
