@@ -143,7 +143,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"warning","minConfidence":"medium"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":2,"cooldownSeconds":120,"killSwitch":false}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"warning","minConfidence":"medium"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":2,"cooldownSeconds":120,"killSwitch":false}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -169,6 +169,14 @@ JSON
   run jq -r '.policy.autonomous.safety.maxActionsPerRun' <<<"$registry_json"
   [ "$status" -eq 0 ]
   [ "$output" = "3" ]
+
+  run jq -r '.policy.autonomous.governance.actor' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ops-user" ]
+
+  run jq -r '.policy.autonomous.governance.reviewWindowDays' <<<"$registry_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "311" ]
 }
 
 @test "fleet registry fails closed on unsupported autonomous categories" {
@@ -176,7 +184,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["health_critical","unknown_category"]}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical","unknown_category"]}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -189,7 +197,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"intents":["cancel","approve"]}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"intents":["cancel","approve"]}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -202,7 +210,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"thresholds":{"minConfidence":"certain"},"safety":{"maxActionsPerRun":-1}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"thresholds":{"minConfidence":"certain"},"safety":{"maxActionsPerRun":-1}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -216,7 +224,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"rollout":{"canaryPercent":40,"scope":{"loopIds":["loop-a"]}}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"rollout":{"canaryPercent":40,"scope":{"loopIds":["loop-a"]}}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -249,7 +257,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"rollout":{"canaryPercent":101,"scope":{"loopIds":["loop-a","unknown-loop"]},"autoPause":{"failureRateThreshold":1.5}}}}}
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"rollout":{"canaryPercent":101,"scope":{"loopIds":["loop-a","unknown-loop"]},"autoPause":{"failureRateThreshold":1.5}}}}}
 JSON
 
   run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
@@ -257,6 +265,34 @@ JSON
   [[ "$output" == *"policy.autonomous.rollout.canaryPercent must be an integer between 0 and 100 when present"* ]]
   [[ "$output" == *"policy.autonomous.rollout.scope.loopIds entries must reference declared loopIds"* ]]
   [[ "$output" == *"policy.autonomous.rollout.autoPause.failureRateThreshold must be a number between 0 and 1 when present"* ]]
+}
+
+@test "fleet registry fails closed when guarded_auto is requested without governance metadata" {
+  local repo="$TEMP_DIR/registry-governance-missing"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed"],"intents":["cancel"]}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.governance.actor is required when policy.mode is guarded_auto"* ]]
+  [[ "$output" == *"policy.autonomous.governance.approvalRef is required when policy.mode is guarded_auto"* ]]
+  [[ "$output" == *"policy.autonomous.governance.changedAt must be an ISO-8601 timestamp when policy.mode is guarded_auto"* ]]
+}
+
+@test "fleet registry fails closed when guarded_auto governance review window is expired" {
+  local repo="$TEMP_DIR/registry-governance-expired"
+  mkdir -p "$repo/.superloop/ops-manager/fleet"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"demo","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-01-10T00:00:00Z","reviewBy":"2026-01-20T00:00:00Z"}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-registry.sh" --repo "$repo"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"policy.autonomous.governance.reviewBy must be in the future when policy.mode is guarded_auto"* ]]
 }
 
 @test "fleet reconcile captures partial failure with deterministic ordering and trace linkage" {
@@ -578,7 +614,7 @@ JSONL
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-autonomous-status-surface","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}],"policy":{"mode":"guarded_auto","autonomous":{"safety":{"killSwitch":false}}}}
+{"schemaVersion":"v1","fleetId":"fleet-autonomous-status-surface","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"safety":{"killSwitch":false}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -704,7 +740,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-guarded-auto","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-guarded-auto","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["reconcile_failed"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -757,7 +793,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-kill-switch","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":5,"maxActionsPerLoop":5,"cooldownSeconds":300,"killSwitch":true}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-kill-switch","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":5,"maxActionsPerLoop":5,"cooldownSeconds":300,"killSwitch":true}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -788,7 +824,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-caps","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"},{"loopId":"loop-c"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":2,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-caps","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"},{"loopId":"loop-c"}],"policy":{"mode":"guarded_auto","autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":2,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -820,7 +856,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-auto-cooldown","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":600,"killSwitch":false}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-auto-cooldown","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":600,"killSwitch":false}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -880,7 +916,7 @@ JSONL
   out_bucket="$(deterministic_rollout_bucket "${out_loop}|${rollout_salt}")"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<JSON
-{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-cohort","loops":[{"loopId":"$in_loop"},{"loopId":"$out_loop"},{"loopId":"$scope_miss_loop"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":10,"maxActionsPerLoop":10,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":$canary_percent,"scope":{"loopIds":["$in_loop","$out_loop"]},"selector":{"salt":"$rollout_salt"}}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-cohort","loops":[{"loopId":"$in_loop"},{"loopId":"$out_loop"},{"loopId":"$scope_miss_loop"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":10,"maxActionsPerLoop":10,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":$canary_percent,"scope":{"loopIds":["$in_loop","$out_loop"]},"selector":{"salt":"$rollout_salt"}}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<JSON
@@ -941,7 +977,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-manual-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":true}}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-manual-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":true}}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -1004,7 +1040,7 @@ JSON
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
 
   cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
-{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-auto-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":false},"autoPause":{"enabled":true,"lookbackExecutions":3,"minSampleSize":2,"ambiguityRateThreshold":0.4,"failureRateThreshold":0.8}}}}}
+{"schemaVersion":"v1","fleetId":"fleet-policy-rollout-auto-pause","loops":[{"loopId":"loop-red","transport":"local"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-123","rationale":"dogfood guarded auto","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":0,"killSwitch":false},"rollout":{"canaryPercent":100,"pause":{"manual":false},"autoPause":{"enabled":true,"lookbackExecutions":3,"minSampleSize":2,"ambiguityRateThreshold":0.4,"failureRateThreshold":0.8}}}}}
 JSON
 
   cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
@@ -1063,6 +1099,81 @@ JSONL
   run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_json"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+}
+
+@test "fleet policy emits immutable governance audit events for autonomous initialization mutation and mode toggles" {
+  local repo="$TEMP_DIR/fleet-policy-governance-audit"
+  local audit_file="$repo/.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-governance-audit","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-111","rationale":"initial approval","changedAt":"2026-02-23T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":0,"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T04:00:00Z","startedAt":"2026-02-23T03:59:50Z","fleetId":"fleet-policy-governance-audit","traceId":"trace-fleet-policy-governance-audit-1","status":"success","reasonCodes":[],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T04:00:00Z","startedAt":"2026-02-23T03:59:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-governance-audit-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-audit-1"
+  [ "$status" -eq 0 ]
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-audit-2"
+  [ "$status" -eq 0 ]
+
+  [ -f "$audit_file" ]
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.eventType'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous_policy_initialized" ]
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-governance-audit","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"governance":{"actor":"ops-user","approvalRef":"CAB-222","rationale":"expanded safety envelope","changedAt":"2026-02-24T00:00:00Z","reviewBy":"2026-12-31T00:00:00Z"},"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":1,"maxActionsPerLoop":1,"cooldownSeconds":0,"killSwitch":false}}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-audit-3"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.eventType'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous_policy_mutated" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-fleet-policy-governance-audit-3" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.governance.approvalRef'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "CAB-222" ]
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-governance-audit","loops":[{"loopId":"loop-red"}],"policy":{"mode":"advisory","noiseControls":{"dedupeWindowSeconds":0}}}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo" --trace-id "trace-fleet-policy-governance-audit-4"
+  [ "$status" -eq 0 ]
+
+  run bash -lc "wc -l < '$audit_file' | tr -d ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "3" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.eventType'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "autonomous_mode_toggled" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.previousMode'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "guarded_auto" ]
+
+  run bash -lc "tail -n 1 '$audit_file' | jq -r '.mode'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "advisory" ]
 }
 
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {

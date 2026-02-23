@@ -94,6 +94,12 @@ validation_errors=$(jq -r '
     . == "high"
     or . == "medium"
     or . == "low";
+  def is_valid_iso8601:
+    (type == "string")
+    and (
+      try (fromdateiso8601 | type == "number")
+      catch false
+    );
 
   (
     if (.schemaVersion // "") != "v1" then ["schemaVersion must be \"v1\""] else [] end
@@ -354,6 +360,131 @@ validation_errors=$(jq -r '
     end
   )
   + (
+    if ((.policy.autonomous.governance // {}) | type) != "object" then
+      ["policy.autonomous.governance must be an object when present"]
+    else
+      []
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.governance.actor // null) == null
+      or ((.policy.autonomous.governance.actor // null) | is_non_empty_string)
+    ) then
+      []
+    else
+      ["policy.autonomous.governance.actor must be a non-empty string when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.governance.approvalRef // null) == null
+      or ((.policy.autonomous.governance.approvalRef // null) | is_non_empty_string)
+    ) then
+      []
+    else
+      ["policy.autonomous.governance.approvalRef must be a non-empty string when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.governance.rationale // null) == null
+      or ((.policy.autonomous.governance.rationale // null) | is_non_empty_string)
+    ) then
+      []
+    else
+      ["policy.autonomous.governance.rationale must be a non-empty string when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.governance.changedAt // null) == null
+      or ((.policy.autonomous.governance.changedAt // null) | is_valid_iso8601)
+    ) then
+      []
+    else
+      ["policy.autonomous.governance.changedAt must be an ISO-8601 timestamp when present"]
+    end
+  )
+  + (
+    if (
+      (.policy.autonomous.governance.reviewBy // null) == null
+      or ((.policy.autonomous.governance.reviewBy // null) | is_valid_iso8601)
+    ) then
+      []
+    else
+      ["policy.autonomous.governance.reviewBy must be an ISO-8601 timestamp when present"]
+    end
+  )
+  + (
+    if (
+      ((.policy.autonomous.governance.changedAt // null) | is_valid_iso8601)
+      and ((.policy.autonomous.governance.reviewBy // null) | is_valid_iso8601)
+      and ((.policy.autonomous.governance.reviewBy | fromdateiso8601) <= (.policy.autonomous.governance.changedAt | fromdateiso8601))
+    ) then
+      ["policy.autonomous.governance.reviewBy must be after policy.autonomous.governance.changedAt"]
+    else
+      []
+    end
+  )
+  + (
+    if ((.policy.mode // "advisory") != "guarded_auto") then
+      []
+    else
+      (.policy.autonomous.governance // null) as $gov
+      | (if ($gov | type) == "object" then $gov else {} end) as $gov_obj
+      | [
+          if ($gov | type) != "object" then
+            "policy.autonomous.governance is required when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if ((($gov_obj.actor // null) | is_non_empty_string) | not) then
+            "policy.autonomous.governance.actor is required when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if ((($gov_obj.approvalRef // null) | is_non_empty_string) | not) then
+            "policy.autonomous.governance.approvalRef is required when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if ((($gov_obj.rationale // null) | is_non_empty_string) | not) then
+            "policy.autonomous.governance.rationale is required when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if ((($gov_obj.changedAt // null) | is_valid_iso8601) | not) then
+            "policy.autonomous.governance.changedAt must be an ISO-8601 timestamp when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if ((($gov_obj.reviewBy // null) | is_valid_iso8601) | not) then
+            "policy.autonomous.governance.reviewBy must be an ISO-8601 timestamp when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if (
+            (($gov_obj.changedAt // null) | is_valid_iso8601)
+            and (($gov_obj.reviewBy // null) | is_valid_iso8601)
+            and (($gov_obj.reviewBy | fromdateiso8601) <= ($gov_obj.changedAt | fromdateiso8601))
+          ) then
+            "policy.autonomous.governance.reviewBy must be after policy.autonomous.governance.changedAt when policy.mode is guarded_auto"
+          else
+            empty
+          end,
+          if (
+            (($gov_obj.reviewBy // null) | is_valid_iso8601)
+            and (($gov_obj.reviewBy | fromdateiso8601) <= now)
+          ) then
+            "policy.autonomous.governance.reviewBy must be in the future when policy.mode is guarded_auto"
+          else
+            empty
+          end
+        ]
+    end
+  )
+  + (
     if ((.policy.autonomous.rollout // {}) | type) != "object" then
       ["policy.autonomous.rollout must be an object when present"]
     else
@@ -605,6 +736,23 @@ normalized_json=$(jq -cn \
             cooldownSeconds: ($registry.policy.autonomous.safety.cooldownSeconds // 300),
             killSwitch: ($registry.policy.autonomous.safety.killSwitch // false)
           },
+          governance: (
+            {
+              actor: ($registry.policy.autonomous.governance.actor // null),
+              approvalRef: ($registry.policy.autonomous.governance.approvalRef // null),
+              rationale: ($registry.policy.autonomous.governance.rationale // null),
+              changedAt: ($registry.policy.autonomous.governance.changedAt // null),
+              reviewBy: ($registry.policy.autonomous.governance.reviewBy // null)
+            }
+            | .reviewWindowDays = (
+                if (.changedAt // null) == null or (.reviewBy // null) == null then
+                  null
+                else
+                  (((.reviewBy | fromdateiso8601) - (.changedAt | fromdateiso8601)) / 86400 | floor)
+                end
+              )
+            | with_entries(select(.value != null))
+          ),
           rollout: {
             canaryPercent: ($registry.policy.autonomous.rollout.canaryPercent // 100),
             scope: {
