@@ -360,6 +360,7 @@ Purpose:
 - Maps unsuppressed advisory candidates into explicit per-loop control intents.
 - Enforces explicit operator confirmation gate (`--execute` requires `--confirm`).
 - Supports guarded autonomous dispatch (`--autonomous-execute`) for only `autonomous.eligible` intents when policy mode is `guarded_auto`.
+- Applies autonomous retry guard after ambiguous/failed autonomous outcomes, forcing explicit manual confirmation before repeat attempts.
 - Propagates fleet trace/idempotency into loop-level control telemetry and invocation audit.
 - Persists handoff plan/execution artifacts and telemetry.
 - Preserves policy autonomous eligibility classification on generated intents (`autoEligibleIntentCount`, `manualOnlyIntentCount`).
@@ -450,6 +451,7 @@ Fleet state/policy/status artifacts may include:
 - `fleet_handoff_confirmation_pending`
 - `fleet_handoff_partial_mapping`
 - `fleet_handoff_unmapped_candidates`
+- `fleet_handoff_retry_guarded`
 - `fleet_handoff_auto_eligible_intents`
 - `fleet_handoff_executed`
 - `fleet_handoff_execution_ambiguous`

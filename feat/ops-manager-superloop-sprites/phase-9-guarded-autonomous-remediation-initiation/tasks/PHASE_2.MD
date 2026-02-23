@@ -16,9 +16,9 @@
 3. [x] Enforce fail-closed behavior when guarded autonomous mode is requested without required governance metadata/authority context.
 
 ## P2.3 Incident Drill Hardening
-1. [ ] Add executable kill-switch drill coverage proving immediate autonomous halt and deterministic fallback to explicit manual handoff.
-2. [ ] Add sprite-service outage drill coverage proving autonomous auto-pause and reason-coded operator fallback behavior.
-3. [ ] Add ambiguous-outcome drill coverage preventing retry storms and preserving deterministic escalation/reason semantics.
+1. [x] Add executable kill-switch drill coverage proving immediate autonomous halt and deterministic fallback to explicit manual handoff.
+2. [x] Add sprite-service outage drill coverage proving autonomous auto-pause and reason-coded operator fallback behavior.
+3. [x] Add ambiguous-outcome drill coverage preventing retry storms and preserving deterministic escalation/reason semantics.
 
 ## P2.4 Operator Visibility and SLO Surfaces
 1. [ ] Extend fleet status projection with rollout/autopause state and governance posture surfaces (`who changed`, `when`, `why`, `until`).
@@ -26,13 +26,13 @@
 3. [ ] Ensure reason-code surfaces distinguish policy-gated, rollout-gated, governance-gated, and transport-gated autonomous suppression paths.
 
 ## P2.5 Test Coverage
-1. [ ] Extend `tests/ops-manager-fleet.bats` for rollout cohort gating, auto-pause behavior, governance validation, and incident drills.
+1. [x] Extend `tests/ops-manager-fleet.bats` for rollout cohort gating, auto-pause behavior, governance validation, and incident drills.
 2. [ ] Add/extend parity regressions in `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` for rollout/autopause/governance semantics.
 3. [ ] Add regression tests for deterministic governance audit artifacts and reason-code stability under mixed success/ambiguity/failure runs.
 
 ## P2.6 Docs and Runbook
-1. [ ] Update `docs/ops-manager-v0.md` with rollout/governance contract fields and compatibility defaults.
-2. [ ] Update `docs/ops-manager-runbook.md` with autonomous rollout operations, pause/unpause procedures, and incident drill workflows.
+1. [x] Update `docs/ops-manager-v0.md` with rollout/governance contract fields and compatibility defaults.
+2. [x] Update `docs/ops-manager-runbook.md` with autonomous rollout operations, pause/unpause procedures, and incident drill workflows.
 3. [ ] Document dogfood promotion gates (required metrics/evidence) for moving from guarded internal mode toward broader beta exposure.
 
 ## P2.V Validation
