@@ -30,6 +30,7 @@ Operational procedures for manager core behavior across local and sprite-service
 - fleet policy state: `.superloop/ops-manager/fleet/policy-state.json`
 - fleet reconcile telemetry: `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl`
 - fleet policy telemetry: `.superloop/ops-manager/fleet/telemetry/policy.jsonl`
+- fleet policy history: `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
 - runtime events: `.superloop/loops/<loop>/events.jsonl`
@@ -76,6 +77,11 @@ scripts/ops-manager-fleet-reconcile.sh \
 scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
 ```
 
+Optional noise-control override:
+```bash
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --dedupe-window-seconds 300 --pretty
+```
+
 4. Read operator fleet surface:
 ```bash
 scripts/ops-manager-fleet-status.sh --repo /path/to/repo --pretty
@@ -85,6 +91,8 @@ Expected fleet outputs:
 - fleet rollup status + reason codes (`success|partial_failure|failed`)
 - per-loop exception buckets (`reconcileFailures`, `criticalLoops`, `degradedLoops`, `skippedLoops`)
 - advisory candidate summary with suppression counts
+- suppression precedence (`loop` over global `*`) and suppression source details
+- advisory cooldown suppression behavior (`advisory_cooldown_active`) for repeated candidates
 - trace-linked pointers to loop-level state/health/cursor/telemetry artifacts
 
 ## Fleet Partial-Failure Triage

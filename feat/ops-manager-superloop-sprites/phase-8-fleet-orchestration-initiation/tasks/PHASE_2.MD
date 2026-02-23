@@ -6,9 +6,9 @@
 3. [x] Link this phase packet from the issue and include prior PR/issue context (`#73`, `#70`).
 
 ## P2.1 Fleet Policy Hardening
-1. [ ] Harden advisory candidate taxonomy and severity/confidence normalization for fleet policy output.
-2. [ ] Enforce suppression precedence and validation semantics (`loopId`-specific over global `*`, unknown categories fail closed).
-3. [ ] Add advisory-noise controls (dedupe/cooldown windows) without introducing automatic control execution.
+1. [x] Harden advisory candidate taxonomy and severity/confidence normalization for fleet policy output.
+2. [x] Enforce suppression precedence and validation semantics (`loopId`-specific over global `*`, unknown categories fail closed).
+3. [x] Add advisory-noise controls (dedupe/cooldown windows) without introducing automatic control execution.
 
 ## P2.2 Fleet Operator Control Handoff
 1. [ ] Add a fleet handoff artifact that maps unsuppressed policy candidates into explicit per-loop control intents.
@@ -26,11 +26,11 @@
 3. [ ] Harden failure classification behavior to keep fleet status semantics deterministic across transports.
 
 ## P2.5 Test Coverage
-1. [ ] Extend `tests/ops-manager-fleet.bats` for policy hardening and operator handoff flows.
+1. [x] Extend `tests/ops-manager-fleet.bats` for policy hardening and operator handoff flows.
 2. [ ] Add/extend transport parity regressions across `tests/ops-manager-service.bats` and `tests/ops-manager-visibility.bats` where relevant.
-3. [ ] Add regression tests for suppression precedence and advisory-noise controls.
+3. [x] Add regression tests for suppression precedence and advisory-noise controls.
 
 ## P2.V Validation
-1. [ ] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats` passes.
-2. [ ] All new/changed scripts pass `bash -n` syntax checks.
+1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats` passes.
+2. [x] All new/changed scripts pass `bash -n` syntax checks.
 3. [ ] Updated docs/runbook match implemented fleet policy/handoff/parity artifacts and operator workflow.

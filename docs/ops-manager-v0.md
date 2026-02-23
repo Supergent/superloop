@@ -267,13 +267,15 @@ Purpose:
 scripts/ops-manager-fleet-policy.sh \
   --repo /path/to/repo \
   --trace-id fleet-trace-001 \
+  --dedupe-window-seconds 300 \
   --pretty
 ```
 
 Purpose:
 - Evaluates fleet reconcile output and emits advisory candidates only.
 - Produces reason-coded candidates for `reconcile_failed`, `health_critical`, and `health_degraded`.
-- Applies registry suppression metadata and records suppressed vs unsuppressed actions.
+- Applies suppression precedence (`loop` over global `*`) and records suppression scope/source.
+- Supports advisory cooldown dedupe using policy history (no automatic control execution).
 
 ### Fleet Status
 ```bash
@@ -328,6 +330,7 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/policy-state.json` - latest advisory policy candidates + suppression state.
 - `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl` - fleet reconcile attempt history.
 - `.superloop/ops-manager/fleet/telemetry/policy.jsonl` - fleet policy evaluation history.
+- `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl` - fleet policy candidate suppression/dedupe history.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
@@ -354,6 +357,8 @@ Fleet state/policy/status artifacts may include:
 - `fleet_loop_skipped`
 - `fleet_action_required`
 - `fleet_actions_suppressed`
+- `fleet_actions_policy_suppressed`
+- `fleet_actions_deduped`
 
 ## Alert Dispatch Reason Codes
 Current alert dispatch telemetry/state may include:
