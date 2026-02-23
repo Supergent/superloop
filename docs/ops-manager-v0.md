@@ -289,6 +289,30 @@ Purpose:
 - Surfaces policy summary and top advisory candidates.
 - Includes trace linkage and per-loop drill-down pointers to loop-level artifacts.
 
+### Fleet Handoff (Operator Control Planning/Execution)
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-fleet-handoff.sh \
+  --repo /path/to/repo \
+  --execute \
+  --confirm \
+  --intent-id <intent-id> \
+  --by <operator-name> \
+  --note "incident-<id>: remediation" \
+  --pretty
+```
+
+Purpose:
+- Maps unsuppressed advisory candidates into explicit per-loop control intents.
+- Enforces explicit operator confirmation gate (`--execute` requires `--confirm`).
+- Propagates fleet trace/idempotency into loop-level control telemetry and invocation audit.
+- Persists handoff plan/execution artifacts and telemetry without autonomous remediation.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -328,9 +352,11 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/registry.v1.json` - fleet membership + transport/policy metadata.
 - `.superloop/ops-manager/fleet/state.json` - latest fleet reconcile rollup.
 - `.superloop/ops-manager/fleet/policy-state.json` - latest advisory policy candidates + suppression state.
+- `.superloop/ops-manager/fleet/handoff-state.json` - latest fleet operator handoff plan/execution state.
 - `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl` - fleet reconcile attempt history.
 - `.superloop/ops-manager/fleet/telemetry/policy.jsonl` - fleet policy evaluation history.
 - `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl` - fleet policy candidate suppression/dedupe history.
+- `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` - fleet handoff plan/execution history.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
@@ -359,6 +385,14 @@ Fleet state/policy/status artifacts may include:
 - `fleet_actions_suppressed`
 - `fleet_actions_policy_suppressed`
 - `fleet_actions_deduped`
+- `fleet_handoff_action_required`
+- `fleet_handoff_no_action`
+- `fleet_handoff_confirmation_pending`
+- `fleet_handoff_partial_mapping`
+- `fleet_handoff_unmapped_candidates`
+- `fleet_handoff_executed`
+- `fleet_handoff_execution_ambiguous`
+- `fleet_handoff_execution_failed`
 
 ## Alert Dispatch Reason Codes
 Current alert dispatch telemetry/state may include:

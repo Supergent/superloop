@@ -16,9 +16,9 @@
 3. [x] Propagate fleet trace/idempotency fields through handoff and loop-level control telemetry for auditability.
 
 ## P2.3 Runbook Workflow Hardening
-1. [ ] Extend `docs/ops-manager-runbook.md` with end-to-end fleet operator workflow (`reconcile -> policy -> status -> explicit control -> verify`).
-2. [ ] Add partial-failure and transport-outage fleet drills with reason-code-driven triage steps.
-3. [ ] Document suppression governance workflow (add/remove suppression + audit trail expectations).
+1. [x] Extend `docs/ops-manager-runbook.md` with end-to-end fleet operator workflow (`reconcile -> policy -> status -> explicit control -> verify`).
+2. [x] Add partial-failure and transport-outage fleet drills with reason-code-driven triage steps.
+3. [x] Document suppression governance workflow (add/remove suppression + audit trail expectations).
 
 ## P2.4 Local vs Sprite Service Parity Hardening
 1. [ ] Extend fleet parity coverage for mixed `local` and `sprite_service` loop sets under degraded/critical/failure conditions.
@@ -33,4 +33,4 @@
 ## P2.V Validation
 1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats` passes.
 2. [x] All new/changed scripts pass `bash -n` syntax checks.
-3. [ ] Updated docs/runbook match implemented fleet policy/handoff/parity artifacts and operator workflow.
+3. [x] Updated docs/runbook match implemented fleet policy/handoff/parity artifacts and operator workflow.
