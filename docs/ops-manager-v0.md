@@ -369,6 +369,33 @@ Purpose:
 - Preserves policy autonomous eligibility classification on generated intents (`autoEligibleIntentCount`, `manualOnlyIntentCount`).
 - Keeps manual-only/out-of-policy intents pending and reason-coded; autonomous execution never dispatches them.
 
+### Promotion Gates (Dogfood Decision Automation)
+```bash
+scripts/ops-manager-promotion-gates.sh \
+  --repo /path/to/repo \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-promotion-gates.sh \
+  --repo /path/to/repo \
+  --window-executions 20 \
+  --min-sample-size 20 \
+  --max-ambiguity-rate 0.2 \
+  --max-failure-rate 0.2 \
+  --max-manual-backlog 5 \
+  --max-drill-age-hours 168 \
+  --fail-on-hold \
+  --pretty
+```
+
+Purpose:
+- Evaluates promotion readiness (`promote` vs `hold`) using deterministic gate checks from fleet status, handoff telemetry, and drill evidence.
+- Evaluates five gates: governance posture, autonomous outcome reliability, manual backlog, safety/suppression stability, and drill recency.
+- Emits reason-coded failed-gate summaries for remediation (`summary.failedGates`, `summary.reasonCodes`).
+- Persists latest decision state and append-only promotion telemetry artifacts.
+- Supports CI enforcement mode via `--fail-on-hold` (non-zero exit when decision is `hold`).
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -409,11 +436,14 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/state.json` - latest fleet reconcile rollup.
 - `.superloop/ops-manager/fleet/policy-state.json` - latest advisory policy candidates + suppression state.
 - `.superloop/ops-manager/fleet/handoff-state.json` - latest fleet operator handoff plan/execution state.
+- `.superloop/ops-manager/fleet/promotion-state.json` - latest guarded-autonomous promotion decision projection.
+- `.superloop/ops-manager/fleet/drills/promotion.v1.json` - required drill evidence state for promotion recency checks.
 - `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl` - fleet reconcile attempt history.
 - `.superloop/ops-manager/fleet/telemetry/policy.jsonl` - fleet policy evaluation history.
 - `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl` - fleet policy candidate suppression/dedupe history.
 - `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl` - immutable fleet policy governance change history.
 - `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` - fleet handoff plan/execution history.
+- `.superloop/ops-manager/fleet/telemetry/promotion.jsonl` - append-only guarded-autonomous promotion decision history.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).
 - `schema/ops-manager-alert-sinks.config.schema.json` - JSON schema reference for alert sink config.
@@ -459,6 +489,31 @@ Fleet state/policy/status artifacts may include:
 - `fleet_handoff_executed`
 - `fleet_handoff_execution_ambiguous`
 - `fleet_handoff_execution_failed`
+
+## Promotion Gate Reason Codes
+Promotion decision artifacts may include:
+- `promotion_policy_mode_not_guarded_auto`
+- `promotion_governance_posture_not_active`
+- `promotion_governance_blocks_autonomous`
+- `promotion_governance_authority_missing`
+- `promotion_governance_review_deadline_missing`
+- `promotion_governance_review_expired`
+- `promotion_handoff_telemetry_missing`
+- `promotion_handoff_telemetry_invalid`
+- `promotion_autonomous_sample_insufficient`
+- `promotion_autonomous_attempts_zero`
+- `promotion_autonomous_ambiguity_rate_exceeded`
+- `promotion_autonomous_failure_rate_exceeded`
+- `promotion_manual_backlog_unavailable`
+- `promotion_manual_backlog_exceeded`
+- `promotion_autopause_active`
+- `promotion_suppression_paths_missing`
+- `promotion_drill_state_missing`
+- `promotion_drill_state_invalid`
+- `promotion_drill_missing_<id>`
+- `promotion_drill_not_passed_<id>`
+- `promotion_drill_timestamp_invalid_<id>`
+- `promotion_drill_stale_<id>`
 
 ## Alert Dispatch Reason Codes
 Current alert dispatch telemetry/state may include:
