@@ -353,3 +353,157 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 6 ]
 }
+
+@test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {
+  local repo="$TEMP_DIR/fleet-handoff-plan"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-plan","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T10:00:00Z","fleetId":"fleet-handoff-plan","traceId":"trace-fleet-handoff-plan-policy","mode":"advisory","candidateCount":3,"unsuppressedCount":2,"suppressedCount":1,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","suppressed":false},{"candidateId":"loop-blue:health_critical","loopId":"loop-blue","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","suppressed":false},{"candidateId":"loop-blue:health_degraded","loopId":"loop-blue","category":"health_degraded","signal":"health_degraded","severity":"warning","confidence":"medium","rationale":"Loop health is degraded","suppressed":true,"suppressionScope":"global","suppressionReason":"registry_policy_suppression"}],"reasonCodes":["fleet_action_required"]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-plan-1"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.summary.intentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '.summary.pendingConfirmationCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -r '[.intents[] | .intent] | unique | join(",")' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cancel" ]
+
+  run jq -r '[.intents[] | .status] | unique | join(",")' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "pending_operator_confirmation" ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_confirmation_pending") != null' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+
+  run jq -r '.intents[0].idempotencyKey' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == fleet-handoff-trace-fleet-handoff-plan-1-* ]]
+
+  local telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl"
+  [ -f "$telemetry_file" ]
+  run bash -lc "tail -n 1 '$telemetry_file' | jq -r '.category'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "fleet_handoff_plan" ]
+}
+
+@test "fleet handoff execute requires explicit confirmation and propagates trace/idempotency" {
+  local repo="$TEMP_DIR/fleet-handoff-exec"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-exec","loops":[{"loopId":"loop-red","transport":"local"}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T11:00:00Z","fleetId":"fleet-handoff-exec","traceId":"trace-fleet-handoff-exec-policy","mode":"advisory","candidateCount":1,"unsuppressedCount":1,"suppressedCount":0,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","suppressed":false}],"reasonCodes":["fleet_action_required"]}
+JSON
+
+  local superloop_stub="$TEMP_DIR/superloop-stub.sh"
+  cat > "$superloop_stub" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "ok"
+BASH
+  chmod +x "$superloop_stub"
+
+  local confirm_stub="$TEMP_DIR/confirm-stub.sh"
+  cat > "$confirm_stub" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+intent=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --intent)
+      intent="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+jq -cn \
+  --arg intent "$intent" \
+  --arg observed_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  '{
+    intent: $intent,
+    confirmed: true,
+    reason: "stubbed_confirmation",
+    attempts: 1,
+    timeoutSeconds: 0,
+    observedStatus: "running",
+    observedLastEvent: "stubbed",
+    observedApprovalStatus: null,
+    observedActive: false,
+    observedAt: $observed_at
+  }'
+BASH
+  chmod +x "$confirm_stub"
+
+  run env \
+    SUPERLOOP_BIN="$superloop_stub" \
+    OPS_MANAGER_CONFIRM_SCRIPT="$confirm_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-exec-1" \
+    --execute \
+    --by "operator-a"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--execute requires --confirm"* ]]
+
+  run env \
+    SUPERLOOP_BIN="$superloop_stub" \
+    OPS_MANAGER_CONFIRM_SCRIPT="$confirm_stub" \
+    "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-exec-1" \
+    --execute \
+    --confirm \
+    --by "operator-a" \
+    --note "manual_action"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.summary.executedCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.intents[0].status' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "executed" ]
+
+  run jq -r '.execution.results[0].traceId' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-fleet-handoff-exec-1" ]
+
+  run jq -r '.execution.results[0].idempotencyKey' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  local expected_idempotency="$output"
+
+  local control_telemetry_file="$repo/.superloop/ops-manager/loop-red/telemetry/control.jsonl"
+  [ -f "$control_telemetry_file" ]
+
+  run bash -lc "tail -n 1 '$control_telemetry_file' | jq -r '.traceId'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "trace-fleet-handoff-exec-1" ]
+
+  run bash -lc "tail -n 1 '$control_telemetry_file' | jq -r '.idempotencyKey'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$expected_idempotency" ]
+}

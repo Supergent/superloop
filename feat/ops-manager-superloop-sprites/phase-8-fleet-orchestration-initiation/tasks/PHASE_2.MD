@@ -11,9 +11,9 @@
 3. [x] Add advisory-noise controls (dedupe/cooldown windows) without introducing automatic control execution.
 
 ## P2.2 Fleet Operator Control Handoff
-1. [ ] Add a fleet handoff artifact that maps unsuppressed policy candidates into explicit per-loop control intents.
-2. [ ] Add explicit operator confirmation workflow for fleet handoff actions (no autonomous remediation).
-3. [ ] Propagate fleet trace/idempotency fields through handoff and loop-level control telemetry for auditability.
+1. [x] Add a fleet handoff artifact that maps unsuppressed policy candidates into explicit per-loop control intents.
+2. [x] Add explicit operator confirmation workflow for fleet handoff actions (no autonomous remediation).
+3. [x] Propagate fleet trace/idempotency fields through handoff and loop-level control telemetry for auditability.
 
 ## P2.3 Runbook Workflow Hardening
 1. [ ] Extend `docs/ops-manager-runbook.md` with end-to-end fleet operator workflow (`reconcile -> policy -> status -> explicit control -> verify`).
