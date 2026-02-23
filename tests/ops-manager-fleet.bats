@@ -618,6 +618,100 @@ JSON
   [[ "$output" == "true" || "$output" == "false" ]]
 }
 
+@test "fleet policy guarded_auto kill switch blocks autonomous eligibility without suppressing manual handoff" {
+  local repo="$TEMP_DIR/fleet-policy-kill-switch"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-kill-switch","loops":[{"loopId":"loop-red"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":5,"maxActionsPerLoop":5,"cooldownSeconds":300,"killSwitch":true}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T01:00:00Z","startedAt":"2026-02-23T00:59:50Z","fleetId":"fleet-policy-kill-switch","traceId":"trace-fleet-policy-kill-switch-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":1,"successCount":0,"failedCount":1,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T01:00:00Z","startedAt":"2026-02-23T00:59:55Z","loopId":"loop-red","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-kill-switch-1-loop-red","files":{"stateFile":"/tmp/loop-red/state.json","healthFile":"/tmp/loop-red/health.json","cursorFile":"/tmp/loop-red/cursor.json","reconcileTelemetryFile":"/tmp/loop-red/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -r '.manualOnlyCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -e '.candidates[] | .autonomous.reasons | index("autonomous_kill_switch_enabled") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_kill_switch_enabled") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+}
+
+@test "fleet policy guarded_auto enforces per-run and per-loop autonomous action caps" {
+  local repo="$TEMP_DIR/fleet-policy-caps"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-caps","loops":[{"loopId":"loop-a"},{"loopId":"loop-b"},{"loopId":"loop-c"}],"policy":{"mode":"guarded_auto","autonomous":{"allow":{"categories":["reconcile_failed","health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":2,"maxActionsPerLoop":1,"cooldownSeconds":300,"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T01:30:00Z","startedAt":"2026-02-23T01:29:45Z","fleetId":"fleet-policy-caps","traceId":"trace-fleet-policy-caps-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":3,"successCount":2,"failedCount":1,"skippedCount":0,"durationSeconds":15,"execution":{"maxParallel":2,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T01:30:00Z","startedAt":"2026-02-23T01:29:50Z","loopId":"loop-a","transport":"local","enabled":true,"status":"failed","reasonCode":"reconcile_failed","reconcileStatus":"failed","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":4,"traceId":"trace-fleet-policy-caps-1-loop-a","files":{"stateFile":"/tmp/loop-a/state.json","healthFile":"/tmp/loop-a/health.json","cursorFile":"/tmp/loop-a/cursor.json","reconcileTelemetryFile":"/tmp/loop-a/reconcile.jsonl"}},{"timestamp":"2026-02-23T01:30:00Z","startedAt":"2026-02-23T01:29:52Z","loopId":"loop-b","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":3,"traceId":"trace-fleet-policy-caps-1-loop-b","files":{"stateFile":"/tmp/loop-b/state.json","healthFile":"/tmp/loop-b/health.json","cursorFile":"/tmp/loop-b/cursor.json","reconcileTelemetryFile":"/tmp/loop-b/reconcile.jsonl"}},{"timestamp":"2026-02-23T01:30:00Z","startedAt":"2026-02-23T01:29:54Z","loopId":"loop-c","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":3,"traceId":"trace-fleet-policy-caps-1-loop-c","files":{"stateFile":"/tmp/loop-c/state.json","healthFile":"/tmp/loop-c/health.json","cursorFile":"/tmp/loop-c/cursor.json","reconcileTelemetryFile":"/tmp/loop-c/reconcile.jsonl"}}]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+
+  run jq -e '.candidates[] | select(.loopId == "loop-a" and .category == "reconcile_failed") | .autonomous.reasons | index("autonomous_max_actions_per_loop_exceeded") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.candidates[] | select(.loopId == "loop-c" and .category == "health_critical") | .autonomous.reasons | index("autonomous_max_actions_per_run_exceeded") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_safety_blocked") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+}
+
+@test "fleet policy guarded_auto cooldown blocks repeated autonomous candidate within window" {
+  local repo="$TEMP_DIR/fleet-policy-auto-cooldown"
+  local recent_ts
+  recent_ts="$(iso_timestamp_minus_seconds 60)"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-policy-auto-cooldown","loops":[{"loopId":"loop-a"}],"policy":{"mode":"guarded_auto","noiseControls":{"dedupeWindowSeconds":0},"autonomous":{"allow":{"categories":["health_critical"],"intents":["cancel"]},"thresholds":{"minSeverity":"critical","minConfidence":"high"},"safety":{"maxActionsPerRun":3,"maxActionsPerLoop":3,"cooldownSeconds":600,"killSwitch":false}}}}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T02:00:00Z","startedAt":"2026-02-23T01:59:50Z","fleetId":"fleet-policy-auto-cooldown","traceId":"trace-fleet-policy-auto-cooldown-1","status":"partial_failure","reasonCodes":["fleet_partial_failure"],"loopCount":1,"successCount":1,"failedCount":0,"skippedCount":0,"durationSeconds":10,"execution":{"maxParallel":1,"deterministicOrder":true,"fromStart":false,"maxEvents":0},"results":[{"timestamp":"2026-02-23T02:00:00Z","startedAt":"2026-02-23T01:59:55Z","loopId":"loop-a","transport":"local","enabled":true,"status":"success","reconcileStatus":"success","healthStatus":"critical","healthReasonCodes":["transport_unreachable"],"durationSeconds":5,"traceId":"trace-fleet-policy-auto-cooldown-1-loop-a","files":{"stateFile":"/tmp/loop-a/state.json","healthFile":"/tmp/loop-a/health.json","cursorFile":"/tmp/loop-a/cursor.json","reconcileTelemetryFile":"/tmp/loop-a/reconcile.jsonl"}}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/telemetry/policy-history.jsonl" <<JSONL
+{"timestamp":"$recent_ts","category":"fleet_policy_candidate","fleetId":"fleet-policy-auto-cooldown","traceId":"trace-prev","mode":"guarded_auto","candidateId":"loop-a:health_critical","loopId":"loop-a","candidateCategory":"health_critical","autonomousEligible":true}
+JSONL
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-policy.sh" --repo "$repo"
+  [ "$status" -eq 0 ]
+  local policy_json="$output"
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run jq -e '.candidates[] | select(.category == "health_critical") | .autonomous.reasons | index("autonomous_cooldown_active") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_safety_blocked") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+}
+
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {
   local repo="$TEMP_DIR/fleet-handoff-plan"
   mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
