@@ -588,6 +588,34 @@ JSON
   run jq -r '.candidateCount' <<<"$policy_json"
   [ "$status" -eq 0 ]
   [ "$output" = "2" ]
+
+  run jq -r '.autoEligibleCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.manualOnlyCount' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.candidates[] | select(.category == "reconcile_failed") | .autonomous.eligible' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.candidates[] | select(.category == "health_critical") | .autonomous.manualOnly' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e '.candidates[] | select(.category == "health_critical") | .autonomous.reasons | index("category_not_allowlisted") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_auto_candidates_eligible") != null' <<<"$policy_json"
+  [ "$status" -eq 0 ]
+
+  local history_file="$repo/.superloop/ops-manager/fleet/telemetry/policy-history.jsonl"
+  [ -f "$history_file" ]
+  run bash -lc "tail -n 1 '$history_file' | jq -r '.autonomousEligible'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "true" || "$output" == "false" ]]
 }
 
 @test "fleet handoff maps unsuppressed candidates into explicit pending control intents" {
@@ -636,6 +664,47 @@ JSON
   run bash -lc "tail -n 1 '$telemetry_file' | jq -r '.category'"
   [ "$status" -eq 0 ]
   [ "$output" = "fleet_handoff_plan" ]
+}
+
+@test "fleet handoff preserves autonomous eligibility classification from policy candidates" {
+  local repo="$TEMP_DIR/fleet-handoff-autonomy"
+  mkdir -p "$repo/.superloop/ops-manager/fleet/telemetry"
+
+  cat > "$repo/.superloop/ops-manager/fleet/registry.v1.json" <<'JSON'
+{"schemaVersion":"v1","fleetId":"fleet-handoff-autonomy","loops":[{"loopId":"loop-red","transport":"local"},{"loopId":"loop-blue","transport":"local"}]}
+JSON
+
+  cat > "$repo/.superloop/ops-manager/fleet/policy-state.json" <<'JSON'
+{"schemaVersion":"v1","updatedAt":"2026-02-23T10:30:00Z","fleetId":"fleet-handoff-autonomy","traceId":"trace-fleet-handoff-autonomy-policy","mode":"guarded_auto","candidateCount":2,"unsuppressedCount":2,"suppressedCount":0,"autoEligibleCount":1,"manualOnlyCount":1,"candidates":[{"candidateId":"loop-red:reconcile_failed","loopId":"loop-red","category":"reconcile_failed","signal":"status_failed","severity":"critical","confidence":"high","rationale":"Loop reconcile failed in fleet fan-out","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":true,"manualOnly":false,"reasons":[]}},{"candidateId":"loop-blue:health_critical","loopId":"loop-blue","category":"health_critical","signal":"health_critical","severity":"critical","confidence":"high","rationale":"Loop health is critical","recommendedIntent":"cancel","suppressed":false,"autonomous":{"eligible":false,"manualOnly":true,"reasons":["category_not_allowlisted"]}}],"reasonCodes":["fleet_action_required","fleet_auto_candidates_eligible"]}
+JSON
+
+  run "$PROJECT_ROOT/scripts/ops-manager-fleet-handoff.sh" \
+    --repo "$repo" \
+    --trace-id "trace-fleet-handoff-autonomy-1"
+  [ "$status" -eq 0 ]
+  local handoff_json="$output"
+
+  run jq -r '.summary.autoEligibleIntentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.summary.manualOnlyIntentCount' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-red") | .autonomous.eligible' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -r '.intents[] | select(.loopId == "loop-blue") | .autonomous.manualOnly' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+
+  run jq -e '.intents[] | select(.loopId == "loop-blue") | .autonomous.reasons | index("category_not_allowlisted") != null' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.reasonCodes | index("fleet_handoff_auto_eligible_intents") != null' <<<"$handoff_json"
+  [ "$status" -eq 0 ]
 }
 
 @test "fleet handoff execute requires explicit confirmation and propagates trace/idempotency" {

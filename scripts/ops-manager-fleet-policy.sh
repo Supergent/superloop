@@ -172,6 +172,7 @@ mkdir -p "$(dirname "$policy_telemetry_file")"
 mkdir -p "$(dirname "$policy_history_file")"
 
 suppressions_json="$(jq -c '.policy.suppressions // {}' <<<"$registry_json")"
+autonomous_controls_json="$(jq -c '.policy.autonomous // {}' <<<"$registry_json")"
 results_json="$(jq -c '.results // []' <<<"$fleet_state_json")"
 
 history_json='[]'
@@ -197,6 +198,13 @@ candidates_json=$(jq -cn \
       {severity: "warning", confidence: "medium", rationale: "Loop health is degraded"}
     else
       error("unknown policy category: " + $category)
+    end;
+
+  def recommended_intent($category):
+    if $category == "reconcile_failed" then "cancel"
+    elif $category == "health_critical" then "cancel"
+    elif $category == "health_degraded" then "cancel"
+    else null
     end;
 
   def suppression_scope($loop_id; $category):
@@ -240,7 +248,7 @@ candidates_json=$(jq -cn \
       | .candidateId = (.loopId + ":" + .category)
       | . + category_profile(.category)
       | .taxonomyVersion = "v1"
-      | .recommendedIntent = null
+      | .recommendedIntent = recommended_intent(.category)
       | .suppressionScope = suppression_scope(.loopId; .category)
       | .suppressed = (.suppressionScope != null)
       | .suppressionReason = (if .suppressionScope == null then null else "registry_policy_suppression" end)
@@ -282,6 +290,73 @@ candidates_json=$(jq -cn \
   | unique_by(.candidateId)
   ')
 
+candidates_json=$(jq -cn \
+  --arg mode "$policy_mode" \
+  --argjson candidates "$candidates_json" \
+  --argjson autonomous "$autonomous_controls_json" \
+  '
+  def severity_rank($severity):
+    if $severity == "critical" then 3
+    elif $severity == "warning" then 2
+    elif $severity == "info" then 1
+    else 0
+    end;
+
+  def confidence_rank($confidence):
+    if $confidence == "high" then 3
+    elif $confidence == "medium" then 2
+    elif $confidence == "low" then 1
+    else 0
+    end;
+
+  ($autonomous.allow.categories // []) as $allowed_categories
+  | ($autonomous.allow.intents // []) as $allowed_intents
+  | ($autonomous.thresholds.minSeverity // "critical") as $min_severity
+  | ($autonomous.thresholds.minConfidence // "high") as $min_confidence
+  | ($candidates // [])
+  | map(
+      . as $candidate
+      | ($candidate.recommendedIntent // null) as $recommended_intent
+      | (($allowed_categories | index($candidate.category)) != null) as $category_allowed
+      | (
+          if $recommended_intent == null then
+            false
+          else
+            (($allowed_intents | index($recommended_intent)) != null)
+          end
+        ) as $intent_allowed
+      | (severity_rank($candidate.severity) >= severity_rank($min_severity)) as $severity_ok
+      | (confidence_rank($candidate.confidence) >= confidence_rank($min_confidence)) as $confidence_ok
+      | ([
+          (if $mode != "guarded_auto" then "policy_mode_not_guarded_auto" else empty end),
+          (if ($candidate.suppressed // false) == true then "candidate_suppressed" else empty end),
+          (if $category_allowed then empty else "category_not_allowlisted" end),
+          (if $recommended_intent == null then "no_recommended_intent"
+           elif $intent_allowed then empty
+           else "intent_not_allowlisted"
+           end),
+          (if $severity_ok then empty else "severity_below_threshold" end),
+          (if $confidence_ok then empty else "confidence_below_threshold" end)
+        ] | unique) as $reasons
+      | $candidate
+      | .autonomous = {
+          mode: $mode,
+          eligible: (($reasons | length) == 0),
+          manualOnly: (($reasons | length) > 0),
+          reasons: $reasons,
+          recommendedIntent: $recommended_intent,
+          gates: {
+            modeGuardedAuto: ($mode == "guarded_auto"),
+            suppressed: ($candidate.suppressed // false),
+            categoryAllowed: $category_allowed,
+            intentAllowed: $intent_allowed,
+            severityMeetsThreshold: $severity_ok,
+            confidenceMeetsThreshold: $confidence_ok
+          }
+        }
+    )
+  ')
+
 policy_state_json=$(jq -cn \
   --arg schema_version "v1" \
   --arg updated_at "$current_timestamp" \
@@ -295,6 +370,7 @@ policy_state_json=$(jq -cn \
   --argjson dedupe_window "$dedupe_window_seconds" \
   --argjson evaluated_loop_count "$(jq -r '.results | length' <<<"$fleet_state_json")" \
   --argjson candidates "$candidates_json" \
+  --argjson autonomous_controls "$autonomous_controls_json" \
   --argjson suppressions "$suppressions_json" \
   '
   {
@@ -320,11 +396,17 @@ policy_state_json=$(jq -cn \
       dedupeWindowSeconds: $dedupe_window,
       policyHistoryFile: $policy_history_file
     },
+    autonomous: {
+      enabled: ($mode == "guarded_auto"),
+      controls: $autonomous_controls
+    },
     evaluatedLoopCount: $evaluated_loop_count,
     candidateCount: ($candidates | length),
     unsuppressedCount: ([ $candidates[] | select((.suppressed // false) == false) ] | length),
     suppressedCount: ([ $candidates[] | select((.suppressed // false) == true) ] | length),
     cooldownSuppressedCount: ([ $candidates[] | select((.suppressionReason // "") == "advisory_cooldown_active") ] | length),
+    autoEligibleCount: ([ $candidates[] | select((.suppressed // false) == false and (.autonomous.eligible // false) == true) ] | length),
+    manualOnlyCount: ([ $candidates[] | select((.suppressed // false) == false and (.autonomous.manualOnly // false) == true) ] | length),
     candidates: $candidates,
     summary: {
       bySeverity: {
@@ -348,6 +430,21 @@ policy_state_json=$(jq -cn \
             .[$candidate.suppressionReason] = ((.[$candidate.suppressionReason] // 0) + 1)
           end
         )
+      ),
+      byAutonomy: {
+        eligible: ([ $candidates[] | select((.suppressed // false) == false and (.autonomous.eligible // false) == true) ] | length),
+        manualOnly: ([ $candidates[] | select((.suppressed // false) == false and (.autonomous.manualOnly // false) == true) ] | length)
+      },
+      byAutonomyReason: (
+        reduce $candidates[] as $candidate ({};
+          if ($candidate.suppressed // false) == true then
+            .
+          else
+            reduce ($candidate.autonomous.reasons // [])[] as $reason (.;
+              .[$reason] = ((.[$reason] // 0) + 1)
+            )
+          end
+        )
       )
     },
     suppressionState: {
@@ -361,7 +458,9 @@ policy_state_json=$(jq -cn \
         (if .unsuppressedCount > 0 then "fleet_action_required" else "no_action_required" end),
         (if .suppressedCount > 0 then "fleet_actions_suppressed" else empty end),
         (if .summary.bySuppressionReason.registry_policy_suppression // 0 > 0 then "fleet_actions_policy_suppressed" else empty end),
-        (if .summary.bySuppressionReason.advisory_cooldown_active // 0 > 0 then "fleet_actions_deduped" else empty end)
+        (if .summary.bySuppressionReason.advisory_cooldown_active // 0 > 0 then "fleet_actions_deduped" else empty end),
+        (if .mode == "guarded_auto" and .autoEligibleCount > 0 then "fleet_auto_candidates_eligible" else empty end),
+        (if .mode == "guarded_auto" and .unsuppressedCount > 0 and .autoEligibleCount == 0 then "fleet_auto_candidates_blocked" else empty end)
       ]
       | unique
     )
@@ -389,10 +488,19 @@ history_entries_json=$(jq -cn \
         candidateCategory: .category,
         severity: .severity,
         confidence: .confidence,
+        recommendedIntent: (.recommendedIntent // null),
         suppressed: (.suppressed // false),
         suppressionReason: (.suppressionReason // null),
         suppressionScope: (.suppressionScope // null),
-        suppressionSource: (.suppressionSource // null)
+        suppressionSource: (.suppressionSource // null),
+        autonomousEligible: (.autonomous.eligible // false),
+        autonomousManualOnly: (
+          if (.autonomous.manualOnly // null) == true then true
+          elif (.autonomous.eligible // false) == true then false
+          else true
+          end
+        ),
+        autonomousReasons: (.autonomous.reasons // [])
       }
       | with_entries(select(.value != null))
   ]
@@ -405,7 +513,7 @@ jq -cn \
   --arg fleet_id "$(jq -r '.fleetId // "default"' <<<"$fleet_state_json")" \
   --arg trace_id "$trace_id" \
   --arg mode "$policy_mode" \
-  --argjson summary "$(jq -c '{candidateCount, unsuppressedCount, suppressedCount, cooldownSuppressedCount, reasonCodes, summary, noiseControls}' <<<"$policy_state_json")" \
+  --argjson summary "$(jq -c '{candidateCount, unsuppressedCount, suppressedCount, cooldownSuppressedCount, autoEligibleCount, manualOnlyCount, reasonCodes, summary, noiseControls, autonomous}' <<<"$policy_state_json")" \
   '{
     timestamp: $timestamp,
     category: "fleet_policy",
