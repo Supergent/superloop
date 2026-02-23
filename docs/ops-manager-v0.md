@@ -411,6 +411,38 @@ Purpose:
 - Supports skip mode for missing evidence (`--skip-on-missing-evidence`) to avoid destructive scheduled failures in repos without live fleet telemetry.
 - Preserves strict gating behavior with `--fail-on-hold` when promotion checks should block pipeline progression.
 
+### Promotion Apply (Phase 11 / Phase 1)
+```bash
+scripts/ops-manager-promotion-apply.sh \
+  --repo /path/to/repo \
+  --intent expand \
+  --expand-step 25 \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "guarded rollout expansion" \
+  --review-by <review-deadline-iso8601> \
+  --idempotency-key <key> \
+  --pretty
+```
+
+```bash
+scripts/ops-manager-promotion-apply.sh \
+  --repo /path/to/repo \
+  --intent rollback \
+  --by <operator> \
+  --approval-ref <change-id> \
+  --rationale "incident rollback" \
+  --review-by <review-deadline-iso8601> \
+  --pretty
+```
+
+Purpose:
+- Couples promotion decision artifacts to explicit rollout mutation intents.
+- Enforces decision gating (`expand` and `resume` require promotion decision `promote`; `rollback` is safety-allowed).
+- Enforces governance mutation metadata for every apply action.
+- Re-validates mutated registry through `scripts/ops-manager-fleet-registry.sh` before write.
+- Persists state and append-only telemetry for rollout posture before/after snapshots.
+
 ## Sprite Service Transport
 Service implementation entrypoint:
 - `scripts/ops-manager-sprite-service.py`
@@ -459,6 +491,8 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl` - immutable fleet policy governance change history.
 - `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` - fleet handoff plan/execution history.
 - `.superloop/ops-manager/fleet/telemetry/promotion.jsonl` - append-only guarded-autonomous promotion decision history.
+- `.superloop/ops-manager/fleet/promotion-apply-state.json` - latest promotion apply mutation record.
+- `.superloop/ops-manager/fleet/telemetry/promotion-apply.jsonl` - append-only promotion apply mutation history.
 - `.superloop/ops-manager/fleet/promotion-ci-result.json` - latest CI wrapper JSON decision output (`promote|hold|skipped`).
 - `.superloop/ops-manager/fleet/promotion-ci-summary.md` - latest CI wrapper markdown summary for operator workflow/step summaries.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
