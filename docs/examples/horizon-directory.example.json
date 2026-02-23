@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "contacts": [
+    {
+      "recipient": {
+        "type": "local_agent",
+        "id": "implementer"
+      },
+      "dispatch": {
+        "adapter": "filesystem_outbox",
+        "target": "local_agent/implementer.jsonl"
+      },
+      "ack": {
+        "timeout_seconds": 600,
+        "max_retries": 3,
+        "retry_backoff_seconds": 120
+      },
+      "metadata": {
+        "owner": "engineering"
+      }
+    },
+    {
+      "recipient": {
+        "type": "human",
+        "id": "alice"
+      },
+      "dispatch": {
+        "adapter": "stdout"
+      },
+      "ack": {
+        "timeout_seconds": 1800,
+        "max_retries": 1,
+        "retry_backoff_seconds": 300
+      },
+      "metadata": {
+        "channel": "manual-review"
+      }
+    }
+  ]
+}

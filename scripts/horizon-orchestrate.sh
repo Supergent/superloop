@@ -11,10 +11,12 @@ Common options:
   --state-dir <path>                  Horizon state directory (default: <repo>/.superloop/horizons)
   --orchestrator-telemetry-file <p>   Orchestrator telemetry JSONL path (default: <state-dir>/telemetry/orchestrator.jsonl)
   --outbox-dir <path>                 Outbox directory for filesystem adapter (default: <state-dir>/outbox)
+  --directory-file <path>             Horizon directory file path (default: <repo>/.superloop/horizon-directory.json)
+  --directory-mode <mode>             Directory mode: off|optional|required (default: optional)
   --horizon-ref <id>                  Optional horizon filter
   --recipient-type <type>             Optional recipient type filter
   --limit <n>                         Max queued packets to select (default: 20)
-  --adapter <filesystem_outbox|stdout> Dispatch adapter (default: filesystem_outbox)
+  --adapter <filesystem_outbox|stdout> Dispatch adapter fallback (default: filesystem_outbox)
   --actor <id>                        Actor recorded on transitions (default: horizon-orchestrator)
   --reason <text>                     Transition reason for queued->dispatched (default: packet_dispatched_by_orchestrator)
   --note <text>                       Optional transition note
@@ -96,6 +98,193 @@ append_orchestrator_telemetry() {
   jq -c '.' <<<"$payload_json" >> "$telemetry_file"
 }
 
+load_directory_contacts() {
+  local mode="$1"
+  local file="$2"
+
+  DIRECTORY_ENABLED="0"
+  DIRECTORY_CONTACTS_JSON='{}'
+
+  if [[ "$mode" == "off" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    if [[ "$mode" == "required" ]]; then
+      die "directory mode is required but file is missing: $file"
+    fi
+    return 0
+  fi
+
+  jq -e '
+    .version == 1 and
+    (.contacts | type == "array") and
+    ([.contacts[] | .recipient.type + "|" + .recipient.id] | length == (unique | length))
+  ' "$file" >/dev/null || die "invalid horizon directory file: $file"
+
+  DIRECTORY_CONTACTS_JSON="$(jq -c '
+    .contacts
+    | map({
+        key: ((.recipient.type // "") + "|" + (.recipient.id // "")),
+        value: {
+          dispatchAdapter: (.dispatch.adapter // null),
+          dispatchTarget: (.dispatch.target // null),
+          ackTimeoutSeconds: (.ack.timeout_seconds // null),
+          maxRetries: (.ack.max_retries // null),
+          retryBackoffSeconds: (.ack.retry_backoff_seconds // null)
+        }
+      })
+    | from_entries
+  ' "$file")"
+
+  DIRECTORY_ENABLED="1"
+}
+
+build_plan() {
+  local packets_json="$1"
+
+  jq -cn \
+    --arg default_adapter "$ADAPTER" \
+    --arg outbox_dir "$OUTBOX_DIR" \
+    --arg directory_mode "$DIRECTORY_MODE" \
+    --arg directory_file "$DIRECTORY_FILE" \
+    --argjson directory_enabled "$( [[ "$DIRECTORY_ENABLED" == "1" ]] && echo true || echo false )" \
+    --argjson directory_contacts "$DIRECTORY_CONTACTS_JSON" \
+    --argjson now_epoch "$NOW_EPOCH" '
+    [ $packets_json[]
+      | . as $packet
+      | ((try (($packet.createdAt // "") | fromdateiso8601) catch null)) as $created_epoch
+      | (if $packet.ttlSeconds == null then null else (try ($packet.ttlSeconds | tonumber) catch null) end) as $ttl_seconds
+      | (($packet.recipient.type // "") | gsub("[^A-Za-z0-9._-]"; "_")) as $safe_type
+      | (($packet.recipient.id // "") | gsub("[^A-Za-z0-9._-]"; "_")) as $safe_id
+      | (($packet.recipient.type // "") + "|" + ($packet.recipient.id // "")) as $contact_key
+      | ($directory_contacts[$contact_key] // null) as $directory_contact
+      | (
+          if ($directory_enabled and $directory_contact != null and (($directory_contact.dispatchAdapter // "") | length) > 0)
+          then $directory_contact.dispatchAdapter
+          else $default_adapter
+          end
+        ) as $route_adapter
+      | (
+          if $route_adapter == "filesystem_outbox"
+          then (
+            if ($directory_enabled and $directory_contact != null and (($directory_contact.dispatchTarget // "") | length) > 0)
+            then (
+              if ($directory_contact.dispatchTarget | startswith("/"))
+              then $directory_contact.dispatchTarget
+              else ($outbox_dir + "/" + $directory_contact.dispatchTarget)
+              end
+            )
+            else ($outbox_dir + "/" + $safe_type + "/" + $safe_id + ".jsonl")
+            end
+          )
+          elif $route_adapter == "stdout"
+          then "stdout://horizon-orchestrate"
+          else null
+          end
+        ) as $dispatch_target
+      | (
+          [
+            (if $created_epoch == null then "packet_created_at_invalid" else empty end),
+            (if ($ttl_seconds != null and $created_epoch != null and (($now_epoch - $created_epoch) > $ttl_seconds)) then "packet_ttl_expired" else empty end),
+            (if (($packet.recipient.type // "") | length) == 0 then "packet_recipient_type_missing" else empty end),
+            (if (($packet.recipient.id // "") | length) == 0 then "packet_recipient_id_missing" else empty end),
+            (if ($directory_mode == "required" and $directory_enabled and $directory_contact == null) then "directory_contact_not_found" else empty end),
+            (if ($route_adapter != "filesystem_outbox" and $route_adapter != "stdout") then "dispatch_adapter_invalid" else empty end),
+            (if ($route_adapter == "filesystem_outbox" and (($dispatch_target // "") | length) == 0) then "dispatch_target_missing" else empty end)
+          ]
+        ) as $blocked_reasons
+      | {
+          packetId: ($packet.packetId // null),
+          horizonRef: ($packet.horizonRef // null),
+          traceId: ($packet.traceId // null),
+          loopId: ($packet.loopId // null),
+          status: ($packet.status // null),
+          sender: ($packet.sender // null),
+          recipient: ($packet.recipient // {type: null, id: null}),
+          intent: ($packet.intent // null),
+          createdAt: ($packet.createdAt // null),
+          ttlSeconds: (if $ttl_seconds == null then null else $ttl_seconds end),
+          ageSeconds: (if $created_epoch == null then null else ($now_epoch - $created_epoch) end),
+          blockedReasons: $blocked_reasons,
+          dispatchable: (($blocked_reasons | length) == 0),
+          dispatchRoute: {
+            adapter: $route_adapter,
+            target: $dispatch_target
+          },
+          ackPolicy: {
+            timeoutSeconds: (
+              if ($directory_contact != null and ($directory_contact.ackTimeoutSeconds // null) != null and (($directory_contact.ackTimeoutSeconds | type) == "number") and ($directory_contact.ackTimeoutSeconds >= 0) and ($directory_contact.ackTimeoutSeconds == ($directory_contact.ackTimeoutSeconds | floor)))
+              then $directory_contact.ackTimeoutSeconds
+              else null
+              end
+            ),
+            maxRetries: (
+              if ($directory_contact != null and ($directory_contact.maxRetries // null) != null and (($directory_contact.maxRetries | type) == "number") and ($directory_contact.maxRetries >= 0) and ($directory_contact.maxRetries == ($directory_contact.maxRetries | floor)))
+              then $directory_contact.maxRetries
+              else null
+              end
+            ),
+            retryBackoffSeconds: (
+              if ($directory_contact != null and ($directory_contact.retryBackoffSeconds // null) != null and (($directory_contact.retryBackoffSeconds | type) == "number") and ($directory_contact.retryBackoffSeconds >= 0) and ($directory_contact.retryBackoffSeconds == ($directory_contact.retryBackoffSeconds | floor)))
+              then $directory_contact.retryBackoffSeconds
+              else null
+              end
+            )
+          },
+          directory: {
+            enabled: $directory_enabled,
+            mode: $directory_mode,
+            file: (if $directory_enabled then $directory_file else null end),
+            matched: ($directory_contact != null),
+            contactKey: $contact_key
+          }
+        }
+    ]
+  ' --argjson packets_json "$packets_json"
+}
+
+build_envelope() {
+  local item_json="$1"
+  local item_adapter="$2"
+  local safe_target="$3"
+
+  jq -cn \
+    --arg schema_version "v1" \
+    --arg timestamp "$(timestamp)" \
+    --arg category "horizon_dispatch" \
+    --arg trace_id "$TRACE_ID" \
+    --arg actor "$ACTOR" \
+    --arg adapter "$item_adapter" \
+    --arg target "$safe_target" \
+    --arg reason "$REASON" \
+    --arg note "$NOTE" \
+    --argjson packet "$item_json" \
+    --argjson evidence_refs "$CUSTOM_EVIDENCE_REFS_JSON" '
+    {
+      schemaVersion: $schema_version,
+      timestamp: $timestamp,
+      category: $category,
+      traceId: $trace_id,
+      actor: $actor,
+      adapter: $adapter,
+      target: (if ($target | length) > 0 then $target else null end),
+      reason: $reason,
+      note: (if ($note | length) > 0 then $note else null end),
+      packet: {
+        packetId: ($packet.packetId // null),
+        horizonRef: ($packet.horizonRef // null),
+        loopId: ($packet.loopId // null),
+        sender: ($packet.sender // null),
+        recipient: ($packet.recipient // {type: null, id: null}),
+        intent: ($packet.intent // null),
+        traceId: ($packet.traceId // null)
+      },
+      evidenceRefs: $evidence_refs
+    }
+  '
+}
+
 CMD="${1:-}"
 if [[ -z "$CMD" || "$CMD" == "--help" || "$CMD" == "-h" ]]; then
   usage
@@ -107,6 +296,8 @@ REPO="."
 STATE_DIR=""
 ORCHESTRATOR_TELEMETRY_FILE=""
 OUTBOX_DIR=""
+DIRECTORY_FILE=""
+DIRECTORY_MODE="optional"
 HORIZON_REF_FILTER=""
 RECIPIENT_TYPE_FILTER=""
 LIMIT="20"
@@ -118,6 +309,8 @@ TRACE_ID=""
 DRY_RUN="0"
 PRETTY="0"
 EVIDENCE_REFS=()
+DIRECTORY_ENABLED="0"
+DIRECTORY_CONTACTS_JSON='{}'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -135,6 +328,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --outbox-dir)
       OUTBOX_DIR="${2:-}"
+      shift 2
+      ;;
+    --directory-file)
+      DIRECTORY_FILE="${2:-}"
+      shift 2
+      ;;
+    --directory-mode)
+      DIRECTORY_MODE="${2:-}"
       shift 2
       ;;
     --horizon-ref)
@@ -213,6 +414,14 @@ case "$ADAPTER" in
     ;;
 esac
 
+case "$DIRECTORY_MODE" in
+  off|optional|required)
+    ;;
+  *)
+    die "invalid --directory-mode: $DIRECTORY_MODE"
+    ;;
+esac
+
 if [[ -z "$ACTOR" ]]; then
   die "--actor must be non-empty"
 fi
@@ -239,6 +448,14 @@ fi
 if [[ "$OUTBOX_DIR" != /* ]]; then
   OUTBOX_DIR="$REPO/$OUTBOX_DIR"
 fi
+if [[ -z "$DIRECTORY_FILE" ]]; then
+  DIRECTORY_FILE="$REPO/.superloop/horizon-directory.json"
+fi
+if [[ "$DIRECTORY_FILE" != /* ]]; then
+  DIRECTORY_FILE="$REPO/$DIRECTORY_FILE"
+fi
+
+load_directory_contacts "$DIRECTORY_MODE" "$DIRECTORY_FILE"
 
 if [[ -z "$TRACE_ID" ]]; then
   TRACE_ID="${HORIZON_TRACE_ID:-}"
@@ -290,53 +507,7 @@ selected_packets_json="$(jq -c --argjson limit "$LIMIT" '
   if $limit == 0 then [] else .[0:$limit] end
 ' <<<"$queued_packets_json")"
 
-plan_items_json="$(jq -c \
-  --arg adapter "$ADAPTER" \
-  --arg outbox_dir "$OUTBOX_DIR" \
-  --argjson now_epoch "$NOW_EPOCH" '
-  [ .[]
-    | . as $packet
-    | ((try (($packet.createdAt // "") | fromdateiso8601) catch null)) as $created_epoch
-    | (if $packet.ttlSeconds == null then null else (try ($packet.ttlSeconds | tonumber) catch null) end) as $ttl_seconds
-    | (($packet.recipient.type // "") | gsub("[^A-Za-z0-9._-]"; "_")) as $safe_type
-    | (($packet.recipient.id // "") | gsub("[^A-Za-z0-9._-]"; "_")) as $safe_id
-    | (
-        if $adapter == "filesystem_outbox"
-        then ($outbox_dir + "/" + $safe_type + "/" + $safe_id + ".jsonl")
-        elif $adapter == "stdout"
-        then "stdout://horizon-orchestrate"
-        else null
-        end
-      ) as $dispatch_target
-    | (
-        [
-          (if $created_epoch == null then "packet_created_at_invalid" else empty end),
-          (if ($ttl_seconds != null and $created_epoch != null and (($now_epoch - $created_epoch) > $ttl_seconds)) then "packet_ttl_expired" else empty end),
-          (if (($packet.recipient.type // "") | length) == 0 then "packet_recipient_type_missing" else empty end),
-          (if (($packet.recipient.id // "") | length) == 0 then "packet_recipient_id_missing" else empty end)
-        ]
-      ) as $blocked_reasons
-    | {
-        packetId: ($packet.packetId // null),
-        horizonRef: ($packet.horizonRef // null),
-        traceId: ($packet.traceId // null),
-        loopId: ($packet.loopId // null),
-        status: ($packet.status // null),
-        sender: ($packet.sender // null),
-        recipient: ($packet.recipient // {type: null, id: null}),
-        intent: ($packet.intent // null),
-        createdAt: ($packet.createdAt // null),
-        ttlSeconds: (if $ttl_seconds == null then null else $ttl_seconds end),
-        ageSeconds: (if $created_epoch == null then null else ($now_epoch - $created_epoch) end),
-        blockedReasons: $blocked_reasons,
-        dispatchable: (($blocked_reasons | length) == 0),
-        dispatchRoute: {
-          adapter: $adapter,
-          target: $dispatch_target
-        }
-      }
-  ]
-' <<<"$selected_packets_json")"
+plan_items_json="$(build_plan "$selected_packets_json")"
 
 plan_summary_json="$(jq -c '
   {
@@ -358,6 +529,9 @@ plan_json="$(jq -cn \
   --arg adapter "$ADAPTER" \
   --arg horizon_ref "$HORIZON_REF_FILTER" \
   --arg recipient_type "$RECIPIENT_TYPE_FILTER" \
+  --arg directory_mode "$DIRECTORY_MODE" \
+  --arg directory_file "$DIRECTORY_FILE" \
+  --argjson directory_enabled "$( [[ "$DIRECTORY_ENABLED" == "1" ]] && echo true || echo false )" \
   --argjson limit "$LIMIT" \
   --argjson dry_run "$( [[ "$DRY_RUN" == "1" ]] && echo true || echo false )" \
   --arg state_dir "$STATE_DIR" \
@@ -381,6 +555,11 @@ plan_json="$(jq -cn \
       horizonRef: (if ($horizon_ref | length) > 0 then $horizon_ref else null end),
       recipientType: (if ($recipient_type | length) > 0 then $recipient_type else null end),
       limit: $limit
+    },
+    directory: {
+      mode: $directory_mode,
+      enabled: $directory_enabled,
+      file: (if $directory_enabled then $directory_file else null end)
     },
     context: {
       stateDir: $state_dir,
@@ -427,6 +606,7 @@ exit_code=0
 
 for item_json in "${dispatch_items[@]}"; do
   packet_id="$(jq -r '.packetId // empty' <<<"$item_json")"
+  item_adapter="$(jq -r '.dispatchRoute.adapter // empty' <<<"$item_json")"
   dispatch_target="$(jq -r '.dispatchRoute.target // empty' <<<"$item_json")"
   safe_target="$(relative_or_original_path "$REPO" "$dispatch_target")"
 
@@ -455,7 +635,7 @@ for item_json in "${dispatch_items[@]}"; do
       --arg status "failed" \
       --arg reason_code "dispatch_transition_failed" \
       --arg error "$transition_output" \
-      --arg adapter "$ADAPTER" \
+      --arg adapter "$item_adapter" \
       --arg target "$safe_target" '
       {
         packetId: $packet_id,
@@ -469,44 +649,11 @@ for item_json in "${dispatch_items[@]}"; do
     continue
   fi
 
-  envelope_json="$(jq -cn \
-    --arg schema_version "v1" \
-    --arg timestamp "$(timestamp)" \
-    --arg category "horizon_dispatch" \
-    --arg trace_id "$TRACE_ID" \
-    --arg actor "$ACTOR" \
-    --arg adapter "$ADAPTER" \
-    --arg target "$safe_target" \
-    --arg reason "$REASON" \
-    --arg note "$NOTE" \
-    --argjson packet "$item_json" \
-    --argjson evidence_refs "$CUSTOM_EVIDENCE_REFS_JSON" '
-    {
-      schemaVersion: $schema_version,
-      timestamp: $timestamp,
-      category: $category,
-      traceId: $trace_id,
-      actor: $actor,
-      adapter: $adapter,
-      target: (if ($target | length) > 0 then $target else null end),
-      reason: $reason,
-      note: (if ($note | length) > 0 then $note else null end),
-      packet: {
-        packetId: ($packet.packetId // null),
-        horizonRef: ($packet.horizonRef // null),
-        loopId: ($packet.loopId // null),
-        sender: ($packet.sender // null),
-        recipient: ($packet.recipient // {type: null, id: null}),
-        intent: ($packet.intent // null),
-        traceId: ($packet.traceId // null)
-      },
-      evidenceRefs: $evidence_refs
-    }
-  ' )"
+  envelope_json="$(build_envelope "$item_json" "$item_adapter" "$safe_target")"
 
   write_ok=1
   write_error=""
-  case "$ADAPTER" in
+  case "$item_adapter" in
     filesystem_outbox)
       if ! mkdir -p "$(dirname "$dispatch_target")" || ! printf '%s\n' "$envelope_json" >> "$dispatch_target"; then
         write_ok=0
@@ -518,7 +665,7 @@ for item_json in "${dispatch_items[@]}"; do
       ;;
     *)
       write_ok=0
-      write_error="unsupported adapter selected at dispatch time: $ADAPTER"
+      write_error="unsupported adapter selected at dispatch time: $item_adapter"
       ;;
   esac
 
@@ -540,7 +687,7 @@ for item_json in "${dispatch_items[@]}"; do
       --arg status "failed" \
       --arg reason_code "adapter_write_failed" \
       --arg error "$write_error" \
-      --arg adapter "$ADAPTER" \
+      --arg adapter "$item_adapter" \
       --arg target "$safe_target" '
       {
         packetId: $packet_id,
@@ -556,11 +703,11 @@ for item_json in "${dispatch_items[@]}"; do
 
   dispatched_count=$((dispatched_count + 1))
 
-  if [[ "$ADAPTER" == "stdout" ]]; then
+  if [[ "$item_adapter" == "stdout" ]]; then
     dispatch_result_lines+=("$(jq -cn \
       --arg packet_id "$packet_id" \
       --arg status "dispatched" \
-      --arg adapter "$ADAPTER" \
+      --arg adapter "$item_adapter" \
       --arg target "$safe_target" \
       --argjson envelope "$envelope_json" '
       {
@@ -575,7 +722,7 @@ for item_json in "${dispatch_items[@]}"; do
     dispatch_result_lines+=("$(jq -cn \
       --arg packet_id "$packet_id" \
       --arg status "dispatched" \
-      --arg adapter "$ADAPTER" \
+      --arg adapter "$item_adapter" \
       --arg target "$safe_target" '
       {
         packetId: $packet_id,
