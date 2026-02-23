@@ -1,9 +1,9 @@
 # Phase 2 - Guarded Autonomous Hardening + Governance
 
 ## P2.0 Feature Baseline and Scope Discipline
-1. [ ] Confirm `feat/ops-manager-superloop-sprites/phase-9-guarded-autonomous-remediation-initiation/PLAN.MD` phase-2 scope aligns with merged phase-1 outcomes.
-2. [ ] Attach this phase file to scope authority issue (`https://github.com/Supergent/superloop/issues/80`).
-3. [ ] Link this phase packet from the issue and include prior PR context (`#85`, `#84`, `#83`, `#82`, `#81`).
+1. [x] Confirm `feat/ops-manager-superloop-sprites/phase-9-guarded-autonomous-remediation-initiation/PLAN.MD` phase-2 scope aligns with merged phase-1 outcomes.
+2. [x] Attach this phase file to scope authority issue (`https://github.com/Supergent/superloop/issues/80`).
+3. [x] Link this phase packet from the issue and include prior PR context (`#85`, `#84`, `#83`, `#82`, `#81`).
 
 ## P2.1 Rollout Controls and Blast-Radius Containment
 1. [x] Extend fleet policy contract with rollout controls for guarded autonomous mode (canary scope/percentage, pause flags, and deterministic cohort selection).
