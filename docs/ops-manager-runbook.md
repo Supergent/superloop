@@ -32,6 +32,7 @@ Operational procedures for manager core behavior across local and sprite-service
 - fleet reconcile telemetry: `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl`
 - fleet policy telemetry: `.superloop/ops-manager/fleet/telemetry/policy.jsonl`
 - fleet policy history: `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl`
+- fleet governance audit telemetry: `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl`
 - fleet handoff telemetry: `.superloop/ops-manager/fleet/telemetry/handoff.jsonl`
 - threshold profiles: `config/ops-manager-threshold-profiles.v1.json`
 - alert sinks config: `config/ops-manager-alert-sinks.v1.json`
@@ -147,6 +148,13 @@ Expected handoff reason codes in this workflow:
 ## Guarded Autonomous Governance
 Use this policy when enabling or disabling `guarded_auto` execution.
 
+Required governance metadata (fail-closed when `policy.mode` is `guarded_auto`):
+- `policy.autonomous.governance.actor`: who authorized the change.
+- `policy.autonomous.governance.approvalRef`: approval/change ticket reference.
+- `policy.autonomous.governance.rationale`: why the change is being made.
+- `policy.autonomous.governance.changedAt`: ISO-8601 policy decision time.
+- `policy.autonomous.governance.reviewBy`: ISO-8601 review deadline; must be after `changedAt` and in the future.
+
 Enable when:
 - suppression and allowlist policy are reviewed and current
 - autonomous safety controls are set (`maxActionsPerRun`, `maxActionsPerLoop`, `cooldownSeconds`)
@@ -162,6 +170,26 @@ Rollout controls:
 - `policy.autonomous.rollout.canaryPercent`: deterministic cohort percentage inside the selected scope
 - `policy.autonomous.rollout.pause.manual`: immediate operator pause, keeping all intents manual-only
 - `policy.autonomous.rollout.autoPause.*`: telemetry-triggered pause on ambiguity/failure spikes
+
+Set guarded autonomous governance metadata:
+```bash
+jq '.policy.mode = "guarded_auto"
+  | .policy.autonomous.governance = {
+      actor: "<actor>",
+      approvalRef: "<approval-ref>",
+      rationale: "<rationale>",
+      changedAt: "<changed-at-iso8601>",
+      reviewBy: "<review-by-iso8601>"
+    }' .superloop/ops-manager/fleet/registry.v1.json > .superloop/ops-manager/fleet/registry.v1.json.tmp
+mv .superloop/ops-manager/fleet/registry.v1.json.tmp .superloop/ops-manager/fleet/registry.v1.json
+scripts/ops-manager-fleet-registry.sh --repo /path/to/repo --pretty
+scripts/ops-manager-fleet-policy.sh --repo /path/to/repo --pretty
+```
+
+Verify governance audit trail:
+```bash
+tail -n 20 .superloop/ops-manager/fleet/telemetry/policy-governance.jsonl | jq '.'
+```
 
 Hard-disable autonomous dispatch (kill switch):
 ```bash

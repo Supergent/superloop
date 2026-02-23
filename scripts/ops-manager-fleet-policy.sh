@@ -10,6 +10,7 @@ Options:
   --registry-file <path>         Fleet registry JSON path. Default: <repo>/.superloop/ops-manager/fleet/registry.v1.json
   --fleet-state-file <path>      Fleet state JSON path. Default: <repo>/.superloop/ops-manager/fleet/state.json
   --policy-state-file <path>     Policy state JSON output path. Default: <repo>/.superloop/ops-manager/fleet/policy-state.json
+  --governance-audit-file <path> Governance audit JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl
   --handoff-telemetry-file <path> Fleet handoff telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/handoff.jsonl
   --policy-telemetry-file <path> Policy telemetry JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/policy.jsonl
   --policy-history-file <path>   Candidate history JSONL path. Default: <repo>/.superloop/ops-manager/fleet/telemetry/policy-history.jsonl
@@ -56,6 +57,7 @@ repo=""
 registry_file=""
 fleet_state_file=""
 policy_state_file=""
+governance_audit_file=""
 handoff_telemetry_file=""
 policy_telemetry_file=""
 policy_history_file=""
@@ -80,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --policy-state-file)
       policy_state_file="${2:-}"
+      shift 2
+      ;;
+    --governance-audit-file)
+      governance_audit_file="${2:-}"
       shift 2
       ;;
     --handoff-telemetry-file)
@@ -137,6 +143,9 @@ fi
 if [[ -z "$policy_state_file" ]]; then
   policy_state_file="$repo/.superloop/ops-manager/fleet/policy-state.json"
 fi
+if [[ -z "$governance_audit_file" ]]; then
+  governance_audit_file="$repo/.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl"
+fi
 if [[ -z "$handoff_telemetry_file" ]]; then
   handoff_telemetry_file="$repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl"
 fi
@@ -177,12 +186,19 @@ if [[ ! "$dedupe_window_seconds" =~ ^[0-9]+$ ]]; then
 fi
 
 mkdir -p "$(dirname "$policy_state_file")"
+mkdir -p "$(dirname "$governance_audit_file")"
 mkdir -p "$(dirname "$policy_telemetry_file")"
 mkdir -p "$(dirname "$policy_history_file")"
 
 suppressions_json="$(jq -c '.policy.suppressions // {}' <<<"$registry_json")"
 autonomous_controls_json="$(jq -c '.policy.autonomous // {}' <<<"$registry_json")"
+governance_json="$(jq -c '.policy.autonomous.governance // {}' <<<"$registry_json")"
 results_json="$(jq -c '.results // []' <<<"$fleet_state_json")"
+
+prior_policy_state_json='null'
+if [[ -f "$policy_state_file" ]]; then
+  prior_policy_state_json=$(jq -c '.' "$policy_state_file" 2>/dev/null) || die "invalid existing policy state JSON: $policy_state_file"
+fi
 
 history_json='[]'
 if [[ -f "$policy_history_file" ]]; then
@@ -569,11 +585,13 @@ policy_state_json=$(jq -cn \
   --arg fleet_state_file "$fleet_state_file" \
   --arg registry_file "$registry_file" \
   --arg policy_history_file "$policy_history_file" \
+  --arg governance_audit_file "$governance_audit_file" \
   --arg handoff_telemetry_file "$handoff_telemetry_file" \
   --argjson dedupe_window "$dedupe_window_seconds" \
   --argjson evaluated_loop_count "$(jq -r '.results | length' <<<"$fleet_state_json")" \
   --argjson candidates "$candidates_json" \
   --argjson autonomous_controls "$autonomous_controls_json" \
+  --argjson governance "$governance_json" \
   --argjson suppressions "$suppressions_json" \
   '
   {
@@ -602,6 +620,26 @@ policy_state_json=$(jq -cn \
     },
     autonomous: {
       enabled: ($mode == "guarded_auto"),
+      governanceAuditFile: $governance_audit_file,
+      governance: {
+        actor: ($governance.actor // null),
+        approvalRef: ($governance.approvalRef // null),
+        rationale: ($governance.rationale // null),
+        changedAt: ($governance.changedAt // null),
+        reviewBy: ($governance.reviewBy // null),
+        reviewWindowDays: ($governance.reviewWindowDays // null),
+        requiredForGuardedAuto: true,
+        authorityContextPresent: (
+          ($mode != "guarded_auto")
+          or (
+            (($governance.actor // null) != null)
+            and (($governance.approvalRef // null) != null)
+            and (($governance.rationale // null) != null)
+            and (($governance.changedAt // null) != null)
+            and (($governance.reviewBy // null) != null)
+          )
+        )
+      } | with_entries(select(.value != null)),
       controls: $autonomous_controls,
       rollout: {
         canaryPercent: ($autonomous_controls.rollout.canaryPercent // 100),
@@ -754,6 +792,75 @@ policy_state_json=$(jq -cn \
   ')
 
 jq -c '.' <<<"$policy_state_json" > "$policy_state_file"
+
+governance_audit_events_json=$(jq -cn \
+  --arg timestamp "$current_timestamp" \
+  --arg fleet_id "$(jq -r '.fleetId // "default"' <<<"$fleet_state_json")" \
+  --arg trace_id "$trace_id" \
+  --arg registry_file "$registry_file" \
+  --arg policy_state_file "$policy_state_file" \
+  --arg governance_audit_file "$governance_audit_file" \
+  --argjson prior "$prior_policy_state_json" \
+  --argjson current "$policy_state_json" \
+  '
+  def snapshot($state):
+    if $state == null then
+      null
+    else
+      {
+        mode: ($state.mode // "advisory"),
+        controls: ($state.autonomous.controls // {}),
+        governance: ($state.autonomous.governance // {})
+      }
+    end;
+
+  (snapshot($prior)) as $previous
+  | (snapshot($current)) as $current_snapshot
+  | ($previous == null) as $is_initial
+  | (
+      ($previous != null)
+      and (($previous.mode // "advisory") != ($current_snapshot.mode // "advisory"))
+    ) as $mode_changed
+  | (
+      ($previous != null)
+      and (($previous.controls // {}) != ($current_snapshot.controls // {}))
+    ) as $controls_changed
+  | (
+      ($previous != null)
+      and (($previous.governance // {}) != ($current_snapshot.governance // {}))
+    ) as $governance_changed
+  | if ($is_initial or $mode_changed or $controls_changed or $governance_changed) then
+      [
+        {
+          timestamp: $timestamp,
+          category: "fleet_policy_governance",
+          eventType: (
+            if $is_initial then "autonomous_policy_initialized"
+            elif $mode_changed then "autonomous_mode_toggled"
+            else "autonomous_policy_mutated"
+            end
+          ),
+          fleetId: $fleet_id,
+          traceId: $trace_id,
+          mode: ($current_snapshot.mode // "advisory"),
+          previousMode: (if $previous == null then null else ($previous.mode // "advisory") end),
+          governance: ($current_snapshot.governance // {}),
+          previousGovernance: (if $previous == null then null else ($previous.governance // {}) end),
+          controls: ($current_snapshot.controls // {}),
+          previousControls: (if $previous == null then null else ($previous.controls // {}) end),
+          source: {
+            registryFile: $registry_file,
+            policyStateFile: $policy_state_file,
+            governanceAuditFile: $governance_audit_file
+          }
+        } | with_entries(select(.value != null))
+      ]
+    else
+      []
+    end
+  ')
+
+jq -c '.[]' <<<"$governance_audit_events_json" >> "$governance_audit_file"
 
 history_entries_json=$(jq -cn \
   --arg timestamp "$current_timestamp" \

@@ -256,6 +256,12 @@ Fleet policy contract fields:
 - `policy.autonomous.safety.maxActionsPerLoop`: autonomous action cap per loop (default `1`).
 - `policy.autonomous.safety.cooldownSeconds`: autonomous loop/category cooldown window (default `300`).
 - `policy.autonomous.safety.killSwitch`: hard-disable autonomous dispatch while preserving advisory/manual paths (default `false`).
+- `policy.autonomous.governance.actor`: operator/system identity that authorized the guarded autonomous policy change (required when `policy.mode = guarded_auto`).
+- `policy.autonomous.governance.approvalRef`: approval/change reference id (required when `policy.mode = guarded_auto`).
+- `policy.autonomous.governance.rationale`: human-readable reason for the policy change (required when `policy.mode = guarded_auto`).
+- `policy.autonomous.governance.changedAt`: ISO-8601 timestamp for the policy change decision (required when `policy.mode = guarded_auto`).
+- `policy.autonomous.governance.reviewBy`: ISO-8601 governance review deadline; must be after `changedAt` and in the future (required when `policy.mode = guarded_auto`).
+- `policy.autonomous.governance.reviewWindowDays`: normalized derived review window (`reviewBy - changedAt`, days).
 - `policy.autonomous.rollout.canaryPercent`: deterministic cohort percentage for autonomous dispatch (`0..100`, default `100`).
 - `policy.autonomous.rollout.scope.loopIds`: optional loop allowlist limiting autonomous rollout scope (default `[]`, meaning all loops).
 - `policy.autonomous.rollout.selector.salt`: deterministic cohort selector salt (default `fleet-autonomous-rollout-v1`).
@@ -290,6 +296,7 @@ scripts/ops-manager-fleet-policy.sh \
   --repo /path/to/repo \
   --trace-id fleet-trace-001 \
   --handoff-telemetry-file /path/to/repo/.superloop/ops-manager/fleet/telemetry/handoff.jsonl \
+  --governance-audit-file /path/to/repo/.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl \
   --dedupe-window-seconds 300 \
   --pretty
 ```
@@ -304,6 +311,8 @@ Purpose:
 - Enforces autonomous safety rails before eligibility (`killSwitch`, `maxActionsPerRun`, `maxActionsPerLoop`, `cooldownSeconds`).
 - Applies deterministic rollout cohort gating (scope + canary percentage + selector salt) before autonomous eligibility.
 - Applies rollout pause gates (`manual` and telemetry-triggered `autoPause`) while preserving manual handoff intent generation.
+- Surfaces governance authority context under `autonomous.governance.*` in policy state.
+- Persists immutable governance audit events for autonomous policy initialization, mutation, and mode toggles.
 - Persists autonomous eligibility state into policy artifacts and policy history telemetry.
 
 ### Fleet Status
@@ -399,6 +408,7 @@ Transport mode switch:
 - `.superloop/ops-manager/fleet/telemetry/reconcile.jsonl` - fleet reconcile attempt history.
 - `.superloop/ops-manager/fleet/telemetry/policy.jsonl` - fleet policy evaluation history.
 - `.superloop/ops-manager/fleet/telemetry/policy-history.jsonl` - fleet policy candidate suppression/dedupe history.
+- `.superloop/ops-manager/fleet/telemetry/policy-governance.jsonl` - immutable fleet policy governance change history.
 - `.superloop/ops-manager/fleet/telemetry/handoff.jsonl` - fleet handoff plan/execution history.
 - `config/ops-manager-threshold-profiles.v1.json` - threshold profile catalog (repo-level, versioned).
 - `config/ops-manager-alert-sinks.v1.json` - alert sink routing/catalog config (repo-level, versioned).

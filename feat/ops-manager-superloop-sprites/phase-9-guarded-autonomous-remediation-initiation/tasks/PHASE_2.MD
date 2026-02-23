@@ -11,9 +11,9 @@
 3. [x] Add fail-safe auto-pause triggers for ambiguity/failure spikes and ensure advisory/manual flows continue when auto execution is paused.
 
 ## P2.2 Governance and Policy-Change Authority
-1. [ ] Define and validate governance metadata for autonomous policy changes (actor identity, approval reference, rationale, and expiry/review window).
-2. [ ] Persist immutable governance audit events for autonomous mode toggles and policy mutations with trace linkage.
-3. [ ] Enforce fail-closed behavior when guarded autonomous mode is requested without required governance metadata/authority context.
+1. [x] Define and validate governance metadata for autonomous policy changes (actor identity, approval reference, rationale, and expiry/review window).
+2. [x] Persist immutable governance audit events for autonomous mode toggles and policy mutations with trace linkage.
+3. [x] Enforce fail-closed behavior when guarded autonomous mode is requested without required governance metadata/authority context.
 
 ## P2.3 Incident Drill Hardening
 1. [ ] Add executable kill-switch drill coverage proving immediate autonomous halt and deterministic fallback to explicit manual handoff.
@@ -36,6 +36,6 @@
 3. [ ] Document dogfood promotion gates (required metrics/evidence) for moving from guarded internal mode toward broader beta exposure.
 
 ## P2.V Validation
-1. [ ] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats tests/usage-tracking.bats` passes.
-2. [ ] All new/changed scripts pass `bash -n` syntax checks.
+1. [x] `~/.local/bats-runtime/node_modules/.bin/bats tests/ops-manager-contract.bats tests/ops-manager-core.bats tests/ops-manager-service.bats tests/ops-manager-observability.bats tests/ops-manager-threshold-tuning.bats tests/ops-manager-profile-drift.bats tests/ops-manager-alert-sinks.bats tests/ops-manager-visibility.bats tests/ops-manager-fleet.bats tests/usage-tracking.bats` passes.
+2. [x] All new/changed scripts pass `bash -n` syntax checks.
 3. [ ] Updated docs/runbook match implemented rollout/governance/drill semantics and operator workflow.

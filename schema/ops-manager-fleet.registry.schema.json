@@ -159,6 +159,32 @@
                 }
               }
             },
+            "governance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "actor": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "approvalRef": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rationale": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "changedAt": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reviewBy": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
             "rollout": {
               "type": "object",
               "additionalProperties": false,
