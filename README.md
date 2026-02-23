@@ -122,6 +122,7 @@ Horizon contract files:
 - `docs/horizon-planning.md` (operating model)
 - `docs/examples/horizons.example.json` (sample)
 - `scripts/horizon-packet.sh` (packet lifecycle runtime for horizon dispatch tracking)
+- `scripts/horizon-orchestrate.sh` (packet planning/dispatch runtime with adapters)
 
 Validate horizon control-plane state (when present):
 
@@ -169,6 +170,23 @@ scripts/horizon-packet.sh transition \
   --to-status dispatched \
   --by dispatcher \
   --reason "recipient selected"
+```
+
+```bash
+scripts/horizon-orchestrate.sh plan \
+  --repo . \
+  --horizon-ref HZ-program-authn-v1 \
+  --adapter filesystem_outbox \
+  --limit 20
+```
+
+```bash
+scripts/horizon-orchestrate.sh dispatch \
+  --repo . \
+  --horizon-ref HZ-program-authn-v1 \
+  --adapter filesystem_outbox \
+  --actor dispatcher \
+  --reason "queued packet dispatch"
 ```
 
 ## Config

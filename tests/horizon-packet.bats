@@ -55,6 +55,7 @@ teardown() {
     --recipient-type human \
     --recipient-id user-1 \
     --intent "request approval" \
+    --loop-id loop-approval \
     --trace-id trace-hz-001 \
     --ttl-seconds 600 \
     --evidence-ref "artifact://run-summary" \
@@ -70,6 +71,10 @@ teardown() {
   run jq -r '.ttlSeconds' <<<"$result_json"
   [ "$status" -eq 0 ]
   [ "$output" = "600" ]
+
+  run jq -r '.loopId' <<<"$result_json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "loop-approval" ]
 
   run jq -r '.evidenceRefs | index("artifact://run-summary") != null' <<<"$result_json"
   [ "$status" -eq 0 ]

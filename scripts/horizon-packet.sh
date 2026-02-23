@@ -19,6 +19,7 @@ Create options:
   --recipient-type <type>   Recipient type (required)
   --recipient-id <id>       Recipient identifier (required)
   --intent <text>           Packet intent (required)
+  --loop-id <id>            Optional loop identifier linked to this packet
   --authority <text>        Optional authority descriptor
   --trace-id <id>           Optional trace identifier
   --ttl-seconds <n>         Optional packet freshness TTL in seconds
@@ -209,6 +210,7 @@ SENDER=""
 RECIPIENT_TYPE=""
 RECIPIENT_ID=""
 INTENT=""
+LOOP_ID=""
 AUTHORITY=""
 TRACE_ID=""
 TTL_SECONDS=""
@@ -256,6 +258,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --intent)
       INTENT="${2:-}"
+      shift 2
+      ;;
+    --loop-id)
+      LOOP_ID="${2:-}"
       shift 2
       ;;
     --authority)
@@ -360,6 +366,7 @@ case "$CMD" in
       --arg recipient_type "$RECIPIENT_TYPE" \
       --arg recipient_id "$RECIPIENT_ID" \
       --arg intent "$INTENT" \
+      --arg loop_id "$LOOP_ID" \
       --arg authority "$AUTHORITY" \
       --arg trace_id "$TRACE_ID" \
       --arg created_at "$created_at" \
@@ -375,6 +382,7 @@ case "$CMD" in
           id: $recipient_id
         },
         intent: $intent,
+        loopId: (if ($loop_id | length) > 0 then $loop_id else null end),
         authority: (if ($authority | length) > 0 then $authority else null end),
         traceId: $trace_id,
         ttlSeconds: (if ($ttl_seconds | length) > 0 then ($ttl_seconds | tonumber) else null end),
