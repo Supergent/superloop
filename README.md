@@ -1,3 +1,6 @@
+## Archive Notice
+This repository is archived for historical reference only. Active development is in [Supergent/core](https://github.com/Supergent/core).
+
 # Superloop
 
 A bash orchestration harness that runs AI coding agents in an iterative loop until a feature is complete.
@@ -122,6 +125,7 @@ Horizon contract files:
 - `.superloop/horizon-directory.json` (optional recipient directory for dispatch + retry policy)
 - `schema/horizon-directory.schema.json` (directory validation schema)
 - `docs/horizon-planning.md` (operating model)
+- `docs/horizon-ops-control-plane-map.md` (Horizon -> Bridge -> Ops lifecycle map)
 - `docs/examples/horizons.example.json` (sample)
 - `docs/examples/horizon-directory.example.json` (directory sample)
 - `scripts/horizon-packet.sh` (packet lifecycle runtime for horizon dispatch tracking)
@@ -745,7 +749,8 @@ superloop/
 │   ├── horizons.json      # Optional horizon control-plane state
 │   ├── roles/             # Role definitions (planner, implementer, tester, reviewer)
 │   └── templates/         # Spec template
-├── docs/horizon-planning.md  # Horizon operating model
+├── docs/horizon-planning.md         # Horizon operating model
+├── docs/horizon-ops-control-plane-map.md  # Horizon -> Bridge -> Ops lifecycle map
 └── .claude/skills/        # Shared skill sources synced to Claude Code and Codex
 ```
 
